@@ -12,7 +12,7 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'OPTIONS
 $host = 'localhost';
 $db   = 'laromana_basededatos';
 $user = 'laromana_ronin';
-$pass = 'rONIN.ABC.123';
+$pass = 'Ronin.abc.123';
 
 $options = [
     PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,

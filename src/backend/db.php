@@ -19,7 +19,7 @@ $options = [
 $prod_host = 'localhost';
 $prod_db   = 'laromana_basededatos';
 $prod_user = 'laromana_ronin';
-$prod_pass = 'rONIN.ABC.123';
+$prod_pass = 'Ronin.abc.123';
 
 // Credenciales Locales XAMPP
 $local_host = '127.0.0.1';

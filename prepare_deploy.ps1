@@ -110,7 +110,7 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'OPTIONS
 $host = 'localhost';
 $db   = 'laromana_basededatos';
 $user = 'laromana_ronin';
-$pass = 'rONIN.ABC.123';
+$pass = 'Ronin.abc.123';
 
 $options = [
     PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
@@ -132,10 +132,17 @@ try {
 Set-Content -Path "$DeployDir\backend\db.php" -Value $dbProdContent -Encoding UTF8
 Set-Content -Path "$WebhostDeployDir\backend\db.php" -Value $dbProdContent -Encoding UTF8
 
+# 6. Generar archivo zip comprimido listo para cPanel
+$zipPath = "$Workspace\deploy.zip"
+if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+Compress-Archive -Path "$DeployDir\*" -DestinationPath $zipPath -Force
+
 Write-Host "`n=================================================" -ForegroundColor Green
 Write-Host "  DESPLIEGUE GENERADO EXITOSAMENTE PARA WEBHOST CHILE" -ForegroundColor Green
 Write-Host "  BD Produccion: laromana_basededatos (laromana_ronin)" -ForegroundColor Green
 Write-Host "  Carpeta lista en: $DeployDir" -ForegroundColor Green
+Write-Host "  Archivo ZIP listo: $zipPath" -ForegroundColor Green
 Write-Host "=================================================" -ForegroundColor Green
+
 
 

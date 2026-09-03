@@ -7,7 +7,7 @@
 - Servidor (Host):      localhost
 - Nombre Base de Datos: laromana_basededatos
 - Usuario MySQL:        laromana_ronin
-- Contraseña MySQL:     rONIN.ABC.123
+- Contraseña MySQL:     Ronin.abc.123
 
 2. ACCESOS POR DEFECTO DEL SISTEMA:
 -------------------------------------------------------

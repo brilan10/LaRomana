@@ -10,7 +10,7 @@ Sistema integral de gestión para Barbería y Perfumería La Romana, desarrollad
 - **Host:** `localhost`
 - **Base de Datos:** `laromana_basededatos`
 - **Usuario MySQL:** `laromana_ronin`
-- **Contraseña MySQL:** `rONIN.ABC.123`
+- **Contraseña MySQL:** `Ronin.abc.123`
 
 ### 2. Base de Datos Local (XAMPP)
 - **Host:** `127.0.0.1` / `localhost:8080/phpmyadmin`
