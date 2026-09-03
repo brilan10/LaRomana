@@ -127,10 +127,9 @@ if ($login_type === 'register') {
     exit();
 }
 
-// LOGIN ESTÁNDAR
-// 1. Verificar si es Administrador (con email, o identificador en su caso)
-$stmt = $pdo->prepare("SELECT * FROM administradores WHERE email = ?");
-$stmt->execute([$identificador]);
+// 1. Verificar si es Administrador (con email, usuario o identificador)
+$stmt = $pdo->prepare("SELECT * FROM administradores WHERE email = ? OR email = CONCAT(?, '@laromana.cl') OR email = CONCAT(?, '@gmail.com') OR nombre = ? LIMIT 1");
+$stmt->execute([$identificador, $identificador, $identificador, $identificador]);
 $admin = $stmt->fetch();
 
 if ($admin) {
