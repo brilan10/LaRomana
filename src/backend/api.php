@@ -161,6 +161,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $cliente_id = $data['cliente_id'] ?? null;
             $rut = isset($data['rut']) ? trim($data['rut']) : null;
             $telefono = isset($data['telefono']) ? trim($data['telefono']) : null;
+            $montoCustom = (isset($data['monto']) && $data['monto'] !== null && $data['monto'] !== '') ? (float)$data['monto'] : null;
             
             if (!$cliente_id && !empty($rut)) {
                 $rutClean = strtoupper(preg_replace('/[^0-9K]/i', '', $rut));
@@ -193,11 +194,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             
             // Insertar detalles
             $stmtDet = $pdo->prepare("INSERT INTO cita_detalle (cita_id, servicio_id, precio_cobrado) VALUES (?, ?, ?)");
-            foreach ($data['servicios'] as $servId) {
-                $s = $pdo->prepare("SELECT precio FROM servicios WHERE id = ?");
-                $s->execute([$servId]);
-                $precio = $s->fetchColumn();
-                $stmtDet->execute([$citaId, $servId, $precio]);
+            $servicios = !empty($data['servicios']) && is_array($data['servicios']) ? $data['servicios'] : [];
+            
+            if (!empty($servicios)) {
+                foreach ($servicios as $servId) {
+                    $s = $pdo->prepare("SELECT precio FROM servicios WHERE id = ?");
+                    $s->execute([$servId]);
+                    $precioDb = $s->fetchColumn();
+                    $precioFinal = ($montoCustom !== null && count($servicios) === 1) ? $montoCustom : ($precioDb ?: 0);
+                    $stmtDet->execute([$citaId, $servId, $precioFinal]);
+                }
+            } else {
+                // Si no se pasaron servicios específicos pero es cita manual / express, asociar al primer servicio
+                $sDefault = $pdo->query("SELECT id, precio FROM servicios ORDER BY es_corte DESC, id ASC LIMIT 1")->fetch();
+                if ($sDefault) {
+                    $precioFinal = ($montoCustom !== null) ? $montoCustom : ($sDefault['precio'] ?: 14000);
+                    $stmtDet->execute([$citaId, $sDefault['id'], $precioFinal]);
+                }
             }
             
             echo json_encode(["status" => "success", "cita_id" => $citaId, "cliente_id" => $cliente_id]);
@@ -267,14 +280,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             break;
         case 'finalizar_cita':
             $cita_id = $data['cita_id'] ?? 0;
-            $descuento = $data['descuento'] ?? 0;
+            $descuento = isset($data['descuento']) ? (float)$data['descuento'] : 0;
             $metodo_pago = $data['metodo_pago'] ?? 'Efectivo';
             $decant_producto_id = $data['decant_producto_id'] ?? null;
+            $subtotalInput = isset($data['subtotal']) ? (float)$data['subtotal'] : (isset($data['monto']) ? (float)$data['monto'] : null);
             
-            // Calcular total_pagado = subtotal - descuento
-            $subQ = $pdo->prepare("SELECT SUM(precio_cobrado) FROM cita_detalle WHERE cita_id = ?");
-            $subQ->execute([$cita_id]);
-            $subtotal = (float)$subQ->fetchColumn();
+            // Si el usuario especificó o modificó el subtotal en el modal de cobro:
+            if ($subtotalInput !== null) {
+                $subtotal = max(0, $subtotalInput);
+                
+                // Verificar si existen registros en cita_detalle
+                $checkDet = $pdo->prepare("SELECT id FROM cita_detalle WHERE cita_id = ?");
+                $checkDet->execute([$cita_id]);
+                $detalles = $checkDet->fetchAll(PDO::FETCH_COLUMN);
+                
+                if (empty($detalles)) {
+                    // Si no había cita_detalle, insertar con el servicio por defecto y el subtotal ingresado
+                    $sDefault = $pdo->query("SELECT id FROM servicios ORDER BY es_corte DESC, id ASC LIMIT 1")->fetchColumn();
+                    $servId = $sDefault ?: 1;
+                    $pdo->prepare("INSERT INTO cita_detalle (cita_id, servicio_id, precio_cobrado) VALUES (?, ?, ?)")
+                        ->execute([$cita_id, $servId, $subtotal]);
+                } else {
+                    // Si hay registros, actualizar el primero con el monto total para que SUM(precio_cobrado) sea exacto
+                    $pdo->prepare("UPDATE cita_detalle SET precio_cobrado = ? WHERE id = ?")
+                        ->execute([$subtotal, $detalles[0]]);
+                    for ($i = 1; $i < count($detalles); $i++) {
+                        $pdo->prepare("UPDATE cita_detalle SET precio_cobrado = 0 WHERE id = ?")->execute([$detalles[$i]]);
+                    }
+                }
+            } else {
+                // Calcular total_pagado = subtotal - descuento desde BD
+                $subQ = $pdo->prepare("SELECT SUM(precio_cobrado) FROM cita_detalle WHERE cita_id = ?");
+                $subQ->execute([$cita_id]);
+                $subtotal = (float)$subQ->fetchColumn();
+            }
+
             $total_pagado = max(0, $subtotal - $descuento);
             
             // Si hay decant regalado, lo procesamos
@@ -316,7 +356,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $sCli = $pdo->prepare("SELECT cliente_id FROM citas WHERE id = ?");
             $sCli->execute([$cita_id]);
             $cliente_id = $sCli->fetchColumn();
-            $pdo->prepare("UPDATE clientes SET cortes_acumulados = cortes_acumulados + 1 WHERE id = ?")->execute([$cliente_id]);
+            if ($cliente_id) {
+                $pdo->prepare("UPDATE clientes SET cortes_acumulados = cortes_acumulados + 1 WHERE id = ?")->execute([$cliente_id]);
+            }
 
             echo json_encode(["status" => "success"]);
             break;

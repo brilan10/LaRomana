@@ -64,7 +64,7 @@ export default function AdminDashboard({ session, logout }) {
   const [fechaCalendario, setFechaCalendario] = useState(new Date().toISOString().split('T')[0]);
   const [vistaCalendario, setVistaCalendario] = useState('dia'); // dia, semana, mes
   const [showModalCita, setShowModalCita] = useState(false);
-  const [nuevaCitaForm, setNuevaCitaForm] = useState({ rut: '', nombre: '', trabajador_id: '', hora: '10:00' });
+  const [nuevaCitaForm, setNuevaCitaForm] = useState({ rut: '', nombre: '', trabajador_id: '', hora: '10:00', servicio_id: '', monto: '' });
   const [filtroBarberoCal, setFiltroBarberoCal] = useState('');
 
   // Modales Extra
@@ -232,28 +232,8 @@ export default function AdminDashboard({ session, logout }) {
       }
       if (tab === 'calendario') {
          cargarEquipo();
-         let start_date = fechaCalendario;
-         let end_date = fechaCalendario;
-         
-         const d = new Date(fechaCalendario + 'T12:00:00'); // Evitar timezone issues
-         if (vistaCalendario === 'semana') {
-             const day = d.getDay();
-             const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Ajustar para Lunes como primer día
-             const startOfWeek = new Date(d.setDate(diff));
-             const endOfWeek = new Date(startOfWeek);
-             endOfWeek.setDate(endOfWeek.getDate() + 6);
-             start_date = startOfWeek.toISOString().split('T')[0];
-             end_date = endOfWeek.toISOString().split('T')[0];
-         } else if (vistaCalendario === 'mes') {
-             const startOfMonth = new Date(d.getFullYear(), d.getMonth(), 1);
-             const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-             start_date = startOfMonth.toISOString().split('T')[0];
-             end_date = endOfMonth.toISOString().split('T')[0];
-         }
-         
-         fetch(`${API_URL}/admin_api.php?action=get_todas_citas&start_date=${start_date}&end_date=${end_date}`)
-            .then(resC => resC.json())
-            .then(data => setCitasCalendario(data));
+         cargarServicios();
+         cargarCalendario(fechaCalendario, vistaCalendario);
       }
     };
 
@@ -471,6 +451,33 @@ export default function AdminDashboard({ session, logout }) {
     }
   };
 
+  const cargarCalendario = async (fecha = fechaCalendario, vista = vistaCalendario) => {
+    let start_date = fecha;
+    let end_date = fecha;
+    const d = new Date(fecha + 'T12:00:00');
+    if (vista === 'semana') {
+        const day = d.getDay();
+        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+        const startOfWeek = new Date(d.setDate(diff));
+        const endOfWeek = new Date(startOfWeek);
+        endOfWeek.setDate(endOfWeek.getDate() + 6);
+        start_date = startOfWeek.toISOString().split('T')[0];
+        end_date = endOfWeek.toISOString().split('T')[0];
+    } else if (vista === 'mes') {
+        const startOfMonth = new Date(d.getFullYear(), d.getMonth(), 1);
+        const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+        start_date = startOfMonth.toISOString().split('T')[0];
+        end_date = endOfMonth.toISOString().split('T')[0];
+    }
+    try {
+      const res = await fetch(`${API_URL}/admin_api.php?action=get_todas_citas&start_date=${start_date}&end_date=${end_date}`);
+      const data = await res.json();
+      setCitasCalendario(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error("Error cargando citas calendario:", e);
+    }
+  };
+
   const handleAbrirCaja = async (e) => {
     e.preventDefault();
     await fetch(`${API_URL}/admin_api.php?action=abrir_caja`, {
@@ -498,11 +505,11 @@ export default function AdminDashboard({ session, logout }) {
     cargarCaja();
   };
 
-  const handleCobrarCaja = async (cita_id, descuento, metodo_pago, decant_producto_id = null) => {
+  const handleCobrarCaja = async (cita_id, subtotal, descuento, metodo_pago, decant_producto_id = null) => {
     const res = await fetch(`${API_URL}/api.php?action=finalizar_cita`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cita_id, descuento, metodo_pago, decant_producto_id })
+      body: JSON.stringify({ cita_id, subtotal, descuento, metodo_pago, decant_producto_id })
     });
     const data = await res.json();
     if (data.status === 'success') {
@@ -511,7 +518,10 @@ export default function AdminDashboard({ session, logout }) {
       cargarDashboard();
       cargarBodega(); // Refrescar stock de decants si se usó
       cargarCRM();
+      cargarCalendario();
       showToast('Cobro finalizado con éxito.', 'success');
+    } else {
+      showToast(data.error || 'Error al procesar cobro', 'error');
     }
   };
 
@@ -638,14 +648,14 @@ export default function AdminDashboard({ session, logout }) {
         return;
     }
     
-    // Default dummy service for admin calendar block if not provided
     const payload = {
         rut: nuevaCitaForm.rut,
         nombre: nuevaCitaForm.nombre,
         fecha: fechaCalendario,
         hora: nuevaCitaForm.hora,
         trabajador_id: nuevaCitaForm.trabajador_id,
-        servicios: [] 
+        servicios: nuevaCitaForm.servicio_id ? [nuevaCitaForm.servicio_id] : [],
+        monto: nuevaCitaForm.monto !== '' && nuevaCitaForm.monto !== null ? Number(nuevaCitaForm.monto) : null
     };
 
     const res = await fetch(`${API_URL}/api.php?action=agendar_cita`, {
@@ -655,11 +665,10 @@ export default function AdminDashboard({ session, logout }) {
     });
     const data = await res.json();
     if (data.status === 'success') {
-        alert("Cita agendada exitosamente.");
+        showToast("Cita agendada exitosamente.", "success");
         setShowModalCita(false);
-        setNuevaCitaForm({ rut: '', nombre: '', trabajador_id: '', hora: '10:00' });
-        // Refetch calendar (se confía en polling o se puede recalcular acá)
-        setFechaCalendario(new Date(fechaCalendario).toISOString().split('T')[0]); // Trigger effect
+        setNuevaCitaForm({ rut: '', nombre: '', trabajador_id: '', hora: '10:00', servicio_id: '', monto: '' });
+        cargarCalendario();
     } else {
         alert(data.error || 'Error al agendar cita');
     }
@@ -895,10 +904,12 @@ export default function AdminDashboard({ session, logout }) {
                           <span style={{ color: 'var(--green-emerald-light)', fontWeight: 'bold' }}>Cobrado (${Number(c.total_pagado).toLocaleString('es-CL')})</span>
                       ) : (
                           <button className="btn-primary" onClick={() => {
+                            const subVal = Number(c.subtotal) > 0 ? Number(c.subtotal) : (Number(c.total_pagado) > 0 ? Number(c.total_pagado) : 14000);
                             setCobroActivo({
                               ...c,
-                              descuento: 0,
-                              metodo: 'Efectivo',
+                              subtotal: subVal,
+                              descuento: Number(c.descuento) || 0,
+                              metodo: c.metodo_pago || 'Efectivo',
                               decant_producto_id: ''
                             });
                           }}>Cobrar</button>
@@ -1186,14 +1197,23 @@ export default function AdminDashboard({ session, logout }) {
                          return (
                             <div key={`${barbero.id}-${hora}`} style={{ minHeight: '60px', background: cita ? 'rgba(212, 175, 55, 0.1)' : 'rgba(255,255,255,0.02)', border: cita ? '1px solid var(--gold-jewel)' : '1px dashed #333', borderRadius: '8px', padding: '10px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center', cursor: 'pointer' }} onClick={() => {
                                 if (!cita) { 
-                                    setNuevaCitaForm({ ...nuevaCitaForm, hora, trabajador_id: barbero.id }); 
+                                    setNuevaCitaForm({ 
+                                        rut: '',
+                                        nombre: '',
+                                        hora, 
+                                        trabajador_id: barbero.id,
+                                        servicio_id: servicios[0]?.id || '',
+                                        monto: servicios[0]?.precio || 14000
+                                    }); 
                                     setShowModalCita(true); 
                                 } else if (cita.estado === 'Pendiente' || cita.estado === 'Terminado_Esperando_Pago') {
+                                    const subVal = Number(cita.subtotal) > 0 ? Number(cita.subtotal) : (Number(cita.total_pagado) > 0 ? Number(cita.total_pagado) : 14000);
                                     setCobroActivo({
                                         ...cita,
+                                        subtotal: subVal,
                                         barbero: cita.trabajador,
-                                        descuento: 0,
-                                        metodo: 'Efectivo',
+                                        descuento: Number(cita.descuento) || 0,
+                                        metodo: cita.metodo_pago || 'Efectivo',
                                         decant_producto_id: ''
                                     });
                                 }
@@ -1249,11 +1269,13 @@ export default function AdminDashboard({ session, logout }) {
                                    <div key={i} style={{ background: '#222', padding: '5px', borderRadius: '4px', fontSize: '0.75rem', borderLeft: '2px solid var(--gold-jewel)', cursor: 'pointer' }} onClick={(e) => {
                                         e.stopPropagation();
                                         if (cita.estado === 'Pendiente' || cita.estado === 'Terminado_Esperando_Pago') {
+                                            const subVal = Number(cita.subtotal) > 0 ? Number(cita.subtotal) : (Number(cita.total_pagado) > 0 ? Number(cita.total_pagado) : 14000);
                                             setCobroActivo({
                                                 ...cita,
+                                                subtotal: subVal,
                                                 barbero: cita.trabajador,
-                                                descuento: 0,
-                                                metodo: 'Efectivo',
+                                                descuento: Number(cita.descuento) || 0,
+                                                metodo: cita.metodo_pago || 'Efectivo',
                                                 decant_producto_id: ''
                                             });
                                         }
@@ -1303,11 +1325,13 @@ export default function AdminDashboard({ session, logout }) {
                                     <div key={idx} style={{ fontSize: '0.7rem', background: '#222', padding: '2px 5px', borderRadius: '3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' }} onClick={(e) => {
                                         e.stopPropagation();
                                         if (c.estado === 'Pendiente' || c.estado === 'Terminado_Esperando_Pago') {
+                                            const subVal = Number(c.subtotal) > 0 ? Number(c.subtotal) : (Number(c.total_pagado) > 0 ? Number(c.total_pagado) : 14000);
                                             setCobroActivo({
                                                 ...c,
+                                                subtotal: subVal,
                                                 barbero: c.trabajador,
-                                                descuento: 0,
-                                                metodo: 'Efectivo',
+                                                descuento: Number(c.descuento) || 0,
+                                                metodo: c.metodo_pago || 'Efectivo',
                                                 decant_producto_id: ''
                                             });
                                         }
@@ -1344,7 +1368,7 @@ export default function AdminDashboard({ session, logout }) {
                 />
                 <select 
                     className="input-field" 
-                    style={{ margin: 0 }}
+                    style={{ margin: 0 }} 
                     value={filtroBarberoCal}
                     onChange={e => setFiltroBarberoCal(e.target.value)}
                 >
@@ -1353,25 +1377,82 @@ export default function AdminDashboard({ session, logout }) {
                         <option key={t.id} value={t.id}>{t.nombre}</option>
                     ))}
                 </select>
-                <button className="btn-primary" onClick={() => setShowModalCita(true)}>+ Nueva Cita</button>
+                <button className="btn-primary" onClick={() => {
+                    setNuevaCitaForm({
+                        rut: '',
+                        nombre: '',
+                        trabajador_id: trabajadores[0]?.id || '',
+                        hora: '10:00',
+                        servicio_id: servicios[0]?.id || '',
+                        monto: servicios[0]?.precio || 14000
+                    });
+                    setShowModalCita(true);
+                }}>+ Nueva Cita</button>
             </div>
         </div>
         
         {/* Modal Nueva Cita */}
         {showModalCita && (
-            <div style={{ background: 'rgba(26, 26, 26, 0.9)', padding: '25px', borderRadius: '12px', border: '1px solid var(--gold-jewel)', marginBottom: '20px' }}>
-                <h3 style={{ marginTop: 0, color: '#fff' }}>Agendar Nueva Cita</h3>
+            <div style={{ background: 'rgba(26, 26, 26, 0.95)', padding: '25px', borderRadius: '12px', border: '1px solid var(--gold-jewel)', marginBottom: '20px', boxShadow: '0 10px 30px rgba(0,0,0,0.8)' }}>
+                <h3 style={{ marginTop: 0, color: 'var(--gold-jewel)' }}>Agendar Nueva Cita</h3>
                 <form onSubmit={handleAgendarCita} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-                    <input className="input-field" style={{ margin: 0 }} placeholder="RUT Cliente (Ej: 11111111-1)" value={nuevaCitaForm.rut} onChange={e=>setNuevaCitaForm({...nuevaCitaForm, rut: e.target.value})} required />
-                    <input className="input-field" style={{ margin: 0 }} placeholder="Nombre Cliente" value={nuevaCitaForm.nombre} onChange={e=>setNuevaCitaForm({...nuevaCitaForm, nombre: e.target.value})} required />
-                    <select className="input-field" style={{ margin: 0 }} value={nuevaCitaForm.trabajador_id} onChange={e=>setNuevaCitaForm({...nuevaCitaForm, trabajador_id: e.target.value})} required>
-                        <option value="">Selecciona Barbero...</option>
-                        {trabajadores.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
-                    </select>
-                    <select className="input-field" style={{ margin: 0 }} value={nuevaCitaForm.hora} onChange={e=>setNuevaCitaForm({...nuevaCitaForm, hora: e.target.value})} required>
-                        {horas.map(h => <option key={h} value={h}>{h}</option>)}
-                    </select>
-                    <div style={{ gridColumn: 'span 2', display: 'flex', gap: '10px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#aaa', marginBottom: '4px' }}>RUT del Cliente *</label>
+                      <input className="input-field" style={{ margin: 0 }} placeholder="RUT Cliente (Ej: 11111111-1)" value={nuevaCitaForm.rut} onChange={e=>setNuevaCitaForm({...nuevaCitaForm, rut: e.target.value})} required />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#aaa', marginBottom: '4px' }}>Nombre del Cliente *</label>
+                      <input className="input-field" style={{ margin: 0 }} placeholder="Nombre Cliente" value={nuevaCitaForm.nombre} onChange={e=>setNuevaCitaForm({...nuevaCitaForm, nombre: e.target.value})} required />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#aaa', marginBottom: '4px' }}>Barbero *</label>
+                      <select className="input-field" style={{ margin: 0 }} value={nuevaCitaForm.trabajador_id} onChange={e=>setNuevaCitaForm({...nuevaCitaForm, trabajador_id: e.target.value})} required>
+                          <option value="">Selecciona Barbero...</option>
+                          {trabajadores.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#aaa', marginBottom: '4px' }}>Hora *</label>
+                      <select className="input-field" style={{ margin: 0 }} value={nuevaCitaForm.hora} onChange={e=>setNuevaCitaForm({...nuevaCitaForm, hora: e.target.value})} required>
+                          {horas.map(h => <option key={h} value={h}>{h}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#aaa', marginBottom: '4px' }}>Servicio</label>
+                      <select 
+                        className="input-field" 
+                        style={{ margin: 0 }} 
+                        value={nuevaCitaForm.servicio_id} 
+                        onChange={e => {
+                          const sId = e.target.value;
+                          const sFound = servicios.find(s => String(s.id) === String(sId));
+                          setNuevaCitaForm({
+                            ...nuevaCitaForm, 
+                            servicio_id: sId, 
+                            monto: sFound ? sFound.precio : nuevaCitaForm.monto
+                          });
+                        }}
+                      >
+                        <option value="">Selecciona Servicio...</option>
+                        {servicios.map(s => (
+                          <option key={s.id} value={s.id}>{s.nombre} (${Number(s.precio).toLocaleString('es-CL')})</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#aaa', marginBottom: '4px' }}>Monto / Precio a Cobrar ($)</label>
+                      <input 
+                        type="number" 
+                        className="input-field" 
+                        style={{ margin: 0 }} 
+                        min="0" 
+                        step="500" 
+                        placeholder="Ej: 14000" 
+                        value={nuevaCitaForm.monto} 
+                        onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, monto: e.target.value })} 
+                      />
+                    </div>
+                    <div style={{ gridColumn: 'span 2', display: 'flex', gap: '10px', marginTop: '10px' }}>
                         <button type="submit" className="btn-primary" style={{ flex: 1 }}>Agendar Cita</button>
                         <button type="button" className="btn-outline-gold" style={{ flex: 1 }} onClick={() => setShowModalCita(false)}>Cancelar</button>
                     </div>
@@ -2933,18 +3014,26 @@ export default function AdminDashboard({ session, logout }) {
              </div>
              
              <div style={{ marginBottom: '15px' }}>
-               <label style={{ display: 'block', marginBottom: '5px' }}>Total Original</label>
-               <input type="text" className="input-field" disabled value={`$${Number(cobroActivo.subtotal).toLocaleString('es-CL')}`} />
+                <label style={{ display: 'block', marginBottom: '5px', fontSize: '0.85rem' }}>Monto / Total Original ($)</label>
+                <input 
+                  type="number" 
+                  className="input-field" 
+                  min="0" 
+                  step="500" 
+                  placeholder="Ej: 14000" 
+                  value={cobroActivo.subtotal !== undefined && cobroActivo.subtotal !== null ? cobroActivo.subtotal : ''} 
+                  onChange={e => setCobroActivo({ ...cobroActivo, subtotal: Number(e.target.value) || 0 })} 
+                />
              </div>
              <div style={{ marginBottom: '15px' }}>
-               <label style={{ display: 'block', marginBottom: '5px' }}>Descuento (Monto $)</label>
+               <label style={{ display: 'block', marginBottom: '5px', fontSize: '0.85rem' }}>Descuento (Monto $)</label>
                <input type="number" className="input-field" value={cobroActivo.descuento || 0} onChange={e => setCobroActivo({...cobroActivo, descuento: Number(e.target.value)})} />
              </div>
-             <div style={{ marginBottom: '15px', color: 'var(--green-emerald-light)', fontSize: '1.2rem', fontWeight: 'bold' }}>
-               Total a Pagar: ${Number(cobroActivo.subtotal - (cobroActivo.descuento || 0)).toLocaleString('es-CL')}
+             <div style={{ marginBottom: '15px', color: 'var(--green-emerald-light)', fontSize: '1.25rem', fontWeight: 'bold' }}>
+               Total a Pagar: ${Math.max(0, (Number(cobroActivo.subtotal) || 0) - (Number(cobroActivo.descuento) || 0)).toLocaleString('es-CL')}
              </div>
              <div style={{ marginBottom: '20px' }}>
-               <label style={{ display: 'block', marginBottom: '5px' }}>Método de Pago</label>
+               <label style={{ display: 'block', marginBottom: '5px', fontSize: '0.85rem' }}>Método de Pago</label>
                <select className="input-field" value={cobroActivo.metodo} onChange={e => setCobroActivo({...cobroActivo, metodo: e.target.value})}>
                  <option value="Efectivo" style={{color: '#000'}}>Efectivo</option>
                  <option value="Transferencia" style={{color: '#000'}}>Transferencia</option>
@@ -2952,7 +3041,7 @@ export default function AdminDashboard({ session, logout }) {
                </select>
              </div>
              <div style={{ display: 'flex', gap: '15px' }}>
-               <button className="btn-primary" style={{ flex: 1 }} onClick={() => handleCobrarCaja(cobroActivo.id, cobroActivo.descuento, cobroActivo.metodo, cobroActivo.decant_producto_id)}>Confirmar Pago</button>
+               <button className="btn-primary" style={{ flex: 1 }} onClick={() => handleCobrarCaja(cobroActivo.id, cobroActivo.subtotal, cobroActivo.descuento, cobroActivo.metodo, cobroActivo.decant_producto_id)}>Confirmar Pago</button>
                <button className="btn-outline-gold" style={{ flex: 1 }} onClick={() => setCobroActivo(null)}>Cancelar</button>
              </div>
            </div>

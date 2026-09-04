@@ -126,7 +126,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             
             $stmt = $pdo->prepare("
                 SELECT c.id, c.fecha, c.hora, c.estado, cl.nombre as cliente, t.nombre as trabajador,
-                (SELECT SUM(precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id) as subtotal, cl.cortes_acumulados, c.descuento
+                COALESCE((SELECT SUM(precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id), c.total_pagado, 0) as subtotal,
+                cl.cortes_acumulados, c.descuento, c.total_pagado, c.metodo_pago
                 FROM citas c
                 JOIN clientes cl ON c.cliente_id = cl.id
                 JOIN trabajadores t ON c.trabajador_id = t.id
@@ -160,8 +161,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         case 'get_citas_por_cobrar':
             $fecha = $pdo->query("SELECT CURDATE()")->fetchColumn();
             $stmt = $pdo->prepare("
-                SELECT c.id, c.hora, c.estado, cl.nombre as cliente, cl.cortes_acumulados, t.nombre as barbero, c.descuento, c.total_pagado,
-                (SELECT SUM(precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id) as subtotal
+                SELECT c.id, c.hora, c.estado, cl.nombre as cliente, cl.cortes_acumulados, t.nombre as barbero, c.descuento, c.total_pagado, c.metodo_pago,
+                COALESCE((SELECT SUM(precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id), c.total_pagado, 0) as subtotal
                 FROM citas c
                 JOIN clientes cl ON c.cliente_id = cl.id
                 JOIN trabajadores t ON c.trabajador_id = t.id

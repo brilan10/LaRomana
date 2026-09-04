@@ -55,8 +55,8 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
   const [pedidoConfirmado, setPedidoConfirmado] = useState(null);
 
   const [productos, setProductos] = useState([]);
-  const [categorias, setCategorias] = useState(['Más Vendidos']);
-  const [catSeleccionada, setCatSeleccionada] = useState('Más Vendidos');
+  const [categorias, setCategorias] = useState(['Gorras y Accesorios', 'Perfumes y Decants', 'Capilares', 'Más Vendidos']);
+  const [catSeleccionada, setCatSeleccionada] = useState('Gorras y Accesorios');
 
   // Datos para compra / ticket
   const [rutCliente, setRutCliente] = useState(session?.usuario?.rut || '');
@@ -78,9 +78,28 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
     fetch(`${API_URL}/api.php?action=get_productos`)
       .then(r => r.json())
       .then(data => {
-        setProductos(data || []);
-        const uniqueCats = [...new Set((data || []).map(p => p.categoria).filter(Boolean))];
-        setCategorias(['Más Vendidos', ...uniqueCats]);
+        const prods = data || [];
+        setProductos(prods);
+        const rawCats = [...new Set(prods.map(p => p.categoria).filter(Boolean))];
+
+        const getPriority = (name) => {
+          const lower = name.toLowerCase();
+          if (lower.includes('gorra') || lower.includes('accesorio')) return 1;
+          if (lower.includes('perfume') || lower.includes('decant')) return 2;
+          if (lower.includes('capilar')) return 3;
+          return 10;
+        };
+
+        const sortedCats = rawCats.sort((a, b) => getPriority(a) - getPriority(b));
+        const finalCats = sortedCats.length > 0 ? [...sortedCats, 'Más Vendidos'] : ['Gorras y Accesorios', 'Perfumes y Decants', 'Capilares', 'Más Vendidos'];
+        setCategorias(finalCats);
+
+        setCatSeleccionada(prev => {
+          if (prev && finalCats.includes(prev) && prev !== 'Más Vendidos') {
+            return prev;
+          }
+          return finalCats[0] || 'Gorras y Accesorios';
+        });
       })
       .catch(e => console.error(e));
   }, []);
