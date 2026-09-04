@@ -15,49 +15,63 @@ $options = [
     PDO::ATTR_EMULATE_PREPARES   => false,
 ];
 
-// Perfiles de conexión a intentar automáticamente en orden
-$connection_configs = [
-    // 1. Producción cPanel WebHost Chile (Host: localhost, Usuario: laromana_ronin, Clave: Ronin.abc.123)
-    [
-        'host' => 'localhost',
-        'db'   => 'laromana_basededatos',
-        'user' => 'laromana_ronin',
-        'pass' => 'Ronin.abc.123'
-    ],
-    // 2. Producción vía TCP 127.0.0.1
-    [
-        'host' => '127.0.0.1',
-        'db'   => 'laromana_basededatos',
-        'user' => 'laromana_ronin',
-        'pass' => 'Ronin.abc.123'
-    ],
-    // 3. Producción con variante de clave rONIN.ABC.123
-    [
-        'host' => 'localhost',
-        'db'   => 'laromana_basededatos',
-        'user' => 'laromana_ronin',
-        'pass' => 'rONIN.ABC.123'
-    ],
-    [
-        'host' => '127.0.0.1',
-        'db'   => 'laromana_basededatos',
-        'user' => 'laromana_ronin',
-        'pass' => 'rONIN.ABC.123'
-    ],
-    // 4. Entorno Local XAMPP (127.0.0.1 / localhost)
-    [
-        'host' => '127.0.0.1',
-        'db'   => 'la_romana',
-        'user' => 'root',
-        'pass' => ''
-    ],
-    [
-        'host' => 'localhost',
-        'db'   => 'la_romana',
-        'user' => 'root',
-        'pass' => ''
-    ]
-];
+$is_local = (isset($_SERVER['HTTP_HOST']) && (strpos($_SERVER['HTTP_HOST'], 'localhost') !== false || strpos($_SERVER['HTTP_HOST'], '127.0.0.1') !== false)) || (php_sapi_name() === 'cli');
+
+if ($is_local) {
+    $connection_configs = [
+        [
+            'host' => '127.0.0.1',
+            'db'   => 'la_romana',
+            'user' => 'root',
+            'pass' => ''
+        ],
+        [
+            'host' => 'localhost',
+            'db'   => 'la_romana',
+            'user' => 'root',
+            'pass' => ''
+        ],
+        [
+            'host' => 'localhost',
+            'db'   => 'laromana_basededatos',
+            'user' => 'laromana_ronin',
+            'pass' => 'Ronin.abc.123'
+        ],
+        [
+            'host' => '127.0.0.1',
+            'db'   => 'laromana_basededatos',
+            'user' => 'laromana_ronin',
+            'pass' => 'Ronin.abc.123'
+        ]
+    ];
+} else {
+    $connection_configs = [
+        [
+            'host' => 'localhost',
+            'db'   => 'laromana_basededatos',
+            'user' => 'laromana_ronin',
+            'pass' => 'Ronin.abc.123'
+        ],
+        [
+            'host' => '127.0.0.1',
+            'db'   => 'laromana_basededatos',
+            'user' => 'laromana_ronin',
+            'pass' => 'Ronin.abc.123'
+        ],
+        [
+            'host' => 'localhost',
+            'db'   => 'laromana_basededatos',
+            'user' => 'laromana_ronin',
+            'pass' => 'rONIN.ABC.123'
+        ],
+        [
+            'host' => '127.0.0.1',
+            'db'   => 'laromana_basededatos',
+            'user' => 'laromana_ronin',
+            'pass' => 'rONIN.ABC.123'
+        ]
+    ];
+}
 
 $pdo = null;
 $last_error = null;
