@@ -72,7 +72,7 @@ function App() {
             {session && (
               <div style={{ background: 'rgba(0,0,0,0.5)', padding: '5px 12px', borderRadius: '50px', display: 'flex', alignItems: 'center', gap: '10px', border: '1px solid rgba(255,255,255,0.1)' }}>
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                  {session.usuario.nombre.split(' ')[0]} <strong style={{ color: 'var(--gold-jewel)' }}>({session.rol})</strong>
+                  {(session.usuario?.nombre || 'Usuario').split(' ')[0]} <strong style={{ color: 'var(--gold-jewel)' }}>({session.rol})</strong>
                 </span>
                 <button 
                   onClick={logout} 

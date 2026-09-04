@@ -425,14 +425,27 @@ export default function AdminDashboard({ session, logout }) {
   };
 
   const cargarDashboard = async () => {
-    const resM = await fetch(`${API_URL}/admin_api.php?action=get_dashboard_metrics`);
-    setMetrics(await resM.json());
-    const resC = await fetch(`${API_URL}/admin_api.php?action=get_todas_citas`);
-    setCitasCalendario(await resC.json());
-    const resCRM = await fetch(`${API_URL}/admin_api.php?action=get_crm_clientes`);
-    setCrmClientes(await resCRM.json());
-    const resChart = await fetch(`${API_URL}/admin_api.php?action=get_chart_data`);
-    setChartData((await resChart.json()).reverse()); // De más antiguo a más reciente
+    try {
+      const resM = await fetch(`${API_URL}/admin_api.php?action=get_dashboard_metrics`);
+      const dataM = await resM.json();
+      if (dataM && typeof dataM === 'object') setMetrics(dataM);
+
+      const resC = await fetch(`${API_URL}/admin_api.php?action=get_todas_citas`);
+      const dataC = await resC.json();
+      if (Array.isArray(dataC)) setCitasCalendario(dataC);
+
+      const resCRM = await fetch(`${API_URL}/admin_api.php?action=get_crm_clientes`);
+      const dataCRM = await resCRM.json();
+      if (Array.isArray(dataCRM)) setCrmClientes(dataCRM);
+
+      const resChart = await fetch(`${API_URL}/admin_api.php?action=get_chart_data`);
+      const dataChart = await resChart.json();
+      if (Array.isArray(dataChart)) {
+        setChartData(dataChart);
+      }
+    } catch (e) {
+      console.error("Error cargando dashboard:", e);
+    }
   };
 
   const cargarCaja = async () => {
@@ -1518,21 +1531,29 @@ export default function AdminDashboard({ session, logout }) {
       </div>
 
       {/* CHART */}
-      <div style={{ background: 'rgba(26, 26, 26, 0.6)', backdropFilter: 'blur(10px)', borderRadius: '12px', border: '1px solid #333', padding: '20px', height: '350px' }}>
+      <div style={{ background: 'rgba(26, 26, 26, 0.6)', backdropFilter: 'blur(10px)', borderRadius: '12px', border: '1px solid #333', padding: '20px', minHeight: '350px' }}>
          <h3 style={{ margin: '0 0 20px 0', color: '#fff' }}>Ingresos Diarios (Últimos 7 días)</h3>
-         <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData} margin={{ top: 5, right: 20, left: 20, bottom: 25 }}>
-               <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-               <XAxis dataKey="fecha" stroke="#888" tick={{fill: '#888'}} />
-               <YAxis stroke="#888" tick={{fill: '#888'}} tickFormatter={(value) => `$${value/1000}k`} />
-               <Tooltip 
-                  contentStyle={{ backgroundColor: '#111', border: '1px solid var(--gold-jewel)', borderRadius: '8px' }}
-                  itemStyle={{ color: 'var(--gold-jewel)' }}
-                  formatter={(value) => [`$${Number(value).toLocaleString('es-CL')}`, 'Ingresos']}
-               />
-               <Line type="monotone" dataKey="total" stroke="var(--gold-jewel)" strokeWidth={3} dot={{ fill: 'var(--gold-jewel)', r: 5 }} activeDot={{ r: 8 }} />
-            </LineChart>
-         </ResponsiveContainer>
+         {(!chartData || !Array.isArray(chartData) || chartData.length === 0) ? (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '260px', color: '#888' }}>
+               No hay datos registrados en los últimos 7 días.
+            </div>
+         ) : (
+            <div style={{ width: '100%', height: '260px' }}>
+              <ResponsiveContainer width="100%" height={260}>
+                 <LineChart data={chartData} margin={{ top: 5, right: 20, left: 20, bottom: 25 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                    <XAxis dataKey="fecha" stroke="#888" tick={{fill: '#888'}} />
+                    <YAxis stroke="#888" tick={{fill: '#888'}} tickFormatter={(value) => `$${value/1000}k`} />
+                    <Tooltip 
+                       contentStyle={{ backgroundColor: '#111', border: '1px solid var(--gold-jewel)', borderRadius: '8px' }}
+                       itemStyle={{ color: 'var(--gold-jewel)' }}
+                       formatter={(value) => [`$${Number(value).toLocaleString('es-CL')}`, 'Ingresos']}
+                    />
+                    <Line type="monotone" dataKey="total" stroke="var(--gold-jewel)" strokeWidth={3} dot={{ fill: 'var(--gold-jewel)', r: 5 }} activeDot={{ r: 8 }} />
+                 </LineChart>
+              </ResponsiveContainer>
+            </div>
+         )}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '30px' }}>
@@ -1543,7 +1564,7 @@ export default function AdminDashboard({ session, logout }) {
             <div style={{ display: 'flex', gap: '10px' }}>
               <select className="input-field" style={{ margin: 0, padding: '5px' }} value={filtroBarberoDashboard} onChange={e => setFiltroBarberoDashboard(e.target.value)} id="agenda-filter">
                 <option value="">Todos los Barberos</option>
-                {[...new Set(citasCalendario.map(c => c.trabajador))].map(t => <option key={t} value={t}>{t}</option>)}
+                {[...new Set((citasCalendario || []).map(c => c.trabajador).filter(Boolean))].map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
           </div>
@@ -1558,14 +1579,14 @@ export default function AdminDashboard({ session, logout }) {
                 </tr>
               </thead>
               <tbody id="agenda-tbody">
-                {citasCalendario.filter(c => filtroBarberoDashboard === '' || c.trabajador === filtroBarberoDashboard).length === 0 ? (
+                {(citasCalendario || []).filter(c => filtroBarberoDashboard === '' || c.trabajador === filtroBarberoDashboard).length === 0 ? (
                   <tr><td colSpan="4" style={{...tableCellStyle, textAlign: 'center', color: '#666', padding: '30px'}}>No hay citas agendadas hoy que coincidan con la búsqueda.</td></tr>
                 ) : (
-                  citasCalendario.filter(c => filtroBarberoDashboard === '' || c.trabajador === filtroBarberoDashboard).map((cita, i) => (
+                  (citasCalendario || []).filter(c => filtroBarberoDashboard === '' || c.trabajador === filtroBarberoDashboard).map((cita, i) => (
                     <tr key={i} className="agenda-row" data-barbero={cita.trabajador} style={{ background: i % 2 === 0 ? '#161616' : 'transparent' }}>
-                      <td style={{...tableCellStyle, fontWeight: 'bold', color: 'var(--gold-jewel)'}}>{cita.hora.slice(0,5)}</td>
-                      <td style={{...tableCellStyle}}>{cita.cliente}</td>
-                      <td style={{...tableCellStyle, color: '#aaa'}}>{cita.trabajador}</td>
+                      <td style={{...tableCellStyle, fontWeight: 'bold', color: 'var(--gold-jewel)'}}>{(cita.hora || '').slice(0,5)}</td>
+                      <td style={{...tableCellStyle}}>{cita.cliente || 'Cliente'}</td>
+                      <td style={{...tableCellStyle, color: '#aaa'}}>{cita.trabajador || '-'}</td>
                       <td style={tableCellStyle}>
                         <span style={{ 
                           background: cita.estado === 'Completada' ? 'rgba(39, 174, 96, 0.1)' : (cita.estado === 'Cancelada' ? 'rgba(231, 76, 60, 0.1)' : 'rgba(212, 175, 55, 0.1)'),
@@ -1587,18 +1608,37 @@ export default function AdminDashboard({ session, logout }) {
         <div style={{ background: 'rgba(26, 26, 26, 0.6)', backdropFilter: 'blur(10px)', borderRadius: '12px', border: '1px solid #333', padding: '20px' }}>
           <h3 style={{ margin: '0 0 20px 0', color: '#fff' }}>Alerta VIP (CRM)</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-            {crmClientes.slice(0,6).map((c, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#111', padding: '15px', borderRadius: '8px', borderLeft: c.riesgo ? '3px solid #e74c3c' : '3px solid transparent' }}>
-                <div>
-                  <div style={{ fontWeight: 'bold' }}>{c.nombre}</div>
-                  <div style={{ fontSize: '0.8rem', color: c.riesgo ? '#e74c3c' : '#888', marginTop: '4px' }}>Visita: {c.tiempo_visita}</div>
+            {(!crmClientes || !Array.isArray(crmClientes) || crmClientes.length === 0) ? (
+              <p style={{ color: '#888', fontSize: '0.85rem' }}>No hay clientes registrados en CRM.</p>
+            ) : (
+              crmClientes.slice(0,6).map((c, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#111', padding: '15px', borderRadius: '8px', borderLeft: c.riesgo ? '3px solid #e74c3c' : '3px solid transparent' }}>
+                  <div>
+                    <div style={{ fontWeight: 'bold' }}>{c.nombre || 'Cliente'}</div>
+                    <div style={{ fontSize: '0.8rem', color: c.riesgo ? '#e74c3c' : '#888', marginTop: '4px' }}>
+                      {c.cortes_mes > 0 ? `${c.cortes_mes} cortes este mes` : (c.fecha_registro ? `Reg: ${(c.fecha_registro || '').slice(0,10)}` : 'Cliente')}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ color: 'var(--gold-jewel)', fontWeight: 'bold', fontSize: '0.9rem' }}>
+                      {c.cortes_acumulados || c.cortes || 0} cortes
+                    </div>
+                    {c.telefono ? (
+                      <a 
+                        href={`https://wa.me/${c.telefono.replace(/[^0-9]/g, '')}`} 
+                        target="_blank" 
+                        rel="noreferrer" 
+                        style={{ color: 'var(--green-emerald-light)', fontSize: '0.8rem', textDecoration: 'none', display: 'inline-block', marginTop: '4px' }}
+                      >
+                        Contactar ↗
+                      </a>
+                    ) : (
+                      <span style={{ color: '#666', fontSize: '0.75rem', display: 'inline-block', marginTop: '4px' }}>Sin teléfono</span>
+                    )}
+                  </div>
                 </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ color: 'var(--gold-jewel)', fontWeight: 'bold', fontSize: '0.9rem' }}>{c.cortes} cortes</div>
-                  <a href={`https://wa.me/${c.telefono.replace('+','')}`} target="_blank" rel="noreferrer" style={{ color: 'var(--green-emerald-light)', fontSize: '0.8rem', textDecoration: 'none', display: 'inline-block', marginTop: '4px' }}>Contactar ↗</a>
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       </div>

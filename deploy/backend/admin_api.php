@@ -106,18 +106,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                     WHERE c.fecha = ? AND c.estado = 'Completada'
                 ");
                 $stmtC->execute([$fecha]);
-                $c = $stmtC->fetchColumn() ?: 0;
+                $c = (float)($stmtC->fetchColumn() ?: 0);
 
                 $stmtP = $pdo->prepare("SELECT SUM(total) FROM pedidos WHERE DATE(fecha_creacion) = ? AND estado = 'Entregado'");
                 $stmtP->execute([$fecha]);
-                $p = $stmtP->fetchColumn() ?: 0;
+                $p = (float)($stmtP->fetchColumn() ?: 0);
 
                 $data[] = [
                     'fecha' => date('d/m', strtotime($fecha)),
-                    'total' => $c + $p
+                    'total' => (float)($c + $p)
                 ];
             }
-            echo json_encode($data);
+            echo json_encode(array_reverse($data));
             break;
 
         case 'get_todas_citas':
