@@ -254,10 +254,24 @@ export default function AdminDashboard({ session, logout }) {
 
     fetchData(); // Carga inicial
 
-    // Polling cada 10 segundos para mantener datos actualizados
-    const intervalId = setInterval(fetchData, 60000);
+    // Polling cada 10 segundos para mantener datos y calendario en tiempo real
+    const intervalId = setInterval(fetchData, 10000);
 
-    return () => clearInterval(intervalId);
+    const onFocus = () => {
+      fetchData();
+    };
+    const onVisibilityChange = () => {
+      if (!document.hidden) fetchData();
+    };
+
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [tab, fechaCalendario, vistaCalendario]);
 
   const aplicarPeriodoLiquidacion = (tipo) => {

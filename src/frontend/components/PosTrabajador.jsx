@@ -47,6 +47,19 @@ export default function PosTrabajador({ session }) {
 
   useEffect(() => {
     fetchAgenda();
+
+    const intervalId = setInterval(fetchAgenda, 10000);
+    const onFocus = () => fetchAgenda();
+    const onVisibility = () => { if (!document.hidden) fetchAgenda(); };
+
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [session]);
 
   const handleCambiarClave = async () => {
