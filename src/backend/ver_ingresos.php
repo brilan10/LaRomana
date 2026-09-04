@@ -14,12 +14,13 @@ try {
             c.id AS cita_id,
             c.fecha,
             c.hora,
-            c.cliente_nombre,
+            cl.nombre AS cliente_nombre,
             t.nombre AS barbero,
             s.nombre AS servicio,
             cd.precio_cobrado
         FROM cita_detalle cd
         JOIN citas c ON cd.cita_id = c.id
+        LEFT JOIN clientes cl ON c.cliente_id = cl.id
         LEFT JOIN trabajadores t ON c.trabajador_id = t.id
         LEFT JOIN servicios s ON cd.servicio_id = s.id
         WHERE c.fecha >= ? AND c.estado = 'Completada'
@@ -36,15 +37,15 @@ try {
     // 2. Desglose de Pedidos de Tienda del Mes
     $stmtPedidos = $pdo->prepare("
         SELECT 
-            id AS pedido_id,
-            cliente_nombre,
-            metodo_pago,
-            total,
-            estado,
-            fecha_creacion
-        FROM pedidos
-        WHERE fecha_creacion >= ? AND estado = 'Entregado'
-        ORDER BY fecha_creacion DESC
+            p.id AS pedido_id,
+            cl.nombre AS cliente_nombre,
+            p.total,
+            p.estado,
+            p.fecha_creacion
+        FROM pedidos p
+        LEFT JOIN clientes cl ON p.cliente_id = cl.id
+        WHERE p.fecha_creacion >= ? AND p.estado = 'Entregado'
+        ORDER BY p.fecha_creacion DESC
     ");
     $stmtPedidos->execute([$mes_actual]);
     $detallesPedidos = $stmtPedidos->fetchAll();
