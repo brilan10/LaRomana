@@ -211,6 +211,11 @@ export default function AdminDashboard({ session, logout }) {
 
   useEffect(() => {
     const fetchData = () => {
+      // Si hay un modal de cobro o edición abierto, no interferir con la interacción del usuario
+      if (cobroActivo || showModalCita || showNuevoClienteModal || ticketDetalleModal || pagoModalData || showAbrirCaja || showCerrarCaja || showPremioModal || barberoDetalleModal || historialPagosModal) {
+        return;
+      }
+
       if (tab === 'dashboard') cargarDashboard();
       if (tab === 'bodega') cargarBodega();
       if (tab === 'equipo') cargarEquipo();
