@@ -375,3 +375,51 @@ h1, h2, h3, h4, h5, h6 {
   }
 }
 
+/* --- Botón Instalar App PWA --- */
+.btn-install-pwa {
+  outline: none;
+}
+
+.btn-install-pwa:hover {
+  transform: translateY(-2px) scale(1.02);
+  background: linear-gradient(135deg, rgba(212, 175, 55, 0.35), rgba(25, 25, 25, 0.95)) !important;
+  box-shadow: 0 6px 20px rgba(212, 175, 55, 0.35) !important;
+  border-color: #ffd700 !important;
+}
+
+.btn-install-pwa:active {
+  transform: translateY(1px) scale(0.97);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6) !important;
+}
+
+/* Animaciones */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(15px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Scrollbars estilizados para Admin Sidebar y Contenedores */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(212, 175, 55, 0.3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--gold-jewel);
+}
+
+

@@ -6,6 +6,25 @@ import { saveAs } from 'file-saver';
 
 export default function AdminDashboard({ session, logout }) {
   const [tab, setTab] = useState('dashboard');
+  const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => {
+      const width = window.innerWidth;
+      setWindowWidth(width);
+      if (width < 768) {
+        setMobileSidebarOpen(false);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const isMobile = windowWidth < 768;
+  const isTablet = windowWidth >= 768 && windowWidth < 1024;
+  const isCompact = !isMobile && (isTablet || isSidebarCollapsed);
 
   // Datos Bodega
   const [productos, setProductos] = useState([]);
@@ -802,18 +821,41 @@ export default function AdminDashboard({ session, logout }) {
   };
 
 
+  // Configuración de Pestañas de Navegación
+  const navTabs = [
+    { id: 'dashboard', label: 'Dashboard', icon: '📊' },
+    { id: 'calendario', label: 'Calendario', icon: '📅' },
+    { id: 'analitica', label: 'Analítica', icon: '📈' },
+    { id: 'caja', label: 'Caja', icon: '💰' },
+    { id: 'crm', label: 'CRM', icon: '👥' },
+    { id: 'servicios', label: 'Servicios', icon: '✂️' },
+    { id: 'pedidos', label: 'Pedidos', icon: '🛍️' },
+    { id: 'bodega', label: 'Inventario', icon: '📦' },
+    { id: 'equipo', label: 'Equipo', icon: '👥' }
+  ];
+
+  const currentTabInfo = navTabs.find(t => t.id === tab) || { label: 'Panel', icon: '⚙️' };
+
   // --- STYLES ---
   const sidebarBtnStyle = (isActive) => ({
     width: '100%',
-    padding: '15px 20px',
-    textAlign: 'left',
-    background: isActive ? 'rgba(212, 175, 55, 0.1)' : 'transparent',
+    padding: isCompact ? '14px 6px' : '14px 20px',
+    textAlign: isCompact ? 'center' : 'left',
+    background: isActive ? 'rgba(212, 175, 55, 0.15)' : 'transparent',
     color: isActive ? 'var(--gold-jewel)' : '#ccc',
     border: 'none',
-    borderRight: isActive ? '3px solid var(--gold-jewel)' : '3px solid transparent',
+    borderRight: !isCompact && isActive ? '3px solid var(--gold-jewel)' : '3px solid transparent',
+    borderLeft: isCompact && isActive ? '3px solid var(--gold-jewel)' : 'none',
     cursor: 'pointer',
-    fontSize: '1rem',
-    transition: 'all 0.2s'
+    fontSize: isCompact ? '1.25rem' : '0.95rem',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: isCompact ? 'center' : 'flex-start',
+    gap: isCompact ? '0' : '12px',
+    transition: 'all 0.2s ease',
+    whiteSpace: 'nowrap',
+    borderRadius: isCompact ? '8px' : '0',
+    margin: isCompact ? '2px auto' : '0'
   });
 
   const tableHeaderStyle = { padding: '15px', textAlign: 'left', color: 'var(--text-secondary)', borderBottom: '1px solid #333', fontSize: '0.9rem', textTransform: 'uppercase' };
@@ -2978,60 +3020,174 @@ export default function AdminDashboard({ session, logout }) {
   };
 
   return (
-    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'transparent', zIndex: 100, display: 'flex', color: '#fff', fontFamily: "'Montserrat', sans-serif" }}>
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'transparent', zIndex: 100, display: 'flex', flexDirection: isMobile ? 'column' : 'row', color: '#fff', fontFamily: "'Montserrat', sans-serif", overflow: 'hidden' }}>
        <div className="barber-pole-bg" style={{ zIndex: -1 }}></div>
-       
-       {/* Sidebar Fijo */}
-       <div style={{ width: '260px', background: 'rgba(26, 26, 26, 0.7)', backdropFilter: 'blur(10px)', borderRight: '1px solid #333', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '25px 20px', borderBottom: '1px solid #333', textAlign: 'center' }}>
-             <img src="/Logo_romana_dorado.png" alt="La Romana" style={{ maxWidth: '80%', height: 'auto', marginBottom: '10px' }} />
-             <span style={{ fontSize: '0.8rem', color: '#888', textTransform: 'uppercase', letterSpacing: '3px', display: 'block' }}>Back-Office</span>
+
+       {/* Overlay para móvil cuando el sidebar está abierto */}
+       {isMobile && mobileSidebarOpen && (
+         <div 
+           onClick={() => setMobileSidebarOpen(false)}
+           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', zIndex: 998, animation: 'fadeIn 0.2s ease' }}
+         />
+       )}
+
+       {/* Barra Superior para Móviles */}
+       {isMobile && (
+         <div style={{ background: 'rgba(20, 20, 20, 0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,0.1)', padding: '10px 15px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', zIndex: 900, flexShrink: 0 }}>
+           <button 
+             onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}
+             style={{ background: 'rgba(212, 175, 55, 0.15)', border: '1px solid var(--gold-jewel)', color: 'var(--gold-jewel)', width: '38px', height: '38px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.25rem', cursor: 'pointer' }}
+             title="Abrir Menú"
+           >
+             {mobileSidebarOpen ? '✕' : '☰'}
+           </button>
+           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+             <img src="/Logo_romana_dorado.png" alt="La Romana" style={{ height: '30px', objectFit: 'contain' }} />
+             <span style={{ fontSize: '0.9rem', color: 'var(--gold-jewel)', fontWeight: 'bold', letterSpacing: '1px' }}>
+               {currentTabInfo.icon} {currentTabInfo.label}
+             </span>
+           </div>
+           <button 
+             onClick={logout}
+             style={{ background: 'transparent', border: 'none', color: '#e74c3c', fontSize: '1.2rem', cursor: 'pointer', padding: '4px' }}
+             title="Salir"
+           >
+             🚪
+           </button>
+         </div>
+       )}
+
+       {/* Sidebar Autoajustable (Drawer en móvil, Compacto/Extensible en Desktop) */}
+       <div 
+         style={{ 
+           width: isMobile ? '270px' : (isCompact ? '74px' : '250px'),
+           position: isMobile ? 'fixed' : 'relative',
+           top: 0,
+           bottom: 0,
+           left: 0,
+           zIndex: isMobile ? 999 : 100,
+           transform: isMobile ? (mobileSidebarOpen ? 'translateX(0)' : 'translateX(-100%)') : 'none',
+           transition: 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), width 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+           background: 'rgba(22, 22, 22, 0.95)', 
+           backdropFilter: 'blur(16px)', 
+           borderRight: '1px solid rgba(255,255,255,0.1)', 
+           display: 'flex', 
+           flexDirection: 'column',
+           boxShadow: isMobile && mobileSidebarOpen ? '4px 0 30px rgba(0,0,0,0.85)' : 'none',
+           height: '100%',
+           flexShrink: 0
+         }}
+       >
+          {/* Header del Sidebar */}
+          <div style={{ padding: isCompact ? '18px 8px' : '20px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)', textAlign: 'center', position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+             {!isCompact ? (
+               <>
+                 <img src="/Logo_romana_dorado.png" alt="La Romana" style={{ maxWidth: '120px', height: 'auto', marginBottom: '6px' }} />
+                 <span style={{ fontSize: '0.72rem', color: 'var(--gold-jewel)', textTransform: 'uppercase', letterSpacing: '2.5px', fontWeight: 'bold' }}>Back-Office</span>
+               </>
+             ) : (
+               <img src="/Logo_romana_dorado.png" alt="La Romana" style={{ width: '38px', height: 'auto' }} title="La Romana Back-Office" />
+             )}
+
+             {/* Botón para colapsar/expandir en Desktop/Tablet */}
+             {!isMobile && (
+               <button 
+                 onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                 style={{
+                   position: 'absolute',
+                   right: isCompact ? '50%' : '10px',
+                   top: isCompact ? 'auto' : '14px',
+                   bottom: isCompact ? '-12px' : 'auto',
+                   transform: isCompact ? 'translateX(50%)' : 'none',
+                   background: 'rgba(212, 175, 55, 0.2)',
+                   border: '1px solid var(--gold-jewel)',
+                   color: 'var(--gold-jewel)',
+                   borderRadius: '50%',
+                   width: '24px',
+                   height: '24px',
+                   display: 'flex',
+                   alignItems: 'center',
+                   justifyContent: 'center',
+                   fontSize: '0.75rem',
+                   cursor: 'pointer',
+                   zIndex: 2,
+                   transition: 'all 0.2s'
+                 }}
+                 title={isCompact ? "Expandir Menú" : "Colapsar Menú"}
+               >
+                 {isCompact ? '▶' : '◀'}
+               </button>
+             )}
+
+             {/* Botón cerrar en móvil */}
+             {isMobile && (
+               <button 
+                 onClick={() => setMobileSidebarOpen(false)}
+                 style={{
+                   position: 'absolute',
+                   right: '12px',
+                   top: '14px',
+                   background: 'transparent',
+                   border: 'none',
+                   color: '#aaa',
+                   fontSize: '1.2rem',
+                   cursor: 'pointer'
+                 }}
+               >
+                 ✕
+               </button>
+             )}
           </div>
-          <div style={{ flex: 1, padding: '20px 0', display: 'flex', flexDirection: 'column', gap: '5px' }}>
-             <button onClick={()=>setTab('dashboard')} style={sidebarBtnStyle(tab === 'dashboard')}>
-               <span style={{ marginRight: '10px', width: '20px', display: 'inline-block' }}>📊</span> Dashboard
-             </button>
-             <button onClick={()=>setTab('calendario')} style={sidebarBtnStyle(tab === 'calendario')}>
-               <span style={{ marginRight: '10px', width: '20px', display: 'inline-block' }}>📅</span> Calendario
-             </button>
-             <button onClick={()=>setTab('analitica')} style={sidebarBtnStyle(tab === 'analitica')}>
-               <span style={{ marginRight: '10px', width: '20px', display: 'inline-block' }}>📈</span> Analítica
-             </button>
-             <button onClick={()=>setTab('caja')} style={sidebarBtnStyle(tab === 'caja')}>
-               <span style={{ marginRight: '10px', width: '20px', display: 'inline-block' }}>💰</span> Caja
-             </button>
-             <button onClick={()=>setTab('crm')} style={sidebarBtnStyle(tab === 'crm')}>
-               <span style={{ marginRight: '10px', width: '20px', display: 'inline-block' }}>👥</span> CRM
-             </button>
-             <button onClick={()=>setTab('servicios')} style={sidebarBtnStyle(tab === 'servicios')}>
-               <span style={{ marginRight: '10px', width: '20px', display: 'inline-block' }}>✂️</span> Servicios
-             </button>
-             <button onClick={()=>setTab('pedidos')} style={sidebarBtnStyle(tab === 'pedidos')}>
-               <span style={{ marginRight: '10px', width: '20px', display: 'inline-block' }}>🛍️</span> Pedidos
-             </button>
-             <button onClick={()=>setTab('bodega')} style={sidebarBtnStyle(tab === 'bodega')}>
-               <span style={{ marginRight: '10px', width: '20px', display: 'inline-block' }}>📦</span> Inventario
-             </button>
-             <button onClick={()=>setTab('equipo')} style={sidebarBtnStyle(tab === 'equipo')}>
-               <span style={{ marginRight: '10px', width: '20px', display: 'inline-block' }}>👥</span> Equipo
-             </button>
+
+          {/* Menú de Navegación con Scroll Independiente */}
+          <div style={{ flex: 1, padding: '12px 0', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+             {navTabs.map((item) => {
+               const isActive = tab === item.id;
+               return (
+                 <button 
+                   key={item.id}
+                   onClick={() => {
+                     setTab(item.id);
+                     if (isMobile) setMobileSidebarOpen(false);
+                   }} 
+                   style={sidebarBtnStyle(isActive)}
+                   title={isCompact ? item.label : undefined}
+                 >
+                   <span style={{ fontSize: isCompact ? '1.3rem' : '1.1rem', width: isCompact ? 'auto' : '24px', textAlign: 'center', display: 'inline-block' }}>{item.icon}</span>
+                   {!isCompact && <span>{item.label}</span>}
+                 </button>
+               );
+             })}
           </div>
-          <div style={{ padding: '20px', borderTop: '1px solid rgba(255,255,255,0.1)', background: 'transparent' }}>
-             <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginBottom: '15px' }}>
-                 <img src={session?.usuario?.foto_perfil || 'https://i.pravatar.cc/100'} alt="Admin" style={{ width: 40, height: 40, borderRadius: '50%', border: '2px solid var(--gold-jewel)' }} />
-                 <div>
-                   <div style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#fff' }}>{session?.usuario?.nombre || 'Administrador'}</div>
-                   <div style={{ fontSize: '0.75rem', color: '#888' }}>{session?.usuario?.email}</div>
+
+          {/* Footer del Sidebar con Perfil y Logout */}
+          <div style={{ padding: isCompact ? '14px 6px' : '16px', borderTop: '1px solid rgba(255,255,255,0.08)', background: 'rgba(15,15,15,0.4)' }}>
+             {!isCompact ? (
+               <>
+                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                     <img src={session?.usuario?.foto_perfil || 'https://i.pravatar.cc/100'} alt="Admin" style={{ width: 36, height: 36, borderRadius: '50%', border: '2px solid var(--gold-jewel)', objectFit: 'cover' }} />
+                     <div style={{ overflow: 'hidden' }}>
+                       <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#fff', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden' }}>{session?.usuario?.nombre || 'Administrador'}</div>
+                       <div style={{ fontSize: '0.7rem', color: '#888', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden' }}>{session?.usuario?.email}</div>
+                     </div>
                  </div>
-             </div>
-             <button onClick={logout} style={{ width: '100%', padding: '10px', background: 'transparent', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '5px', cursor: 'pointer', transition: 'all 0.2s', fontWeight: 'bold' }} onMouseEnter={e => {e.target.style.background = '#e74c3c'; e.target.style.color = '#fff'}} onMouseLeave={e => {e.target.style.background = 'transparent'; e.target.style.color = '#e74c3c'}}>
-               Cerrar Sesión
-             </button>
+                 <button onClick={logout} style={{ width: '100%', padding: '8px 12px', background: 'transparent', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s', fontWeight: 'bold', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} onMouseEnter={e => {e.currentTarget.style.background = '#e74c3c'; e.currentTarget.style.color = '#fff'}} onMouseLeave={e => {e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#e74c3c'}}>
+                   <span>🚪</span> Cerrar Sesión
+                 </button>
+               </>
+             ) : (
+               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+                 <img src={session?.usuario?.foto_perfil || 'https://i.pravatar.cc/100'} alt="Admin" style={{ width: 34, height: 34, borderRadius: '50%', border: '2px solid var(--gold-jewel)', objectFit: 'cover' }} title={session?.usuario?.nombre || 'Administrador'} />
+                 <button onClick={logout} style={{ background: 'transparent', border: 'none', color: '#e74c3c', fontSize: '1.2rem', cursor: 'pointer', padding: '4px' }} title="Cerrar Sesión">
+                   🚪
+                 </button>
+               </div>
+             )}
           </div>
        </div>
 
-       {/* Área de Contenido Principal */}
-       <div style={{ flex: 1, padding: '40px 50px', overflowY: 'auto', background: 'transparent' }}>
+       {/* Área de Contenido Principal Autoajustable */}
+       <div style={{ flex: 1, height: '100%', padding: isMobile ? '16px 12px 60px' : '30px 40px', overflowY: 'auto', background: 'transparent', width: '100%' }}>
          {tab === 'dashboard' && renderDashboard()}
          {tab === 'calendario' && renderCalendario()}
          {tab === 'analitica' && renderAnalitica()}

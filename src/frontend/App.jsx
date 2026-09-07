@@ -14,6 +14,11 @@ function App() {
   const [notificacionAdmin, setNotificacionAdmin] = useState(null);
   const [isRegistering, setIsRegistering] = useState(false);
 
+  // Estados PWA / Instalación en Pantalla de Inicio
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [isInstalled, setIsInstalled] = useState(false);
+  const [showInstallModal, setShowInstallModal] = useState(false);
+
   useEffect(() => {
     // Revisar si hay sesión guardada
     const saved = localStorage.getItem('user_session');
@@ -26,7 +31,49 @@ function App() {
         localStorage.removeItem('user_session');
       }
     }
+
+    // Detectar si ya está instalada o en modo standalone
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    if (isStandalone) {
+      setIsInstalled(true);
+    }
+
+    // Capturar evento de instalación de PWA (Chrome, Edge, Android)
+    const handleBeforeInstallPrompt = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    const handleAppInstalled = () => {
+      setIsInstalled(true);
+      setDeferredPrompt(null);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
   }, []);
+
+  const handleInstallClick = async () => {
+    if (deferredPrompt) {
+      try {
+        deferredPrompt.prompt();
+        const choiceResult = await deferredPrompt.userChoice;
+        if (choiceResult.outcome === 'accepted') {
+          setIsInstalled(true);
+        }
+        setDeferredPrompt(null);
+      } catch (err) {
+        setShowInstallModal(true);
+      }
+    } else {
+      setShowInstallModal(true);
+    }
+  };
 
   const logout = () => {
     localStorage.removeItem('user_session');
@@ -50,6 +97,51 @@ function App() {
           <p style={{ margin: '0 0 4px 0', fontSize: '0.85rem' }}><strong>Items:</strong> {notificacionAdmin.items}</p>
           <p style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: 'var(--gold-jewel)', fontWeight: 'bold' }}><strong>Total:</strong> ${notificacionAdmin.total.toLocaleString('es-CL')}</p>
           <button className="btn-primary" style={{ width: '100%', padding: '6px' }} onClick={() => setNotificacionAdmin(null)}>Entendido</button>
+        </div>
+      )}
+
+      {/* --- MODAL GUÍA DE INSTALACIÓN DE APP / ACCESO DIRECTO --- */}
+      {showInstallModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)', zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div className="card" style={{ maxWidth: '420px', width: '100%', border: '2px solid var(--gold-jewel)', padding: '24px', textAlign: 'center', position: 'relative', animation: 'slideIn 0.3s ease-out' }}>
+            <img src="/Logo_romana_dorado.png" alt="La Romana" style={{ width: '70px', marginBottom: '10px' }} />
+            <h3 style={{ color: 'var(--gold-jewel)', margin: '0 0 6px 0', fontSize: '1.25rem', textTransform: 'uppercase' }}>Instalar La Romana App</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '20px' }}>
+              Instala la aplicación en tu celular para tener acceso directo instantáneo y agendar tus horas más rápido.
+            </p>
+
+            <div style={{ textAlign: 'left', background: 'rgba(0,0,0,0.4)', borderRadius: '10px', padding: '15px', border: '1px solid rgba(255,255,255,0.08)', marginBottom: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <h4 style={{ color: '#fff', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 6px 0' }}>
+                  <span>🍏</span> En iPhone / iPad (Safari):
+                </h4>
+                <ol style={{ margin: 0, paddingLeft: '20px', fontSize: '0.8rem', color: '#bbb', lineHeight: '1.5' }}>
+                  <li>Toca el botón <strong>Compartir</strong> (icono <span style={{ fontSize: '1rem', color: 'var(--gold-jewel)' }}>⎋ / ⬆</span>) en la barra inferior.</li>
+                  <li>Desplázate hacia abajo y selecciona <strong>"Agregar a pantalla de inicio"</strong> (icono ➕).</li>
+                  <li>Toca <strong>"Agregar"</strong> en la esquina superior derecha.</li>
+                </ol>
+              </div>
+
+              <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '10px' }}>
+                <h4 style={{ color: '#fff', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 6px 0' }}>
+                  <span>🤖</span> En Android (Chrome):
+                </h4>
+                <ol style={{ margin: 0, paddingLeft: '20px', fontSize: '0.8rem', color: '#bbb', lineHeight: '1.5' }}>
+                  <li>Toca los <strong>tres puntos</strong> (icono <span style={{ fontSize: '1rem', color: 'var(--gold-jewel)' }}>⋮</span>) arriba a la derecha.</li>
+                  <li>Selecciona <strong>"Instalar aplicación"</strong> o <strong>"Agregar a la pantalla principal"</strong> 📲.</li>
+                  <li>Confirma tocando <strong>"Instalar"</strong>.</li>
+                </ol>
+              </div>
+            </div>
+
+            <button 
+              className="btn-primary" 
+              style={{ width: '100%', padding: '12px', fontWeight: 'bold' }}
+              onClick={() => setShowInstallModal(false)}
+            >
+              ¡Entendido, gracias!
+            </button>
+          </div>
         </div>
       )}
 
@@ -122,6 +214,41 @@ function App() {
                 onClick={() => setView('login_staff')}
               >
                 <img src="/botones/para_staff.png" alt="Staff y Administración" style={{ height: '48px', objectFit: 'contain' }} />
+              </button>
+
+              {/* Botón Instalar App (Acceso Directo Móvil) */}
+              <button 
+                className="btn-install-pwa" 
+                onClick={handleInstallClick}
+                title="Instalar Acceso Directo en tu Celular"
+                style={{
+                  width: '100%',
+                  maxWidth: '300px',
+                  margin: '4px auto 0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '12px',
+                  padding: '10px 18px',
+                  borderRadius: '50px',
+                  border: '2px solid var(--gold-jewel)',
+                  background: 'linear-gradient(135deg, rgba(212, 175, 55, 0.22), rgba(18, 18, 18, 0.95))',
+                  backdropFilter: 'blur(10px)',
+                  color: 'var(--gold-jewel)',
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 15px rgba(212, 175, 55, 0.25)',
+                  transition: 'all 0.25s ease'
+                }}
+              >
+                <span style={{ fontSize: '1.45rem', lineHeight: 1 }}>📲</span>
+                <div style={{ textAlign: 'left', display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontSize: '0.92rem', fontWeight: 'bold', letterSpacing: '0.8px', textTransform: 'uppercase' }}>
+                    {isInstalled ? 'App Instalada' : 'Instalar App'}
+                  </span>
+                  <span style={{ fontSize: '0.68rem', color: '#ccc', textTransform: 'none', fontWeight: 'normal' }}>
+                    {isInstalled ? 'Acceso directo listo ✓' : 'Acceso directo en pantalla de inicio'}
+                  </span>
+                </div>
               </button>
             </div>
           </div>
