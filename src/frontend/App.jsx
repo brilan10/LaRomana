@@ -110,25 +110,28 @@ function App() {
               Instala la aplicación en tu celular para tener acceso directo instantáneo y agendar tus horas más rápido.
             </p>
 
-            <div style={{ textAlign: 'left', background: 'rgba(0,0,0,0.4)', borderRadius: '10px', padding: '15px', border: '1px solid rgba(255,255,255,0.08)', marginBottom: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ textAlign: 'left', background: 'rgba(0,0,0,0.45)', borderRadius: '12px', padding: '16px', border: '1px solid rgba(212,175,55,0.2)', marginBottom: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
-                <h4 style={{ color: '#fff', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 6px 0' }}>
-                  <span>🍏</span> En iPhone / iPad (Safari):
+                <h4 style={{ color: 'var(--gold-jewel)', fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 6px 0' }}>
+                  <span>🍏</span> En iPhone / iPad:
                 </h4>
-                <ol style={{ margin: 0, paddingLeft: '20px', fontSize: '0.8rem', color: '#bbb', lineHeight: '1.5' }}>
-                  <li>Toca el botón <strong>Compartir</strong> (icono <span style={{ fontSize: '1rem', color: 'var(--gold-jewel)' }}>⎋ / ⬆</span>) en la barra inferior.</li>
-                  <li>Desplázate hacia abajo y selecciona <strong>"Agregar a pantalla de inicio"</strong> (icono ➕).</li>
-                  <li>Toca <strong>"Agregar"</strong> en la esquina superior derecha.</li>
-                </ol>
+                <div style={{ fontSize: '0.8rem', color: '#ccc', lineHeight: '1.5', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <p style={{ margin: 0 }}>
+                    <strong>• Si usas Safari:</strong> Toca el botón <strong>Compartir</strong> (icono <span style={{ color: 'var(--gold-jewel)', fontWeight: 'bold' }}>⎋ / ⬆</span>) en la barra inferior ➡️ Selecciona <strong>"Agregar a pantalla de inicio"</strong> (➕) ➡️ <strong>Agregar</strong>.
+                  </p>
+                  <p style={{ margin: 0 }}>
+                    <strong>• Si usas Microsoft Edge:</strong> Toca el menú inferior (icono <span style={{ color: 'var(--gold-jewel)', fontWeight: 'bold' }}>☰ o ...</span>) ➡️ Toca <strong>"Compartir"</strong> ➡️ Selecciona <strong>"Agregar a pantalla de inicio"</strong> (➕).
+                  </p>
+                </div>
               </div>
 
-              <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '10px' }}>
-                <h4 style={{ color: '#fff', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 6px 0' }}>
-                  <span>🤖</span> En Android (Chrome):
+              <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '10px' }}>
+                <h4 style={{ color: 'var(--gold-jewel)', fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 6px 0' }}>
+                  <span>🤖</span> En Android (Chrome / Edge / Samsung):
                 </h4>
-                <ol style={{ margin: 0, paddingLeft: '20px', fontSize: '0.8rem', color: '#bbb', lineHeight: '1.5' }}>
-                  <li>Toca los <strong>tres puntos</strong> (icono <span style={{ fontSize: '1rem', color: 'var(--gold-jewel)' }}>⋮</span>) arriba a la derecha.</li>
-                  <li>Selecciona <strong>"Instalar aplicación"</strong> o <strong>"Agregar a la pantalla principal"</strong> 📲.</li>
+                <ol style={{ margin: 0, paddingLeft: '20px', fontSize: '0.8rem', color: '#ccc', lineHeight: '1.5' }}>
+                  <li>Toca los <strong>tres puntos</strong> (<span style={{ color: 'var(--gold-jewel)', fontWeight: 'bold' }}>⋮</span>) en la esquina superior derecha.</li>
+                  <li>Selecciona <strong>"Instalar aplicación"</strong> o <strong>"Agregar a pantalla principal"</strong> 📲.</li>
                   <li>Confirma tocando <strong>"Instalar"</strong>.</li>
                 </ol>
               </div>
