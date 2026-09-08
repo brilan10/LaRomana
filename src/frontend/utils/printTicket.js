@@ -47,16 +47,18 @@ export const printThermalTicket = ({
       text-rendering: geometricPrecision;
       color: #000000 !important;
     }
-    body {
-      width: 74mm;
+    html, body {
+      width: 72mm;
+      max-width: 72mm;
       margin: 0 auto;
-      padding: 3mm 2mm 15mm 2mm;
+      padding: 2mm 1mm 10mm 1mm;
       font-family: 'Consolas', 'Courier New', 'Lucida Console', Monaco, monospace;
       font-size: 12.5px;
       font-weight: 700;
       line-height: 1.35;
       color: #000000;
       background: #ffffff;
+      overflow: hidden;
     }
     .text-center { text-align: center; }
     .text-right { text-align: right; }
