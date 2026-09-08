@@ -25,7 +25,7 @@ export const printThermalTicket = ({
   const descuentoNum = Number(descuento || 0);
   const totalNum = Number(total || (subtotalNum - descuentoNum));
 
-  // Generar HTML optimizado para impresora térmica de 80mm
+  // Generar HTML optimizado para impresora térmica de 80mm de alto contraste y nitidez extrema
   const ticketHtml = `
 <!DOCTYPE html>
 <html lang="es">
@@ -37,63 +37,88 @@ export const printThermalTicket = ({
       size: 80mm auto;
       margin: 0;
     }
+    * {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: geometricPrecision;
+      color: #000000 !important;
+    }
     body {
-      width: 76mm;
+      width: 74mm;
       margin: 0 auto;
-      padding: 4mm 2mm 12mm 2mm;
-      font-family: 'Courier New', Courier, monospace, sans-serif;
-      font-size: 11px;
-      line-height: 1.25;
-      color: #000;
-      background: #fff;
+      padding: 3mm 2mm 15mm 2mm;
+      font-family: 'Consolas', 'Courier New', 'Lucida Console', Monaco, monospace;
+      font-size: 12.5px;
+      font-weight: 700;
+      line-height: 1.35;
+      color: #000000;
+      background: #ffffff;
     }
     .text-center { text-align: center; }
     .text-right { text-align: right; }
     .text-left { text-align: left; }
-    .bold { font-weight: bold; }
-    .title { font-size: 14px; font-weight: bold; margin: 2px 0; }
-    .subtitle { font-size: 10px; margin-bottom: 4px; }
+    .bold { font-weight: 900; }
+    .title { 
+      font-size: 16px; 
+      font-weight: 900; 
+      margin: 2px 0;
+      letter-spacing: 0.5px;
+    }
+    .subtitle { 
+      font-size: 11px; 
+      font-weight: 700;
+      margin-bottom: 2px; 
+    }
     .divider {
-      border-top: 1px dashed #000;
-      margin: 5px 0;
+      border-top: 1.5px dashed #000000;
+      margin: 6px 0;
     }
     .double-divider {
-      border-top: 2px solid #000;
-      margin: 6px 0;
+      border-top: 2.5px solid #000000;
+      margin: 7px 0;
     }
     .row {
       display: flex;
       justify-content: space-between;
-      margin-bottom: 2px;
+      margin-bottom: 3px;
     }
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 11px;
-      margin: 4px 0;
+      font-size: 12px;
+      font-weight: 700;
+      margin: 5px 0;
     }
     th {
-      border-bottom: 1px dashed #000;
-      padding: 3px 0;
+      border-bottom: 2px solid #000000;
+      padding: 4px 0;
       text-align: left;
-      font-size: 10px;
+      font-size: 11.5px;
+      font-weight: 900;
     }
     td {
-      padding: 3px 0;
+      padding: 4px 0;
       vertical-align: top;
+      font-weight: 700;
     }
     .total-box {
-      font-size: 13px;
-      font-weight: bold;
-      padding: 4px 0;
-      margin: 4px 0;
-      border-top: 1px solid #000;
-      border-bottom: 1px solid #000;
+      font-size: 15px;
+      font-weight: 900;
+      padding: 6px 0;
+      margin: 6px 0;
+      border-top: 2px solid #000000;
+      border-bottom: 2px solid #000000;
     }
     .footer {
-      margin-top: 8px;
-      font-size: 9px;
+      margin-top: 10px;
+      font-size: 10px;
+      font-weight: 700;
       text-align: center;
+      line-height: 1.4;
     }
   </style>
 </head>
@@ -106,9 +131,9 @@ export const printThermalTicket = ({
 
   <div class="double-divider"></div>
 
-  <div class="row"><span class="bold">COMPROBANTE:</span><span>${folio || 'TICKET DE VENTA'}</span></div>
+  <div class="row"><span class="bold">COMPROBANTE:</span><span class="bold">${folio || 'TICKET DE VENTA'}</span></div>
   <div class="row"><span>FECHA:</span><span>${fechaStr}</span></div>
-  <div class="row"><span class="bold">CLIENTE:</span><span>${cliente}</span></div>
+  <div class="row"><span class="bold">CLIENTE:</span><span class="bold">${cliente}</span></div>
   ${rut ? `<div class="row"><span>RUT:</span><span>${rut}</span></div>` : ''}
   ${telefono ? `<div class="row"><span>TELÉFONO:</span><span>${telefono}</span></div>` : ''}
   ${barbero ? `<div class="row"><span>ATENDIDO POR:</span><span class="bold">${barbero}</span></div>` : ''}
@@ -129,12 +154,12 @@ export const printThermalTicket = ({
       ${items && items.length > 0 
         ? items.map(it => `
           <tr>
-            <td>${it.nombre || 'Item'}</td>
-            <td style="text-align: center;">${it.cantidad || 1}</td>
-            <td style="text-align: right;">$${Number(it.subtotal || it.precio || 0).toLocaleString('es-CL')}</td>
+            <td style="font-weight: 800;">${it.nombre || 'Item'}</td>
+            <td style="text-align: center; font-weight: 800;">${it.cantidad || 1}</td>
+            <td style="text-align: right; font-weight: 800;">$${Number(it.subtotal || it.precio || 0).toLocaleString('es-CL')}</td>
           </tr>
         `).join('')
-        : `<tr><td>Servicio de Barbería</td><td style="text-align:center;">1</td><td style="text-align:right;">$${totalNum.toLocaleString('es-CL')}</td></tr>`
+        : `<tr><td style="font-weight: 800;">Servicio de Barbería</td><td style="text-align:center; font-weight: 800;">1</td><td style="text-align:right; font-weight: 800;">$${totalNum.toLocaleString('es-CL')}</td></tr>`
       }
     </tbody>
   </table>
@@ -153,23 +178,23 @@ export const printThermalTicket = ({
 
   ${cortesAcumulados !== null && cortesAcumulados !== undefined ? `
     <div class="divider"></div>
-    <div class="text-center bold" style="font-size: 10px;">
+    <div class="text-center bold" style="font-size: 11px;">
       ✂️ CORTES ACUMULADOS: ${cortesAcumulados} / 4
     </div>
-    <div class="text-center" style="font-size: 9px; margin-top: 2px;">
+    <div class="text-center" style="font-size: 10px; font-weight: 700; margin-top: 2px;">
       ${cortesAcumulados >= 4 ? '🎉 ¡FELICIDADES! Reclama tu Decant VIP 10ml' : '¡Acumula 4 cortes y gana tu perfume Decant VIP!'}
     </div>
   ` : ''}
 
   ${notas ? `
     <div class="divider"></div>
-    <div style="font-size: 9px;"><strong>NOTAS:</strong> ${notas}</div>
+    <div style="font-size: 10px; font-weight: 700;"><strong>NOTAS:</strong> ${notas}</div>
   ` : ''}
 
   <div class="double-divider"></div>
 
   <div class="footer">
-    <div class="bold">¡GRACIAS POR TU PREFERENCIA!</div>
+    <div class="bold" style="font-size: 11px;">¡GRACIAS POR TU PREFERENCIA!</div>
     <div>www.laromanacopiapo.cl</div>
     <div>Instagram: @laromanabarber</div>
   </div>
