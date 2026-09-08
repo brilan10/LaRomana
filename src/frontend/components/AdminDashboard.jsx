@@ -3811,12 +3811,6 @@ export default function AdminDashboard({ session, logout }) {
           </div>
         </div>
 
-        {/* Indicador de Carga */}
-        {loadingLiquidacion && (
-          <div style={{ textAlign: 'center', padding: '20px', color: 'var(--gold-jewel)', background: 'rgba(26,26,26,0.5)', borderRadius: '10px' }}>
-            ⏳ Actualizando datos de liquidación y comisiones...
-          </div>
-        )}
 
         {/* Tarjetas KPI de Resumen del Período */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px' }}>
