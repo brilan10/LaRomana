@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { API_URL } from '../App';
 import { formatRut } from '../utils/rut';
+import { resolveImageUrl } from '../utils/imageHelper';
 
 const ProductoCard = ({ p, agregarAlCarrito }) => {
   const images = p.imagen_url ? p.imagen_url.split(',').map(url => url.trim()).filter(url => url) : [];
   const [imgIndex, setImgIndex] = useState(0);
+  const [imgError, setImgError] = useState(false);
 
   const nextImg = (e) => {
     e.stopPropagation();
@@ -18,9 +20,14 @@ const ProductoCard = ({ p, agregarAlCarrito }) => {
 
   return (
     <div className="card" style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', padding: '15px' }}>
-      {images.length > 0 ? (
+      {images.length > 0 && !imgError ? (
         <div style={{ position: 'relative', width: '100%', height: '140px', marginBottom: '12px' }}>
-          <img src={images[imgIndex]} alt={p.nombre} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '8px' }} />
+          <img 
+            src={resolveImageUrl(images[imgIndex])} 
+            alt={p.nombre} 
+            style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '8px' }} 
+            onError={() => setImgError(true)}
+          />
           {images.length > 1 && (
             <>
               <button onClick={prevImg} style={{ position: 'absolute', left: '5px', top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.6)', border: 'none', color: '#fff', borderRadius: '50%', width: '26px', height: '26px', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>‹</button>

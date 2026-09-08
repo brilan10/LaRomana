@@ -78,6 +78,19 @@ try {
         $pdo->exec("ALTER TABLE pedidos MODIFY COLUMN estado VARCHAR(50) DEFAULT 'Pendiente'");
     } catch (Exception $e) {}
 
+    // Ampliar soporte de imágenes a LONGTEXT para fotos en base64 o URLs largas
+    try {
+        $pdo->exec("ALTER TABLE productos MODIFY COLUMN imagen_url LONGTEXT");
+    } catch (Exception $e) {}
+
+    try {
+        $pdo->exec("ALTER TABLE trabajadores MODIFY COLUMN foto_perfil LONGTEXT");
+    } catch (Exception $e) {}
+
+    try {
+        $pdo->exec("ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255) NULL");
+    } catch (Exception $e) {}
+
     echo "Base de datos actualizada con exito.\n";
 
 } catch (PDOException $e) {

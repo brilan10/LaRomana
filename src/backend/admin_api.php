@@ -589,24 +589,67 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     }
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'upload_image') {
-        if (!isset($_FILES['image'])) {
-            echo json_encode(['error' => 'No image uploaded']);
-            exit;
-        }
-        $file = $_FILES['image'];
-        $uploadDir = __DIR__ . '/../../public/assets/fotos/productos/';
+        $uploadDir = __DIR__ . '/uploads/';
         if (!is_dir($uploadDir)) {
-            mkdir($uploadDir, 0777, true);
+            @mkdir($uploadDir, 0777, true);
         }
-        $ext = pathinfo($file['name'], PATHINFO_EXTENSION);
-        $filename = uniqid('prod_') . '.' . $ext;
-        $targetPath = $uploadDir . $filename;
-        if (move_uploaded_file($file['tmp_name'], $targetPath)) {
-            // Devuelve la URL relativa que entiende el frontend
-            echo json_encode(['status' => 'success', 'url' => '/assets/fotos/productos/' . $filename]);
-        } else {
-            echo json_encode(['error' => 'Failed to move uploaded file']);
+
+        $type = $_POST['type'] ?? $_GET['type'] ?? 'producto';
+        $prefix = ($type === 'barbero') ? 'barbero_' : 'prod_';
+
+        // 1. Manejo de subida estándar por multipart/form-data
+        $fileKey = isset($_FILES['image']) ? 'image' : (isset($_FILES['foto']) ? 'foto' : (isset($_FILES['file']) ? 'file' : null));
+
+        if ($fileKey && isset($_FILES[$fileKey]['tmp_name']) && is_uploaded_file($_FILES[$fileKey]['tmp_name'])) {
+            $file = $_FILES[$fileKey];
+            $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+            $allowed = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg'];
+            if (!in_array($ext, $allowed)) {
+                $ext = 'jpg';
+            }
+            $filename = $prefix . uniqid() . '_' . time() . '.' . $ext;
+            $targetPath = $uploadDir . $filename;
+
+            if (move_uploaded_file($file['tmp_name'], $targetPath)) {
+                echo json_encode([
+                    'status' => 'success',
+                    'url' => '/backend/uploads/' . $filename,
+                    'filename' => $filename
+                ]);
+                exit;
+            } else {
+                echo json_encode([
+                    'status' => 'error',
+                    'error' => 'No se pudo mover el archivo al directorio de destino: ' . $targetPath
+                ]);
+                exit;
+            }
         }
+
+        // 2. Manejo de subida por Base64 JSON
+        $rawInput = file_get_contents("php://input");
+        $jsonInput = json_decode($rawInput, true);
+        $base64Data = $_POST['base64'] ?? ($jsonInput['base64'] ?? ($jsonInput['image'] ?? null));
+
+        if ($base64Data && preg_match('/^data:image\/(\w+);base64,/', $base64Data, $matches)) {
+            $ext = strtolower($matches[1]);
+            $base64Clean = substr($base64Data, strpos($base64Data, ',') + 1);
+            $decoded = base64_decode($base64Clean);
+            if ($decoded !== false) {
+                $filename = $prefix . uniqid() . '_' . time() . '.' . ($ext === 'jpeg' ? 'jpg' : $ext);
+                $targetPath = $uploadDir . $filename;
+                if (file_put_contents($targetPath, $decoded) !== false) {
+                    echo json_encode([
+                        'status' => 'success',
+                        'url' => '/backend/uploads/' . $filename,
+                        'filename' => $filename
+                    ]);
+                    exit;
+                }
+            }
+        }
+
+        echo json_encode(['status' => 'error', 'error' => 'No se recibió ningún archivo de imagen válido']);
         exit;
     }
 
@@ -803,14 +846,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
         // --- EQUIPO ---
         case 'add_trabajador':
-            // Asumimos que los barberos nuevos también se registran sin pass por este endpoint mock
-            $stmt = $pdo->prepare("INSERT INTO trabajadores (nombre, email, foto_perfil) VALUES (?,?,?)");
-            $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'']);
+            $pass = !empty($data['password']) ? trim($data['password']) : '123456';
+            $hash = password_hash($pass, PASSWORD_DEFAULT);
+            try {
+                $stmt = $pdo->prepare("INSERT INTO trabajadores (nombre, email, foto_perfil, password_hash) VALUES (?,?,?,?)");
+                $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $hash]);
+            } catch (\PDOException $e) {
+                // Fallback si la columna password_hash no existiera
+                try {
+                    $pdo->exec("ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255) NULL");
+                    $stmt = $pdo->prepare("INSERT INTO trabajadores (nombre, email, foto_perfil, password_hash) VALUES (?,?,?,?)");
+                    $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $hash]);
+                } catch (\Exception $ex) {
+                    $stmt = $pdo->prepare("INSERT INTO trabajadores (nombre, email, foto_perfil) VALUES (?,?,?)");
+                    $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'']);
+                }
+            }
             echo json_encode(["status" => "success"]);
             break;
         case 'update_trabajador':
-            $stmt = $pdo->prepare("UPDATE trabajadores SET nombre=?, email=?, foto_perfil=? WHERE id=?");
-            $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $data['id']]);
+            if (!empty($data['password'])) {
+                $hash = password_hash(trim($data['password']), PASSWORD_DEFAULT);
+                try {
+                    $stmt = $pdo->prepare("UPDATE trabajadores SET nombre=?, email=?, foto_perfil=?, password_hash=? WHERE id=?");
+                    $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $hash, $data['id']]);
+                } catch (\Exception $ex) {
+                    $stmt = $pdo->prepare("UPDATE trabajadores SET nombre=?, email=?, foto_perfil=? WHERE id=?");
+                    $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $data['id']]);
+                }
+            } else {
+                $stmt = $pdo->prepare("UPDATE trabajadores SET nombre=?, email=?, foto_perfil=? WHERE id=?");
+                $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $data['id']]);
+            }
             echo json_encode(["status" => "success"]);
             break;
         case 'toggle_trabajador':

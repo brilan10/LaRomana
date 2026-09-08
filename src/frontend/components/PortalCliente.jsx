@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { API_URL } from '../App';
 import { formatRut } from '../utils/rut';
+import { resolveImageUrl } from '../utils/imageHelper';
 
 export default function PortalCliente({ session, onBackToHome, onGoToTienda }) {
   // Citas State
@@ -323,9 +324,10 @@ export default function PortalCliente({ session, onBackToHome, onGoToTienda }) {
                   onClick={() => { setSelectedBarbero(barbero.id); if (step === 2) setStep(3); }}
                 >
                   <img 
-                    src={barbero.foto_perfil || `https://i.pravatar.cc/100?u=${barbero.id}`} 
+                    src={resolveImageUrl(barbero.foto_perfil, `https://i.pravatar.cc/100?u=${barbero.id}`)} 
                     alt={barbero.nombre} 
                     style={{ width: '65px', height: '65px', borderRadius: '50%', objectFit: 'cover', border: isSelected ? '3px solid var(--gold-jewel)' : '2px solid rgba(255,255,255,0.2)' }} 
+                    onError={(e) => { e.target.src = `https://i.pravatar.cc/100?u=${barbero.id}`; }}
                   />
                   <p style={{ margin: '6px 0 0 0', fontWeight: 'bold', fontSize: '0.85rem', color: isSelected ? 'var(--gold-jewel)' : '#fff' }}>{barbero.nombre}</p>
                 </div>

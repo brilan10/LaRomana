@@ -4,6 +4,7 @@ import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Cart
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import ErrorBoundary from './ErrorBoundary';
+import { resolveImageUrl } from '../utils/imageHelper';
 
 const formatDateYMD = (d = new Date()) => {
   const year = d.getFullYear();
@@ -38,10 +39,12 @@ export default function AdminDashboard({ session, logout }) {
   const [productos, setProductos] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [editingProd, setEditingProd] = useState(null);
+  const [subiendoImagenProd, setSubiendoImagenProd] = useState(false);
 
   // Datos Equipo
   const [trabajadores, setTrabajadores] = useState([]);
   const [editingTrabajador, setEditingTrabajador] = useState(null);
+  const [subiendoFotoBarbero, setSubiendoFotoBarbero] = useState(false);
 
   // Datos Servicios
   const [servicios, setServicios] = useState([]);
@@ -900,22 +903,64 @@ export default function AdminDashboard({ session, logout }) {
   const handleImageUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
+
+    // Vista previa instantánea
+    const localPreview = URL.createObjectURL(file);
+    setEditingProd(prev => ({ ...prev, imagen_url: localPreview }));
+    setSubiendoImagenProd(true);
+
     const formData = new FormData();
     formData.append('image', file);
+    formData.append('type', 'producto');
     
     try {
-      const res = await fetch(`${API_URL}/admin_api.php?action=upload_image`, {
+      const res = await fetch(`${API_URL}/admin_api.php?action=upload_image&type=producto`, {
         method: 'POST',
         body: formData
       });
       const data = await res.json();
       if (data.status === 'success') {
-        setEditingProd({...editingProd, imagen_url: data.url});
+        setEditingProd(prev => ({ ...prev, imagen_url: data.url }));
+        showToast('Imagen del producto subida con éxito', 'success');
       } else {
-        alert(data.error || 'Error subiendo imagen');
+        alert(data.error || 'Error al subir la imagen');
       }
     } catch (err) {
-      alert('Error de conexión subiendo imagen');
+      alert('Error de conexión al subir la imagen');
+    } finally {
+      setSubiendoImagenProd(false);
+    }
+  };
+
+  const handleBarberoPhotoUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // Vista previa instantánea
+    const localPreview = URL.createObjectURL(file);
+    setEditingTrabajador(prev => ({ ...prev, foto_perfil: localPreview }));
+    setSubiendoFotoBarbero(true);
+
+    const formData = new FormData();
+    formData.append('image', file);
+    formData.append('type', 'barbero');
+
+    try {
+      const res = await fetch(`${API_URL}/admin_api.php?action=upload_image&type=barbero`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        setEditingTrabajador(prev => ({ ...prev, foto_perfil: data.url }));
+        showToast('Foto del barbero subida con éxito', 'success');
+      } else {
+        alert(data.error || 'Error al subir la foto del barbero');
+      }
+    } catch (err) {
+      alert('Error de conexión al subir la foto');
+    } finally {
+      setSubiendoFotoBarbero(false);
     }
   };
 
@@ -2659,12 +2704,22 @@ export default function AdminDashboard({ session, logout }) {
             </select>
             <input type="number" className="input-field" placeholder="Precio ($)" value={editingProd.precio} onChange={e=>setEditingProd({...editingProd, precio: e.target.value})} required style={{ margin: 0 }} />
             <input type="number" className="input-field" placeholder="Stock" value={editingProd.stock} onChange={e=>setEditingProd({...editingProd, stock: e.target.value})} required style={{ margin: 0 }} />
-            <div style={{ margin: 0, gridColumn: 'span 2', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <input type="file" className="input-field" accept="image/*" onChange={handleImageUpload} style={{ flex: 1, padding: '5px' }} />
-              {editingProd.imagen_url && <img src={editingProd.imagen_url} alt="preview" style={{ height: '40px', borderRadius: '4px' }} />}
+            <div style={{ margin: 0, gridColumn: 'span 2', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Foto del Producto:</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <input type="file" className="input-field" accept="image/*" onChange={handleImageUpload} style={{ flex: 1, padding: '6px', cursor: 'pointer' }} />
+                {subiendoImagenProd && <span style={{ color: 'var(--gold-jewel)', fontSize: '0.8rem' }}>⏳ Subiendo...</span>}
+                {editingProd.imagen_url && (
+                  <div style={{ width: '45px', height: '45px', borderRadius: '6px', overflow: 'hidden', border: '1px solid var(--gold-jewel)', background: '#222', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <img src={resolveImageUrl(editingProd.imagen_url)} alt="preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
+                  </div>
+                )}
+              </div>
             </div>
             <div style={{ gridColumn: 'span 3', display: 'flex', gap: '15px', marginTop: '10px' }}>
-              <button type="submit" className="btn-primary" style={{ flex: 1 }}>Guardar</button>
+              <button type="submit" className="btn-primary" style={{ flex: 1 }} disabled={subiendoImagenProd}>
+                {subiendoImagenProd ? 'Subiendo imagen...' : 'Guardar'}
+              </button>
               <button type="button" className="btn-outline-gold" style={{ flex: 1 }} onClick={() => setEditingProd(null)}>Cancelar</button>
             </div>
           </form>
@@ -2687,8 +2742,19 @@ export default function AdminDashboard({ session, logout }) {
             {productos.map((p, i) => (
               <tr key={p.id} style={{ background: i % 2 === 0 ? '#161616' : 'transparent' }}>
                 <td style={{...tableCellStyle, width: '60px'}}>
-                  <div style={{ width: '40px', height: '40px', borderRadius: '6px', background: '#222', overflow: 'hidden', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                    {p.imagen_url ? <img src={p.imagen_url.split(',')[0].trim()} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} /> : '🛍️'}
+                  <div style={{ width: '40px', height: '40px', borderRadius: '6px', background: '#222', overflow: 'hidden', display: 'flex', justifyContent: 'center', alignItems: 'center', position: 'relative' }}>
+                    {p.imagen_url ? (
+                      <img 
+                        src={resolveImageUrl(p.imagen_url.split(',')[0].trim())} 
+                        alt={p.nombre} 
+                        style={{width: '100%', height: '100%', objectFit: 'cover'}} 
+                        onError={(e) => { 
+                          e.target.style.display = 'none'; 
+                          if (e.target.nextSibling) e.target.nextSibling.style.display = 'block';
+                        }} 
+                      />
+                    ) : null}
+                    <span style={{ display: p.imagen_url ? 'none' : 'block', fontSize: '1.2rem' }}>🛍️</span>
                   </div>
                 </td>
                 <td style={{...tableCellStyle, fontWeight: 'bold'}}>{p.nombre}</td>
@@ -2727,9 +2793,34 @@ export default function AdminDashboard({ session, logout }) {
              <input className="input-field" placeholder="Nombre completo" value={editingTrabajador.nombre} onChange={e=>setEditingTrabajador({...editingTrabajador, nombre: e.target.value})} required style={{ margin: 0 }} />
              <input type="email" className="input-field" placeholder="Correo electrónico" value={editingTrabajador.email} onChange={e=>setEditingTrabajador({...editingTrabajador, email: e.target.value})} required style={{ margin: 0 }} />
              <input type="text" className="input-field" placeholder={editingTrabajador.id ? "Nueva contraseña (dejar vacío si no cambia)" : "Contraseña (Ej: 123456)"} value={editingTrabajador.password || ''} onChange={e=>setEditingTrabajador({...editingTrabajador, password: e.target.value})} required={!editingTrabajador.id} style={{ margin: 0 }} />
-             <input className="input-field" placeholder="URL Foto Perfil" value={editingTrabajador.foto_perfil} onChange={e=>setEditingTrabajador({...editingTrabajador, foto_perfil: e.target.value})} style={{ margin: 0 }} />
+             
+             {/* Subida de Foto del Barbero */}
+             <div style={{ margin: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+               <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Foto de Perfil / Presentación:</label>
+               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                 <input 
+                   type="file" 
+                   className="input-field" 
+                   accept="image/*" 
+                   onChange={handleBarberoPhotoUpload} 
+                   style={{ flex: 1, padding: '6px', cursor: 'pointer' }} 
+                 />
+                 {subiendoFotoBarbero && <span style={{ color: 'var(--gold-jewel)', fontSize: '0.8rem' }}>⏳ Subiendo...</span>}
+                 {editingTrabajador.foto_perfil && (
+                   <img 
+                     src={resolveImageUrl(editingTrabajador.foto_perfil, `https://i.pravatar.cc/100?u=${editingTrabajador.id || 1}`)} 
+                     alt="preview" 
+                     style={{ width: '40px', height: '40px', borderRadius: '50%', border: '2px solid var(--gold-jewel)', objectFit: 'cover' }} 
+                     onError={(e) => { e.target.src = `https://i.pravatar.cc/100?u=${editingTrabajador.id || 1}`; }}
+                   />
+                 )}
+               </div>
+             </div>
+
              <div style={{ gridColumn: 'span 2', display: 'flex', gap: '15px', marginTop: '10px' }}>
-               <button type="submit" className="btn-primary" style={{ flex: 1 }}>Guardar</button>
+               <button type="submit" className="btn-primary" style={{ flex: 1 }} disabled={subiendoFotoBarbero}>
+                 {subiendoFotoBarbero ? 'Subiendo foto...' : 'Guardar'}
+               </button>
                <button type="button" className="btn-outline-gold" style={{ flex: 1 }} onClick={() => setEditingTrabajador(null)}>Cancelar</button>
              </div>
            </form>
@@ -2752,7 +2843,12 @@ export default function AdminDashboard({ session, logout }) {
             {trabajadores.map((t, i) => (
               <tr key={t.id} style={{ background: i % 2 === 0 ? '#161616' : 'transparent', opacity: t.activo ? 1 : 0.6 }}>
                 <td style={{...tableCellStyle, display: 'flex', alignItems: 'center', gap: '15px', borderBottom: 'none'}}>
-                  <img src={t.foto_perfil || `https://i.pravatar.cc/100?u=${t.id}`} alt={t.nombre} style={{ width: '45px', height: '45px', borderRadius: '50%', border: '2px solid var(--gold-jewel)' }} />
+                  <img 
+                    src={resolveImageUrl(t.foto_perfil, `https://i.pravatar.cc/100?u=${t.id}`)} 
+                    alt={t.nombre} 
+                    style={{ width: '45px', height: '45px', borderRadius: '50%', border: '2px solid var(--gold-jewel)', objectFit: 'cover' }} 
+                    onError={(e) => { e.target.src = `https://i.pravatar.cc/100?u=${t.id}`; }}
+                  />
                   <span style={{ fontWeight: 'bold' }}>{t.nombre}</span>
                 </td>
                 <td style={{...tableCellStyle, color: '#aaa'}}>{t.email}</td>
@@ -4146,7 +4242,12 @@ export default function AdminDashboard({ session, logout }) {
              {!isCompact ? (
                <>
                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-                     <img src={session?.usuario?.foto_perfil || 'https://i.pravatar.cc/100'} alt="Admin" style={{ width: 36, height: 36, borderRadius: '50%', border: '2px solid var(--gold-jewel)', objectFit: 'cover' }} />
+                     <img 
+                       src={resolveImageUrl(session?.usuario?.foto_perfil, 'https://i.pravatar.cc/100')} 
+                       alt="Admin" 
+                       style={{ width: 36, height: 36, borderRadius: '50%', border: '2px solid var(--gold-jewel)', objectFit: 'cover' }} 
+                       onError={(e) => { e.target.src = 'https://i.pravatar.cc/100'; }}
+                     />
                      <div style={{ overflow: 'hidden' }}>
                        <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#fff', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden' }}>{session?.usuario?.nombre || 'Administrador'}</div>
                        <div style={{ fontSize: '0.7rem', color: '#888', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden' }}>{session?.usuario?.email}</div>
@@ -4158,7 +4259,13 @@ export default function AdminDashboard({ session, logout }) {
                </>
              ) : (
                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
-                 <img src={session?.usuario?.foto_perfil || 'https://i.pravatar.cc/100'} alt="Admin" style={{ width: 34, height: 34, borderRadius: '50%', border: '2px solid var(--gold-jewel)', objectFit: 'cover' }} title={session?.usuario?.nombre || 'Administrador'} />
+                 <img 
+                   src={resolveImageUrl(session?.usuario?.foto_perfil, 'https://i.pravatar.cc/100')} 
+                   alt="Admin" 
+                   style={{ width: 34, height: 34, borderRadius: '50%', border: '2px solid var(--gold-jewel)', objectFit: 'cover' }} 
+                   title={session?.usuario?.nombre || 'Administrador'} 
+                   onError={(e) => { e.target.src = 'https://i.pravatar.cc/100'; }}
+                 />
                  <button onClick={logout} style={{ background: 'transparent', border: 'none', color: '#e74c3c', fontSize: '1.2rem', cursor: 'pointer', padding: '4px' }} title="Cerrar Sesión">
                    🚪
                  </button>
