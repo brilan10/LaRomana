@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { API_URL } from '../App';
 import { printThermalTicket } from '../utils/printTicket';
+import { formatRut } from '../utils/rut';
 
 export default function PosTrabajador({ session }) {
   const [selectedClient, setSelectedClient] = useState(null);
@@ -11,6 +12,8 @@ export default function PosTrabajador({ session }) {
   // States for Express Booking
   const [showExpress, setShowExpress] = useState(false);
   const [expressData, setExpressData] = useState({ nombre: '', rut: '', hora: '14:00' });
+  const [expressSugerencias, setExpressSugerencias] = useState([]);
+  const [expressClienteEncontrado, setExpressClienteEncontrado] = useState(null);
 
   // States for Payment
   const [descuento, setDescuento] = useState(0);
@@ -85,6 +88,41 @@ export default function PosTrabajador({ session }) {
     }
   };
 
+  const handleRutChangeExpress = async (rawVal) => {
+    const formatted = formatRut(rawVal);
+    setExpressData(prev => ({ ...prev, rut: formatted }));
+
+    const clean = rawVal.replace(/[^0-9kK]/g, '');
+    if (clean.length >= 2) {
+      try {
+        const resp = await fetch(`${API_URL}/api.php?action=search_clientes&q=${encodeURIComponent(clean)}`);
+        const data = await resp.json();
+        if (Array.isArray(data) && data.length > 0) {
+          setExpressSugerencias(data);
+          const exact = data.find(c => (c.rut || '').replace(/[^0-9kK]/gi, '').toUpperCase() === clean.toUpperCase());
+          if (exact) {
+            setExpressClienteEncontrado(exact);
+            setExpressData(prev => ({
+              ...prev,
+              rut: exact.rut || formatted,
+              nombre: exact.nombre || prev.nombre
+            }));
+          } else {
+            setExpressClienteEncontrado(null);
+          }
+        } else {
+          setExpressSugerencias([]);
+          setExpressClienteEncontrado(null);
+        }
+      } catch (err) {
+        setExpressSugerencias([]);
+      }
+    } else {
+      setExpressSugerencias([]);
+      setExpressClienteEncontrado(null);
+    }
+  };
+
   const handleAgendarExpress = async (e) => {
     e.preventDefault();
     try {
@@ -104,6 +142,9 @@ export default function PosTrabajador({ session }) {
       if (data.status === 'success') {
         alert("Cita agendada con éxito");
         setShowExpress(false);
+        setExpressData({ nombre: '', rut: '', hora: '14:00' });
+        setExpressSugerencias([]);
+        setExpressClienteEncontrado(null);
         fetchAgenda();
       } else {
         alert(data.error || "Error al agendar");
@@ -337,19 +378,40 @@ export default function PosTrabajador({ session }) {
       </div>
 
       {showExpress && (
-         <div className="card" style={{ marginBottom: '20px', background: 'var(--bg-charcoal)' }}>
-            <h3 style={{ marginTop: 0, color: 'var(--gold-jewel)' }}>Agendar Cliente Nuevo</h3>
+         <div className="card" style={{ marginBottom: '20px', background: 'var(--bg-charcoal)', border: '1px solid var(--gold-jewel)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.05rem' }}>⚡ Agendar Cita Express</h3>
+              {expressClienteEncontrado && (
+                <span style={{ fontSize: '0.8rem', color: '#2ecc71', fontWeight: 'bold' }}>
+                  ✅ Cliente Reconocido ({expressClienteEncontrado.cortes_acumulados || 0} cortes)
+                </span>
+              )}
+            </div>
             <form onSubmit={handleAgendarExpress} style={{ display: 'flex', gap: '10px', alignItems: 'end', flexWrap: 'wrap' }}>
                <div style={{ flex: 1, minWidth: '150px' }}>
-                 <label>RUT (Sin puntos ni guión)</label>
-                 <input type="text" className="input-field" required value={expressData.rut} onChange={e => setExpressData({...expressData, rut: e.target.value})} placeholder="123456789" />
+                 <label style={{ fontSize: '0.8rem', color: '#aaa' }}>RUT del Cliente</label>
+                 <input 
+                   type="text" 
+                   className="input-field" 
+                   required 
+                   value={expressData.rut} 
+                   onChange={e => handleRutChangeExpress(e.target.value)} 
+                   placeholder="12345678-9" 
+                 />
                </div>
                <div style={{ flex: 1, minWidth: '150px' }}>
-                 <label>Nombre del Cliente</label>
-                 <input type="text" className="input-field" required value={expressData.nombre} onChange={e => setExpressData({...expressData, nombre: e.target.value})} placeholder="Juan Pérez" />
+                 <label style={{ fontSize: '0.8rem', color: '#aaa' }}>Nombre del Cliente</label>
+                 <input 
+                   type="text" 
+                   className="input-field" 
+                   required 
+                   value={expressData.nombre} 
+                   onChange={e => setExpressData({...expressData, nombre: e.target.value})} 
+                   placeholder="Nombre del Cliente" 
+                 />
                </div>
                <div style={{ width: '120px' }}>
-                 <label>Hora</label>
+                 <label style={{ fontSize: '0.8rem', color: '#aaa' }}>Hora</label>
                  <input type="time" className="input-field" required value={expressData.hora} onChange={e => setExpressData({...expressData, hora: e.target.value})} />
                </div>
                <button type="submit" className="btn-romana" style={{ height: '42px', padding: '0 20px', borderRadius: '8px' }}>AGENDAR</button>

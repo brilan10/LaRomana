@@ -6,6 +6,7 @@ import { saveAs } from 'file-saver';
 import ErrorBoundary from './ErrorBoundary';
 import { resolveImageUrl } from '../utils/imageHelper';
 import { printThermalTicket } from '../utils/printTicket';
+import { formatRut } from '../utils/rut';
 
 const formatDateYMD = (d = new Date()) => {
   const year = d.getFullYear();
@@ -114,6 +115,10 @@ export default function AdminDashboard({ session, logout }) {
     metodo_pago: 'Efectivo',
     descuento: 0
   });
+  const [sugerenciasCitaRut, setSugerenciasCitaRut] = useState([]);
+  const [buscandoClienteCita, setBuscandoClienteCita] = useState(false);
+  const [showDropdownCitaRut, setShowDropdownCitaRut] = useState(false);
+  const [clienteCitaEncontrado, setClienteCitaEncontrado] = useState(null);
   const [filtroBarberoCal, setFiltroBarberoCal] = useState('');
   const [citaDetalleModal, setCitaDetalleModal] = useState(null);
   const [actualizandoCita, setActualizandoCita] = useState(false);
@@ -762,6 +767,89 @@ export default function AdminDashboard({ session, logout }) {
     }
   };
 
+  const abrirModalNuevaCita = (fecha = fechaCalendario, hora = '10:00', trabajador_id = '') => {
+    const esPasado = fecha < hoyStr;
+    setNuevaCitaForm({
+      fecha: fecha || fechaCalendario,
+      rut: '',
+      nombre: '',
+      telefono: '',
+      hora: hora || '10:00',
+      trabajador_id: trabajador_id || trabajadores[0]?.id || '',
+      servicio_id: servicios[0]?.id || '',
+      monto: servicios[0]?.precio || 14000,
+      marcar_pagada: esPasado,
+      metodo_pago: 'Efectivo',
+      descuento: 0
+    });
+    setSugerenciasCitaRut([]);
+    setShowDropdownCitaRut(false);
+    setClienteCitaEncontrado(null);
+    setBuscandoClienteCita(false);
+    setShowModalCita(true);
+  };
+
+  const handleRutChangeCita = async (rawVal) => {
+    const formatted = formatRut(rawVal);
+    setNuevaCitaForm(prev => ({ ...prev, rut: formatted }));
+
+    const clean = rawVal.replace(/[^0-9kK]/g, '');
+    if (clean.length >= 2) {
+      setBuscandoClienteCita(true);
+      try {
+        const resp = await fetch(`${API_URL}/api.php?action=search_clientes&q=${encodeURIComponent(clean)}`);
+        const data = await resp.json();
+        if (Array.isArray(data) && data.length > 0) {
+          setSugerenciasCitaRut(data);
+          setShowDropdownCitaRut(true);
+          
+          // Buscar coincidencia exacta por RUT limpio
+          const exact = data.find(c => {
+            const cClean = (c.rut || '').replace(/[^0-9kK]/gi, '').toUpperCase();
+            return cClean === clean.toUpperCase();
+          });
+          
+          if (exact) {
+            setClienteCitaEncontrado(exact);
+            setNuevaCitaForm(prev => ({
+              ...prev,
+              rut: exact.rut || formatted,
+              nombre: exact.nombre || prev.nombre,
+              telefono: exact.telefono || prev.telefono || ''
+            }));
+          } else {
+            setClienteCitaEncontrado(null);
+          }
+        } else {
+          setSugerenciasCitaRut([]);
+          setShowDropdownCitaRut(false);
+          setClienteCitaEncontrado(null);
+        }
+      } catch (err) {
+        console.error("Error buscando cliente por RUT:", err);
+        setSugerenciasCitaRut([]);
+      } finally {
+        setBuscandoClienteCita(false);
+      }
+    } else {
+      setSugerenciasCitaRut([]);
+      setShowDropdownCitaRut(false);
+      setClienteCitaEncontrado(null);
+    }
+  };
+
+  const seleccionarSugerenciaCita = (cli) => {
+    setNuevaCitaForm(prev => ({
+      ...prev,
+      rut: cli.rut,
+      nombre: cli.nombre,
+      telefono: cli.telefono || ''
+    }));
+    setClienteCitaEncontrado(cli);
+    setSugerenciasCitaRut([]);
+    setShowDropdownCitaRut(false);
+  };
+
   const handleAgendarCita = async (e) => {
     e.preventDefault();
     if (!nuevaCitaForm.rut || !nuevaCitaForm.nombre || !nuevaCitaForm.trabajador_id) {
@@ -798,6 +886,9 @@ export default function AdminDashboard({ session, logout }) {
             : "✅ Cita agendada exitosamente.";
           showToast(msg, "success");
           setShowModalCita(false);
+          setSugerenciasCitaRut([]);
+          setShowDropdownCitaRut(false);
+          setClienteCitaEncontrado(null);
           setNuevaCitaForm({ 
             fecha: fechaCalendario, 
             rut: '', 
@@ -1563,20 +1654,7 @@ export default function AdminDashboard({ session, logout }) {
                     onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; }}
                     onClick={() => {
                       if (!cita) {
-                        setNuevaCitaForm({
-                          fecha: fechaCalendario,
-                          rut: '',
-                          nombre: '',
-                          telefono: '',
-                          hora,
-                          trabajador_id: barbero.id,
-                          servicio_id: servicios[0]?.id || '',
-                          monto: servicios[0]?.precio || 14000,
-                          marcar_pagada: esPasadoDia,
-                          metodo_pago: 'Efectivo',
-                          descuento: 0
-                        });
-                        setShowModalCita(true);
+                        abrirModalNuevaCita(fechaCalendario, hora, barbero.id);
                       } else {
                         setCitaDetalleModal(cita);
                       }
@@ -1701,20 +1779,7 @@ export default function AdminDashboard({ session, logout }) {
                     }}
                     onClick={() => {
                       if (citasHora.length === 0) {
-                        setNuevaCitaForm({
-                          fecha,
-                          rut: '',
-                          nombre: '',
-                          telefono: '',
-                          hora,
-                          trabajador_id: trabajadores[0]?.id || '',
-                          servicio_id: servicios[0]?.id || '',
-                          monto: servicios[0]?.precio || 14000,
-                          marcar_pagada: esPasado,
-                          metodo_pago: 'Efectivo',
-                          descuento: 0
-                        });
-                        setShowModalCita(true);
+                        abrirModalNuevaCita(fecha, hora);
                       }
                     }}
                   >
@@ -1803,7 +1868,6 @@ export default function AdminDashboard({ session, logout }) {
 
             const citasDia = getCitasParaFechaFiltered(diaInfo.date);
             const esHoy = diaInfo.date === hoyStr;
-            const esPasado = diaInfo.date < hoyStr;
             const citasCompletadas = citasDia.filter(c => c.estado === 'Completada');
             const totalIngresosDia = citasCompletadas.reduce((acc, c) => acc + Number(c.total_pagado || c.subtotal || 0), 0);
 
@@ -1824,20 +1888,7 @@ export default function AdminDashboard({ session, logout }) {
                 onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--gold-jewel)'; }}
                 onMouseLeave={e => { e.currentTarget.style.borderColor = esHoy ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.08)'; }}
                 onClick={() => {
-                  setNuevaCitaForm({
-                    fecha: diaInfo.date,
-                    rut: '',
-                    nombre: '',
-                    telefono: '',
-                    hora: '10:00',
-                    trabajador_id: trabajadores[0]?.id || '',
-                    servicio_id: servicios[0]?.id || '',
-                    monto: servicios[0]?.precio || 14000,
-                    marcar_pagada: esPasado,
-                    metodo_pago: 'Efectivo',
-                    descuento: 0
-                  });
-                  setShowModalCita(true);
+                  abrirModalNuevaCita(diaInfo.date);
                 }}
               >
                 {/* Header of the Day */}
@@ -1847,7 +1898,7 @@ export default function AdminDashboard({ session, logout }) {
                     height: '26px',
                     borderRadius: '50%',
                     background: esHoy ? 'var(--gold-jewel)' : 'transparent',
-                    color: esHoy ? '#000' : (esPasado ? '#aaa' : '#fff'),
+                    color: esHoy ? '#000' : '#fff',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -1977,22 +2028,7 @@ export default function AdminDashboard({ session, logout }) {
             <button
               className="btn-primary"
               style={{ padding: '10px 20px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}
-              onClick={() => {
-                setNuevaCitaForm({
-                  fecha: fechaCalendario,
-                  rut: '',
-                  nombre: '',
-                  telefono: '',
-                  trabajador_id: trabajadores[0]?.id || '',
-                  hora: '10:00',
-                  servicio_id: servicios[0]?.id || '',
-                  monto: servicios[0]?.precio || 14000,
-                  marcar_pagada: fechaCalendario < hoyStr,
-                  metodo_pago: 'Efectivo',
-                  descuento: 0
-                });
-                setShowModalCita(true);
-              }}
+              onClick={() => abrirModalNuevaCita(fechaCalendario)}
             >
               <span>➕</span> Nueva Cita
             </button>
@@ -2155,29 +2191,128 @@ export default function AdminDashboard({ session, logout }) {
                 </select>
               </div>
 
-              {/* RUT */}
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px' }}>
-                  RUT del Cliente *
-                </label>
+              {/* RUT con Autocompletado y Búsqueda en Vivo */}
+              <div style={{ position: 'relative' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                  <label style={{ fontSize: '0.82rem', color: clienteCitaEncontrado ? '#2ecc71' : 'var(--gold-jewel)', fontWeight: 'bold' }}>
+                    RUT del Cliente *
+                  </label>
+                  {buscandoClienteCita && (
+                    <span style={{ fontSize: '0.74rem', color: 'var(--gold-jewel)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                      <span>⏳</span> Buscando en BD...
+                    </span>
+                  )}
+                  {clienteCitaEncontrado && (
+                    <span style={{ fontSize: '0.74rem', color: '#2ecc71', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                      <span>✅</span> Cliente en BD
+                    </span>
+                  )}
+                </div>
+                
                 <input
                   className="input-field"
-                  style={{ margin: 0 }}
-                  placeholder="Ej: 12345678-9"
+                  style={{
+                    margin: 0,
+                    borderColor: clienteCitaEncontrado ? '#2ecc71' : undefined,
+                    boxShadow: clienteCitaEncontrado ? '0 0 10px rgba(46, 204, 113, 0.25)' : undefined
+                  }}
+                  placeholder="Ej: 12345678-9 (o busca por RUT)"
                   value={nuevaCitaForm.rut}
-                  onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, rut: e.target.value })}
+                  onChange={e => handleRutChangeCita(e.target.value)}
+                  onFocus={() => sugerenciasCitaRut.length > 0 && setShowDropdownCitaRut(true)}
                   required
                 />
+
+                {/* Dropdown Flotante de Sugerencias en Vivo */}
+                {showDropdownCitaRut && sugerenciasCitaRut.length > 0 && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '100%',
+                    left: 0,
+                    right: 0,
+                    background: '#181818',
+                    border: '2px solid var(--gold-jewel)',
+                    borderRadius: '10px',
+                    zIndex: 3000,
+                    boxShadow: '0 15px 40px rgba(0,0,0,0.95)',
+                    maxHeight: '230px',
+                    overflowY: 'auto',
+                    marginTop: '4px'
+                  }}>
+                    <div style={{
+                      padding: '7px 12px',
+                      background: 'rgba(212,175,55,0.15)',
+                      fontSize: '0.74rem',
+                      color: 'var(--gold-jewel)',
+                      fontWeight: 'bold',
+                      borderBottom: '1px solid rgba(255,255,255,0.1)',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}>
+                      <span>👇 Clientes encontrados (haz clic para autorrellenar):</span>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setShowDropdownCitaRut(false); }}
+                        style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '1rem', padding: 0 }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                    {sugerenciasCitaRut.map(cli => (
+                      <div
+                        key={cli.id}
+                        onClick={() => seleccionarSugerenciaCita(cli)}
+                        style={{
+                          padding: '10px 14px',
+                          cursor: 'pointer',
+                          borderBottom: '1px solid rgba(255,255,255,0.06)',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          transition: 'background 0.15s ease'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(212, 175, 55, 0.2)'}
+                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                      >
+                        <div>
+                          <div style={{ fontWeight: 'bold', color: '#fff', fontSize: '0.92rem' }}>
+                            👤 {cli.nombre}
+                          </div>
+                          <div style={{ fontSize: '0.76rem', color: '#aaa', marginTop: '2px' }}>
+                            🪪 {cli.rut} {cli.telefono ? `• 📞 ${cli.telefono}` : ''}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <span style={{
+                            background: 'rgba(46, 204, 113, 0.15)',
+                            color: '#2ecc71',
+                            padding: '3px 8px',
+                            borderRadius: '6px',
+                            fontSize: '0.74rem',
+                            fontWeight: 'bold',
+                            border: '1px solid rgba(46, 204, 113, 0.3)'
+                          }}>
+                            {cli.cortes_acumulados || 0} cortes
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Nombre */}
               <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px' }}>
+                <label style={{ display: 'block', fontSize: '0.82rem', color: clienteCitaEncontrado ? '#2ecc71' : 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
                   Nombre del Cliente *
                 </label>
                 <input
                   className="input-field"
-                  style={{ margin: 0 }}
+                  style={{
+                    margin: 0,
+                    borderColor: clienteCitaEncontrado ? '#2ecc71' : undefined
+                  }}
                   placeholder="Ej: Carlos Pérez"
                   value={nuevaCitaForm.nombre}
                   onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, nombre: e.target.value })}
@@ -2186,18 +2321,6 @@ export default function AdminDashboard({ session, logout }) {
               </div>
 
               {/* Teléfono */}
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px' }}>
-                  Teléfono / WhatsApp (Opcional)
-                </label>
-                <input
-                  className="input-field"
-                  style={{ margin: 0 }}
-                  placeholder="+56 9 1234 5678"
-                  value={nuevaCitaForm.telefono}
-                  onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, telefono: e.target.value })}
-                />
-              </div>
 
               {/* Barbero */}
               <div>
