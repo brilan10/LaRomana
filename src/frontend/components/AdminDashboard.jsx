@@ -97,8 +97,22 @@ export default function AdminDashboard({ session, logout }) {
   const [fechaCalendario, setFechaCalendario] = useState(new Date().toISOString().split('T')[0]);
   const [vistaCalendario, setVistaCalendario] = useState('dia'); // dia, semana, mes
   const [showModalCita, setShowModalCita] = useState(false);
-  const [nuevaCitaForm, setNuevaCitaForm] = useState({ rut: '', nombre: '', trabajador_id: '', hora: '10:00', servicio_id: '', monto: '' });
+  const [nuevaCitaForm, setNuevaCitaForm] = useState({
+    fecha: new Date().toISOString().split('T')[0],
+    rut: '',
+    nombre: '',
+    telefono: '',
+    trabajador_id: '',
+    hora: '10:00',
+    servicio_id: '',
+    monto: '',
+    marcar_pagada: false,
+    metodo_pago: 'Efectivo',
+    descuento: 0
+  });
   const [filtroBarberoCal, setFiltroBarberoCal] = useState('');
+  const [citaDetalleModal, setCitaDetalleModal] = useState(null);
+  const [actualizandoCita, setActualizandoCita] = useState(false);
 
   // Modales Extra
   const [cobroActivo, setCobroActivo] = useState(null);
@@ -516,24 +530,41 @@ export default function AdminDashboard({ session, logout }) {
     }
   };
 
+  const getStartOfWeekDate = (dateStr) => {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dateObj = new Date(y, m - 1, d, 12, 0, 0);
+    const day = dateObj.getDay();
+    const diff = day === 0 ? -6 : 1 - day;
+    const monday = new Date(dateObj);
+    monday.setDate(dateObj.getDate() + diff);
+    return monday;
+  };
+
+  const toYMD = (date) => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+
   const cargarCalendario = async (fecha = fechaCalendario, vista = vistaCalendario) => {
     let start_date = fecha;
     let end_date = fecha;
-    const d = new Date(fecha + 'T12:00:00');
+    const [y, m, d] = fecha.split('-').map(Number);
+
     if (vista === 'semana') {
-        const day = d.getDay();
-        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-        const startOfWeek = new Date(d.setDate(diff));
-        const endOfWeek = new Date(startOfWeek);
-        endOfWeek.setDate(endOfWeek.getDate() + 6);
-        start_date = startOfWeek.toISOString().split('T')[0];
-        end_date = endOfWeek.toISOString().split('T')[0];
+      const startOfWeek = getStartOfWeekDate(fecha);
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(startOfWeek.getDate() + 6);
+      start_date = toYMD(startOfWeek);
+      end_date = toYMD(endOfWeek);
     } else if (vista === 'mes') {
-        const startOfMonth = new Date(d.getFullYear(), d.getMonth(), 1);
-        const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-        start_date = startOfMonth.toISOString().split('T')[0];
-        end_date = endOfMonth.toISOString().split('T')[0];
+      const startOfMonth = new Date(y, m - 1, 1, 12, 0, 0);
+      const endOfMonth = new Date(y, m, 0, 12, 0, 0);
+      start_date = toYMD(startOfMonth);
+      end_date = toYMD(endOfMonth);
     }
+
     try {
       const res = await fetch(`${API_URL}/admin_api.php?action=get_todas_citas&start_date=${start_date}&end_date=${end_date}`);
       const data = await res.json();
@@ -541,6 +572,27 @@ export default function AdminDashboard({ session, logout }) {
     } catch (e) {
       console.error("Error cargando citas calendario:", e);
     }
+  };
+
+  const cambiarPeriodoCalendario = (direccion) => {
+    const [y, m, d] = fechaCalendario.split('-').map(Number);
+    const current = new Date(y, m - 1, d, 12, 0, 0);
+    if (vistaCalendario === 'dia') {
+      current.setDate(current.getDate() + direccion);
+    } else if (vistaCalendario === 'semana') {
+      current.setDate(current.getDate() + (direccion * 7));
+    } else if (vistaCalendario === 'mes') {
+      current.setMonth(current.getMonth() + direccion);
+    }
+    const nueva = toYMD(current);
+    setFechaCalendario(nueva);
+    cargarCalendario(nueva, vistaCalendario);
+  };
+
+  const irAHoy = () => {
+    const hoy = toYMD(new Date());
+    setFechaCalendario(hoy);
+    cargarCalendario(hoy, vistaCalendario);
   };
 
   const handleAbrirCaja = async (e) => {
@@ -709,33 +761,112 @@ export default function AdminDashboard({ session, logout }) {
   const handleAgendarCita = async (e) => {
     e.preventDefault();
     if (!nuevaCitaForm.rut || !nuevaCitaForm.nombre || !nuevaCitaForm.trabajador_id) {
-        alert("Rut, nombre y barbero son obligatorios.");
+        showToast("RUT, nombre y barbero son obligatorios.", "error");
         return;
     }
     
+    const fechaUso = nuevaCitaForm.fecha || fechaCalendario;
     const payload = {
-        rut: nuevaCitaForm.rut,
-        nombre: nuevaCitaForm.nombre,
-        fecha: fechaCalendario,
+        rut: nuevaCitaForm.rut.trim(),
+        nombre: nuevaCitaForm.nombre.trim(),
+        telefono: nuevaCitaForm.telefono ? nuevaCitaForm.telefono.trim() : null,
+        fecha: fechaUso,
         hora: nuevaCitaForm.hora,
         trabajador_id: nuevaCitaForm.trabajador_id,
         servicios: nuevaCitaForm.servicio_id ? [nuevaCitaForm.servicio_id] : [],
-        monto: nuevaCitaForm.monto !== '' && nuevaCitaForm.monto !== null ? Number(nuevaCitaForm.monto) : null
+        monto: nuevaCitaForm.monto !== '' && nuevaCitaForm.monto !== null ? Number(nuevaCitaForm.monto) : null,
+        marcar_pagada: Boolean(nuevaCitaForm.marcar_pagada),
+        metodo_pago: nuevaCitaForm.metodo_pago || 'Efectivo',
+        descuento: Number(nuevaCitaForm.descuento) || 0
     };
 
-    const res = await fetch(`${API_URL}/api.php?action=agendar_cita`, {
+    try {
+      const res = await fetch(`${API_URL}/api.php?action=agendar_cita`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+          const totalMostrado = Number(data.total_pagado !== undefined && data.total_pagado !== null ? data.total_pagado : (payload.monto || 14000));
+          const msg = nuevaCitaForm.marcar_pagada 
+            ? `✅ Cita registrada y cobrada exitosamente ($${totalMostrado.toLocaleString('es-CL')} • ${payload.metodo_pago})` 
+            : "✅ Cita agendada exitosamente.";
+          showToast(msg, "success");
+          setShowModalCita(false);
+          setNuevaCitaForm({ 
+            fecha: fechaCalendario, 
+            rut: '', 
+            nombre: '', 
+            telefono: '', 
+            trabajador_id: '', 
+            hora: '10:00', 
+            servicio_id: '', 
+            monto: '', 
+            marcar_pagada: false, 
+            metodo_pago: 'Efectivo', 
+            descuento: 0 
+          });
+          cargarCalendario(fechaCalendario, vistaCalendario);
+          cargarDashboard();
+          cargarCRM();
+          cargarCaja();
+      } else {
+          showToast(data.error || 'Error al agendar cita', 'error');
+      }
+    } catch (err) {
+      console.error("Error al agendar cita:", err);
+      showToast('Error de conexión al agendar cita', 'error');
+    }
+  };
+
+  const handleCambiarEstadoCita = async (citaId, nuevoEstado) => {
+    setActualizandoCita(true);
+    try {
+      const res = await fetch(`${API_URL}/admin_api.php?action=cambiar_estado_cita`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    if (data.status === 'success') {
-        showToast("Cita agendada exitosamente.", "success");
-        setShowModalCita(false);
-        setNuevaCitaForm({ rut: '', nombre: '', trabajador_id: '', hora: '10:00', servicio_id: '', monto: '' });
+        body: JSON.stringify({ cita_id: citaId, estado: nuevoEstado })
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        showToast(data.message || `Estado actualizado a ${nuevoEstado}`, 'success');
+        setCitaDetalleModal(null);
         cargarCalendario();
-    } else {
-        alert(data.error || 'Error al agendar cita');
+        cargarDashboard();
+        cargarCaja();
+      } else {
+        showToast(data.message || 'Error al actualizar cita', 'error');
+      }
+    } catch (err) {
+      showToast('Error de conexión', 'error');
+    } finally {
+      setActualizandoCita(false);
+    }
+  };
+
+  const handleEliminarCita = async (citaId) => {
+    if (!window.confirm("¿Estás seguro de eliminar esta cita del sistema? Esta acción no se puede deshacer.")) return;
+    setActualizandoCita(true);
+    try {
+      const res = await fetch(`${API_URL}/admin_api.php?action=eliminar_cita`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cita_id: citaId })
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        showToast(data.message || 'Cita eliminada correctamente', 'success');
+        setCitaDetalleModal(null);
+        cargarCalendario();
+        cargarDashboard();
+      } else {
+        showToast(data.message || 'Error al eliminar', 'error');
+      }
+    } catch (err) {
+      showToast('Error de conexión', 'error');
+    } finally {
+      setActualizandoCita(false);
     }
   };
 
@@ -1247,312 +1378,1103 @@ export default function AdminDashboard({ session, logout }) {
   };
 
   const renderCalendario = () => {
-    // Horarios de 10:00 a 20:00
+    // Horarios de 10:00 a 20:30
     const horas = [];
     for (let h = 10; h <= 20; h++) {
       horas.push(`${String(h).padStart(2, '0')}:00`);
       if (h < 20) horas.push(`${String(h).padStart(2, '0')}:30`);
     }
 
+    const hoyStr = toYMD(new Date());
+
     // Filtrar trabajadores
     const trabajadoresFiltrados = trabajadores.filter(t => filtroBarberoCal === '' || String(t.id) === String(filtroBarberoCal));
 
-      const getCitaParaFechaHora = (fecha, barberoNombre, hora) => {
-        return citasCalendario.find(c => c.fecha === fecha && c.trabajador === barberoNombre && c.hora.startsWith(hora));
-      };
+    const getCitaParaFechaHora = (fecha, barberoId, hora) => {
+      return citasCalendario.find(c => c.fecha === fecha && (String(c.trabajador_id) === String(barberoId) || c.trabajador === trabajadores.find(t => String(t.id) === String(barberoId))?.nombre) && c.hora.startsWith(hora));
+    };
 
-      const getCitasParaFecha = (fecha) => {
-        return citasCalendario.filter(c => c.fecha === fecha && (filtroBarberoCal === '' || String(c.trabajador_id) === String(filtroBarberoCal))); // Assuming API can return trabajador_id, wait, API returns t.nombre as trabajador. Let's filter by string matching.
-      };
+    const getCitasParaFechaFiltered = (fecha) => {
+      return citasCalendario.filter(c => c.fecha === fecha && (filtroBarberoCal === '' || String(c.trabajador_id) === String(filtroBarberoCal) || c.trabajador === trabajadores.find(t => String(t.id) === String(filtroBarberoCal))?.nombre));
+    };
 
-      const getCitasParaFechaFiltered = (fecha) => {
-        return citasCalendario.filter(c => c.fecha === fecha && (filtroBarberoCal === '' || c.trabajador === trabajadores.find(t=>String(t.id) === String(filtroBarberoCal))?.nombre));
-      };
+    const formatearPeriodoActual = () => {
+      const [y, m, d] = fechaCalendario.split('-').map(Number);
+      const meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+      const dias = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+      const fechaObj = new Date(y, m - 1, d, 12, 0, 0);
 
-      const renderGridDia = () => {
-        if (trabajadoresFiltrados.length === 0) return <div style={{ color: '#aaa', textAlign: 'center' }}>No hay barberos registrados o no coinciden con el filtro.</div>;
+      if (vistaCalendario === 'dia') {
+        const diaNom = dias[fechaObj.getDay()];
+        const mesNom = meses[fechaObj.getMonth()];
+        const esHoy = fechaCalendario === hoyStr;
+        const esPasado = fechaCalendario < hoyStr;
+        return {
+          titulo: `${diaNom}, ${d} de ${mesNom} ${y}`,
+          subtitulo: esHoy ? 'Hoy (En curso)' : (esPasado ? 'Día Pasado (Historial)' : 'Día Futuro (Programado)'),
+          badge: esHoy ? 'hoy' : (esPasado ? 'pasado' : 'futuro')
+        };
+      }
+      if (vistaCalendario === 'semana') {
+        const monday = getStartOfWeekDate(fechaCalendario);
+        const sunday = new Date(monday);
+        sunday.setDate(monday.getDate() + 6);
+        const esSemanaActual = monday <= new Date() && sunday >= new Date();
+        return {
+          titulo: `Semana del ${monday.getDate()} de ${meses[monday.getMonth()]} al ${sunday.getDate()} de ${meses[sunday.getMonth()]} ${sunday.getFullYear()}`,
+          subtitulo: esSemanaActual ? 'Semana Actual en Curso' : (sunday < new Date() ? 'Semana Pasada (Historial)' : 'Semana Futura (Programada)'),
+          badge: esSemanaActual ? 'hoy' : (sunday < new Date() ? 'pasado' : 'futuro')
+        };
+      }
+      if (vistaCalendario === 'mes') {
+        const mesActual = new Date().getMonth();
+        const anioActual = new Date().getFullYear();
+        const esMesActual = (m - 1) === mesActual && y === anioActual;
+        return {
+          titulo: `${meses[fechaObj.getMonth()]} ${y}`,
+          subtitulo: esMesActual ? 'Mes Actual' : ((y < anioActual || (y === anioActual && (m - 1) < mesActual)) ? 'Mes Pasado (Historial)' : 'Mes Futuro'),
+          badge: esMesActual ? 'hoy' : ((y < anioActual || (y === anioActual && (m - 1) < mesActual)) ? 'pasado' : 'futuro')
+        };
+      }
+      return { titulo: fechaCalendario, subtitulo: '', badge: '' };
+    };
+
+    const periodoInfo = formatearPeriodoActual();
+
+    // RENDER VISTA DÍA
+    const renderGridDia = () => {
+      if (trabajadoresFiltrados.length === 0) {
         return (
-             <div style={{ display: 'grid', gridTemplateColumns: `80px repeat(${trabajadoresFiltrados.length}, 1fr)`, gap: '10px' }}>
-                <div style={{ fontWeight: 'bold', color: 'var(--text-secondary)', textAlign: 'right', paddingRight: '10px' }}>Hora</div>
-                {trabajadoresFiltrados.map(b => (
-                   <div key={b.id} style={{ fontWeight: 'bold', color: 'var(--gold-jewel)', textAlign: 'center', background: '#222', padding: '10px', borderRadius: '8px' }}>{b.nombre}</div>
-                ))}
-                {horas.map(hora => (
-                   <React.Fragment key={hora}>
-                      <div style={{ color: '#888', textAlign: 'right', paddingRight: '10px', fontSize: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>{hora}</div>
-                      {trabajadoresFiltrados.map(barbero => {
-                         const cita = getCitaParaFechaHora(fechaCalendario, barbero.nombre, hora);
-                         return (
-                            <div key={`${barbero.id}-${hora}`} style={{ minHeight: '60px', background: cita ? 'rgba(212, 175, 55, 0.1)' : 'rgba(255,255,255,0.02)', border: cita ? '1px solid var(--gold-jewel)' : '1px dashed #333', borderRadius: '8px', padding: '10px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center', cursor: 'pointer' }} onClick={() => {
-                                if (!cita) { 
-                                    setNuevaCitaForm({ 
-                                        rut: '',
-                                        nombre: '',
-                                        hora, 
-                                        trabajador_id: barbero.id,
-                                        servicio_id: servicios[0]?.id || '',
-                                        monto: servicios[0]?.precio || 14000
-                                    }); 
-                                    setShowModalCita(true); 
-                                } else if (cita.estado === 'Pendiente' || cita.estado === 'Terminado_Esperando_Pago') {
-                                    const subVal = Number(cita.subtotal) > 0 ? Number(cita.subtotal) : (Number(cita.total_pagado) > 0 ? Number(cita.total_pagado) : 14000);
-                                    setCobroActivo({
-                                        ...cita,
-                                        subtotal: subVal,
-                                        barbero: cita.trabajador,
-                                        descuento: Number(cita.descuento) || 0,
-                                        metodo: cita.metodo_pago || 'Efectivo',
-                                        decant_producto_id: ''
-                                    });
-                                }
-                            }}>
-                               {cita ? (<><div style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>{cita.cliente}</div><div style={{ fontSize: '0.75rem', color: cita.estado === 'Completada' ? 'var(--green-emerald-light)' : (cita.estado === 'Cancelada' ? '#e74c3c' : 'var(--gold-jewel)'), marginTop: '5px' }}>{cita.estado}</div></>) : (<div style={{ color: 'transparent', transition: 'color 0.2s' }} className="hover-add-cita">+ Añadir</div>)}
-                            </div>
-                         );
-                      })}
-                   </React.Fragment>
-                ))}
-             </div>
+          <div style={{ color: '#aaa', textAlign: 'center', padding: '40px' }}>
+            💈 No hay barberos activos o no coinciden con el filtro seleccionado.
+          </div>
         );
-      };
+      }
 
-      const renderGridSemana = () => {
-        const d = new Date(fechaCalendario + 'T12:00:00');
-        const day = d.getDay();
-        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-        const startOfWeek = new Date(d.setDate(diff));
-        
-        const diasSemana = Array.from({length: 7}, (_, i) => {
-            const dStr = new Date(startOfWeek);
-            dStr.setDate(startOfWeek.getDate() + i);
-            return dStr.toISOString().split('T')[0];
-        });
-        const nombresDias = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+      const esPasadoDia = fechaCalendario < hoyStr;
 
-        return (
-             <div style={{ display: 'grid', gridTemplateColumns: `80px repeat(7, 1fr)`, gap: '10px' }}>
-                <div style={{ fontWeight: 'bold', color: 'var(--text-secondary)', textAlign: 'right', paddingRight: '10px' }}>Hora</div>
-                {diasSemana.map((fecha, i) => (
-                   <div key={fecha} style={{ fontWeight: 'bold', color: 'var(--gold-jewel)', textAlign: 'center', background: '#222', padding: '10px', borderRadius: '8px' }}>
-                       <div>{nombresDias[i]}</div>
-                       <div style={{fontSize: '0.8rem', color: '#888'}}>{fecha.slice(5)}</div>
-                   </div>
-                ))}
-                {horas.map(hora => (
-                   <React.Fragment key={hora}>
-                      <div style={{ color: '#888', textAlign: 'right', paddingRight: '10px', fontSize: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>{hora}</div>
-                      {diasSemana.map(fecha => {
-                         const barberoSeleccionado = trabajadoresFiltrados.length === 1 ? trabajadoresFiltrados[0] : null;
-                         let citasHora = [];
-                         if (barberoSeleccionado) {
-                             const c = getCitaParaFechaHora(fecha, barberoSeleccionado.nombre, hora);
-                             if (c) citasHora.push(c);
-                         } else {
-                             citasHora = getCitasParaFechaFiltered(fecha).filter(c => c.hora.startsWith(hora));
-                         }
+      return (
+        <div style={{ display: 'grid', gridTemplateColumns: `80px repeat(${trabajadoresFiltrados.length}, minmax(170px, 1fr))`, gap: '10px', minWidth: '700px' }}>
+          {/* Header */}
+          <div style={{ fontWeight: 'bold', color: 'var(--text-secondary)', textAlign: 'right', paddingRight: '12px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', fontSize: '0.85rem' }}>
+            HORA
+          </div>
+          {trabajadoresFiltrados.map(b => (
+            <div key={b.id} style={{ fontWeight: 'bold', color: 'var(--gold-jewel)', textAlign: 'center', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(212,175,55,0.3)', padding: '12px 10px', borderRadius: '10px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+              <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'var(--gold-jewel)', color: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.85rem' }}>
+                {b.nombre.substring(0, 2).toUpperCase()}
+              </div>
+              <span style={{ fontSize: '0.92rem' }}>{b.nombre}</span>
+            </div>
+          ))}
 
-                         return (
-                            <div key={`${fecha}-${hora}`} style={{ minHeight: '60px', background: citasHora.length > 0 ? 'rgba(212, 175, 55, 0.1)' : 'rgba(255,255,255,0.02)', border: citasHora.length > 0 ? '1px solid var(--gold-jewel)' : '1px dashed #333', borderRadius: '8px', padding: '5px', display: 'flex', flexDirection: 'column', gap: '5px', overflowY: 'auto' }}>
-                               {citasHora.map((cita, i) => (
-                                   <div key={i} style={{ background: '#222', padding: '5px', borderRadius: '4px', fontSize: '0.75rem', borderLeft: '2px solid var(--gold-jewel)', cursor: 'pointer' }} onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (cita.estado === 'Pendiente' || cita.estado === 'Terminado_Esperando_Pago') {
-                                            const subVal = Number(cita.subtotal) > 0 ? Number(cita.subtotal) : (Number(cita.total_pagado) > 0 ? Number(cita.total_pagado) : 14000);
-                                            setCobroActivo({
-                                                ...cita,
-                                                subtotal: subVal,
-                                                barbero: cita.trabajador,
-                                                descuento: Number(cita.descuento) || 0,
-                                                metodo: cita.metodo_pago || 'Efectivo',
-                                                decant_producto_id: ''
-                                            });
-                                        }
-                                   }}>
-                                       <strong>{cita.cliente}</strong><br/>
-                                       <span style={{color: '#888'}}>{!barberoSeleccionado && cita.trabajador}</span>
-                                   </div>
-                               ))}
-                            </div>
-                         );
-                      })}
-                   </React.Fragment>
-                ))}
-             </div>
-        );
-      };
+          {/* Time Slots */}
+          {horas.map(hora => (
+            <React.Fragment key={hora}>
+              <div style={{ color: '#aaa', textAlign: 'right', paddingRight: '12px', fontSize: '0.85rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+                {hora}
+              </div>
+              {trabajadoresFiltrados.map(barbero => {
+                const cita = getCitaParaFechaHora(fechaCalendario, barbero.id, hora);
+                const esCompletada = cita?.estado === 'Completada';
+                const esEsperandoPago = cita?.estado === 'Terminado_Esperando_Pago';
+                const esCancelada = cita?.estado === 'Cancelada';
+                const esPendiente = cita && !esCompletada && !esEsperandoPago && !esCancelada;
 
-      const renderGridMes = () => {
-         const d = new Date(fechaCalendario + 'T12:00:00');
-         const startOfMonth = new Date(d.getFullYear(), d.getMonth(), 1);
-         const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-         
-         const offset = startOfMonth.getDay() === 0 ? 6 : startOfMonth.getDay() - 1; // 0 is Monday
-         const totalDays = endOfMonth.getDate();
-         const daysArray = Array.from({length: 42}, (_, i) => {
-             const diaNum = i - offset + 1;
-             if (diaNum > 0 && diaNum <= totalDays) {
-                 const dStr = new Date(d.getFullYear(), d.getMonth(), diaNum);
-                 return { valid: true, date: dStr.toISOString().split('T')[0], num: diaNum };
-             }
-             return { valid: false };
-         });
+                let cardBg = 'rgba(255,255,255,0.02)';
+                let cardBorder = '1px dashed #333';
+                if (esCompletada) {
+                  cardBg = 'linear-gradient(135deg, rgba(46, 204, 113, 0.15), rgba(0, 0, 0, 0.6))';
+                  cardBorder = '1px solid #2ecc71';
+                } else if (esEsperandoPago) {
+                  cardBg = 'linear-gradient(135deg, rgba(243, 156, 18, 0.25), rgba(0, 0, 0, 0.6))';
+                  cardBorder = '1px solid #f39c12';
+                } else if (esPendiente) {
+                  cardBg = esPasadoDia ? 'rgba(231, 76, 60, 0.1)' : 'rgba(212, 175, 55, 0.12)';
+                  cardBorder = esPasadoDia ? '1px solid #e74c3c' : '1px solid var(--gold-jewel)';
+                } else if (esCancelada) {
+                  cardBg = 'rgba(100, 100, 100, 0.1)';
+                  cardBorder = '1px solid #555';
+                }
 
-         const nombresDias = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
-
-         return (
-             <div style={{ display: 'grid', gridTemplateColumns: `repeat(7, 1fr)`, gap: '10px' }}>
-                {nombresDias.map(d => <div key={d} style={{ fontWeight: 'bold', color: 'var(--gold-jewel)', textAlign: 'center', padding: '10px' }}>{d}</div>)}
-                {daysArray.map((diaInfo, i) => {
-                    if (!diaInfo.valid) return <div key={i} style={{ minHeight: '100px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px' }}></div>;
-                    const citasDia = getCitasParaFechaFiltered(diaInfo.date);
-                    return (
-                        <div key={i} style={{ minHeight: '100px', background: 'rgba(255,255,255,0.02)', border: '1px solid #333', borderRadius: '8px', padding: '10px', display: 'flex', flexDirection: 'column' }}>
-                            <div style={{ alignSelf: 'flex-end', fontWeight: 'bold', color: diaInfo.date === fechaCalendario ? 'var(--gold-jewel)' : '#fff' }}>{diaInfo.num}</div>
-                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '3px', marginTop: '5px', overflowY: 'auto', maxHeight: '70px' }}>
-                                {citasDia.map((c, idx) => (
-                                    <div key={idx} style={{ fontSize: '0.7rem', background: '#222', padding: '2px 5px', borderRadius: '3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' }} onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (c.estado === 'Pendiente' || c.estado === 'Terminado_Esperando_Pago') {
-                                            const subVal = Number(c.subtotal) > 0 ? Number(c.subtotal) : (Number(c.total_pagado) > 0 ? Number(c.total_pagado) : 14000);
-                                            setCobroActivo({
-                                                ...c,
-                                                subtotal: subVal,
-                                                barbero: c.trabajador,
-                                                descuento: Number(c.descuento) || 0,
-                                                metodo: c.metodo_pago || 'Efectivo',
-                                                decant_producto_id: ''
-                                            });
-                                        }
-                                    }}>
-                                        {c.hora.substring(0,5)} {c.cliente}
-                                    </div>
-                                ))}
-                            </div>
+                return (
+                  <div
+                    key={`${barbero.id}-${hora}`}
+                    style={{
+                      minHeight: '75px',
+                      background: cardBg,
+                      border: cardBorder,
+                      borderRadius: '10px',
+                      padding: '8px 10px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'center',
+                      position: 'relative',
+                      cursor: 'pointer',
+                      transition: 'transform 0.15s ease, box-shadow 0.15s ease'
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; }}
+                    onClick={() => {
+                      if (!cita) {
+                        setNuevaCitaForm({
+                          fecha: fechaCalendario,
+                          rut: '',
+                          nombre: '',
+                          telefono: '',
+                          hora,
+                          trabajador_id: barbero.id,
+                          servicio_id: servicios[0]?.id || '',
+                          monto: servicios[0]?.precio || 14000,
+                          marcar_pagada: esPasadoDia,
+                          metodo_pago: 'Efectivo',
+                          descuento: 0
+                        });
+                        setShowModalCita(true);
+                      } else {
+                        setCitaDetalleModal(cita);
+                      }
+                    }}
+                  >
+                    {cita ? (
+                      <>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '2px' }}>
+                          <strong style={{ fontSize: '0.85rem', color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            👤 {cita.cliente}
+                          </strong>
                         </div>
+                        {cita.servicios_nombres && (
+                          <div style={{ fontSize: '0.72rem', color: '#bbb', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            ✂️ {cita.servicios_nombres}
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '4px', flexWrap: 'wrap', gap: '4px' }}>
+                          <span style={{
+                            fontSize: '0.7rem',
+                            padding: '2px 6px',
+                            borderRadius: '6px',
+                            fontWeight: 'bold',
+                            background: esCompletada ? 'rgba(46, 204, 113, 0.2)' : (esEsperandoPago ? 'rgba(243, 156, 18, 0.2)' : (esCancelada ? 'rgba(100,100,100,0.3)' : (esPasadoDia ? 'rgba(231,76,60,0.2)' : 'rgba(212,175,55,0.2)'))),
+                            color: esCompletada ? '#2ecc71' : (esEsperandoPago ? '#f39c12' : (esCancelada ? '#888' : (esPasadoDia ? '#e74c3c' : 'var(--gold-jewel)')))
+                          }}>
+                            {esCompletada ? `✅ Pagada (${cita.metodo_pago || 'Efectivo'})` : (esEsperandoPago ? '🔔 Esperando Pago' : (esCancelada ? '❌ Cancelada' : (esPasadoDia ? '⚠️ Pasada (Sin Cobrar)' : '⏳ Pendiente')))}
+                          </span>
+                          <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: esCompletada ? '#2ecc71' : 'var(--gold-jewel)' }}>
+                            ${Number(cita.total_pagado || cita.subtotal || 14000).toLocaleString('es-CL')}
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ textAlign: 'center', color: '#555', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                        <span>+</span>
+                        <span>{esPasadoDia ? 'Registrar Cita Pasada' : 'Agendar'}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </React.Fragment>
+          ))}
+        </div>
+      );
+    };
+
+    // RENDER VISTA SEMANA
+    const renderGridSemana = () => {
+      const monday = getStartOfWeekDate(fechaCalendario);
+      const diasSemana = Array.from({ length: 7 }, (_, i) => {
+        const dStr = new Date(monday);
+        dStr.setDate(monday.getDate() + i);
+        return toYMD(dStr);
+      });
+      const nombresDias = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+
+      return (
+        <div style={{ display: 'grid', gridTemplateColumns: `80px repeat(7, minmax(130px, 1fr))`, gap: '8px', minWidth: '850px' }}>
+          {/* Header */}
+          <div style={{ fontWeight: 'bold', color: 'var(--text-secondary)', textAlign: 'right', paddingRight: '12px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', fontSize: '0.85rem' }}>
+            HORA
+          </div>
+          {diasSemana.map((fecha, i) => {
+            const esHoy = fecha === hoyStr;
+            const esPasado = fecha < hoyStr;
+            const citasDelDia = getCitasParaFechaFiltered(fecha);
+            const totalCortesDia = citasDelDia.filter(c => c.estado === 'Completada').length;
+
+            return (
+              <div
+                key={fecha}
+                style={{
+                  fontWeight: 'bold',
+                  textAlign: 'center',
+                  background: esHoy ? 'linear-gradient(135deg, rgba(212,175,55,0.25), rgba(0,0,0,0.7))' : 'rgba(255,255,255,0.04)',
+                  border: esHoy ? '2px solid var(--gold-jewel)' : '1px solid rgba(255,255,255,0.1)',
+                  padding: '10px 6px',
+                  borderRadius: '10px'
+                }}
+              >
+                <div style={{ color: esHoy ? 'var(--gold-jewel)' : '#fff', fontSize: '0.9rem' }}>
+                  {nombresDias[i]}
+                </div>
+                <div style={{ fontSize: '0.78rem', color: esHoy ? 'var(--gold-jewel)' : '#aaa', marginTop: '2px' }}>
+                  {fecha.slice(8, 10)}/{fecha.slice(5, 7)}
+                </div>
+                <div style={{ fontSize: '0.68rem', marginTop: '4px', display: 'flex', justifyContent: 'center', gap: '4px' }}>
+                  {esHoy && <span style={{ background: 'var(--gold-jewel)', color: '#000', padding: '1px 5px', borderRadius: '4px', fontWeight: 'bold' }}>Hoy</span>}
+                  {esPasado && <span style={{ background: 'rgba(255,255,255,0.1)', color: '#aaa', padding: '1px 5px', borderRadius: '4px' }}>Pasado</span>}
+                  {totalCortesDia > 0 && <span style={{ background: 'rgba(46,204,113,0.2)', color: '#2ecc71', padding: '1px 5px', borderRadius: '4px', fontWeight: 'bold' }}>✂️ {totalCortesDia}</span>}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Time Rows */}
+          {horas.map(hora => (
+            <React.Fragment key={hora}>
+              <div style={{ color: '#aaa', textAlign: 'right', paddingRight: '12px', fontSize: '0.82rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+                {hora}
+              </div>
+              {diasSemana.map(fecha => {
+                const citasHora = getCitasParaFechaFiltered(fecha).filter(c => c.hora.startsWith(hora));
+                const esPasado = fecha < hoyStr;
+
+                return (
+                  <div
+                    key={`${fecha}-${hora}`}
+                    style={{
+                      minHeight: '65px',
+                      background: citasHora.length > 0 ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.01)',
+                      border: citasHora.length > 0 ? '1px solid rgba(212,175,55,0.3)' : '1px dashed #282828',
+                      borderRadius: '8px',
+                      padding: '4px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px',
+                      cursor: 'pointer',
+                      position: 'relative'
+                    }}
+                    onClick={() => {
+                      if (citasHora.length === 0) {
+                        setNuevaCitaForm({
+                          fecha,
+                          rut: '',
+                          nombre: '',
+                          telefono: '',
+                          hora,
+                          trabajador_id: trabajadores[0]?.id || '',
+                          servicio_id: servicios[0]?.id || '',
+                          monto: servicios[0]?.precio || 14000,
+                          marcar_pagada: esPasado,
+                          metodo_pago: 'Efectivo',
+                          descuento: 0
+                        });
+                        setShowModalCita(true);
+                      }
+                    }}
+                  >
+                    {citasHora.map((cita, idx) => {
+                      const esCompletada = cita.estado === 'Completada';
+                      const esEsperandoPago = cita.estado === 'Terminado_Esperando_Pago';
+                      return (
+                        <div
+                          key={idx}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCitaDetalleModal(cita);
+                          }}
+                          style={{
+                            background: esCompletada ? 'rgba(46, 204, 113, 0.18)' : (esEsperandoPago ? 'rgba(243, 156, 18, 0.2)' : 'rgba(212, 175, 55, 0.15)'),
+                            borderLeft: `3px solid ${esCompletada ? '#2ecc71' : (esEsperandoPago ? '#f39c12' : 'var(--gold-jewel)')}`,
+                            borderRadius: '4px',
+                            padding: '4px 6px',
+                            fontSize: '0.72rem',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease'
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.02)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; }}
+                        >
+                          <div style={{ fontWeight: 'bold', color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {cita.cliente}
+                          </div>
+                          <div style={{ color: '#aaa', fontSize: '0.68rem', display: 'flex', justifyContent: 'space-between' }}>
+                            <span>💈 {cita.trabajador}</span>
+                            <span style={{ color: esCompletada ? '#2ecc71' : 'var(--gold-jewel)', fontWeight: 'bold' }}>
+                              ${Number(cita.total_pagado || cita.subtotal || 14000).toLocaleString('es-CL')}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {citasHora.length === 0 && (
+                      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#444', fontSize: '0.7rem' }}>
+                        +
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </React.Fragment>
+          ))}
+        </div>
+      );
+    };
+
+    // RENDER VISTA MES
+    const renderGridMes = () => {
+      const [y, m] = fechaCalendario.split('-').map(Number);
+      const startOfMonth = new Date(y, m - 1, 1, 12, 0, 0);
+      const endOfMonth = new Date(y, m, 0, 12, 0, 0);
+
+      const offset = startOfMonth.getDay() === 0 ? 6 : startOfMonth.getDay() - 1; // 0 Lunes
+      const totalDays = endOfMonth.getDate();
+
+      const daysArray = Array.from({ length: 42 }, (_, i) => {
+        const diaNum = i - offset + 1;
+        if (diaNum > 0 && diaNum <= totalDays) {
+          const dStr = new Date(y, m - 1, diaNum, 12, 0, 0);
+          return { valid: true, date: toYMD(dStr), num: diaNum };
+        }
+        return { valid: false };
+      });
+
+      const nombresDias = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+
+      return (
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(7, minmax(130px, 1fr))`, gap: '8px', minWidth: '850px' }}>
+          {/* Day Names Header */}
+          {nombresDias.map(d => (
+            <div key={d} style={{ fontWeight: 'bold', color: 'var(--gold-jewel)', textAlign: 'center', padding: '10px 4px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', fontSize: '0.85rem' }}>
+              {d}
+            </div>
+          ))}
+
+          {/* Calendar Cells */}
+          {daysArray.map((diaInfo, i) => {
+            if (!diaInfo.valid) {
+              return <div key={i} style={{ minHeight: '110px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.02)' }}></div>;
+            }
+
+            const citasDia = getCitasParaFechaFiltered(diaInfo.date);
+            const esHoy = diaInfo.date === hoyStr;
+            const esPasado = diaInfo.date < hoyStr;
+            const citasCompletadas = citasDia.filter(c => c.estado === 'Completada');
+            const totalIngresosDia = citasCompletadas.reduce((acc, c) => acc + Number(c.total_pagado || c.subtotal || 0), 0);
+
+            return (
+              <div
+                key={i}
+                style={{
+                  minHeight: '120px',
+                  background: esHoy ? 'linear-gradient(135deg, rgba(212, 175, 55, 0.12), rgba(0,0,0,0.5))' : 'rgba(255,255,255,0.02)',
+                  border: esHoy ? '2px solid var(--gold-jewel)' : '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: '10px',
+                  padding: '8px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--gold-jewel)'; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = esHoy ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.08)'; }}
+                onClick={() => {
+                  setNuevaCitaForm({
+                    fecha: diaInfo.date,
+                    rut: '',
+                    nombre: '',
+                    telefono: '',
+                    hora: '10:00',
+                    trabajador_id: trabajadores[0]?.id || '',
+                    servicio_id: servicios[0]?.id || '',
+                    monto: servicios[0]?.precio || 14000,
+                    marcar_pagada: esPasado,
+                    metodo_pago: 'Efectivo',
+                    descuento: 0
+                  });
+                  setShowModalCita(true);
+                }}
+              >
+                {/* Header of the Day */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <div style={{
+                    width: '26px',
+                    height: '26px',
+                    borderRadius: '50%',
+                    background: esHoy ? 'var(--gold-jewel)' : 'transparent',
+                    color: esHoy ? '#000' : (esPasado ? '#aaa' : '#fff'),
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 'bold',
+                    fontSize: '0.85rem'
+                  }}>
+                    {diaInfo.num}
+                  </div>
+                  {citasDia.length > 0 && (
+                    <span style={{ fontSize: '0.68rem', background: 'rgba(46, 204, 113, 0.2)', color: '#2ecc71', padding: '1px 6px', borderRadius: '10px', fontWeight: 'bold' }}>
+                      ✂️ {citasDia.length}
+                    </span>
+                  )}
+                </div>
+
+                {/* Day Revenue if completed */}
+                {totalIngresosDia > 0 && (
+                  <div style={{ fontSize: '0.68rem', color: '#2ecc71', fontWeight: 'bold', marginBottom: '4px', textAlign: 'right' }}>
+                    ${totalIngresosDia.toLocaleString('es-CL')}
+                  </div>
+                )}
+
+                {/* Appointment Chips List */}
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '3px', overflowY: 'auto', maxHeight: '75px' }}>
+                  {citasDia.map((c, idx) => {
+                    const esComp = c.estado === 'Completada';
+                    return (
+                      <div
+                        key={idx}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCitaDetalleModal(c);
+                        }}
+                        style={{
+                          fontSize: '0.68rem',
+                          background: esComp ? 'rgba(46, 204, 113, 0.2)' : 'rgba(212, 175, 55, 0.2)',
+                          borderLeft: `2px solid ${esComp ? '#2ecc71' : 'var(--gold-jewel)'}`,
+                          padding: '2px 4px',
+                          borderRadius: '3px',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          color: '#fff'
+                        }}
+                        title={`${c.hora.substring(0,5)} - ${c.cliente} (${c.trabajador})`}
+                      >
+                        {c.hora.substring(0, 5)} {c.cliente}
+                      </div>
                     );
-                })}
-             </div>
-         );
-      };
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    };
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', animation: 'fadeIn 0.3s ease-in' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
-            <h2 style={{ margin: 0, color: 'var(--gold-jewel)' }}>Calendario Interactivo</h2>
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                <div style={{ display: 'flex', background: '#222', borderRadius: '8px', overflow: 'hidden' }}>
-                    {['dia', 'semana', 'mes'].map(v => (
-                        <button key={v} onClick={() => setVistaCalendario(v)} style={{ padding: '8px 15px', background: vistaCalendario === v ? 'var(--gold-jewel)' : 'transparent', color: vistaCalendario === v ? '#000' : '#fff', border: 'none', cursor: 'pointer', textTransform: 'capitalize' }}>
-                            {v}
-                        </button>
-                    ))}
-                </div>
-                <input 
-                    type="date" 
-                    className="input-field" 
-                    style={{ margin: 0 }} 
-                    value={fechaCalendario} 
-                    onChange={e => setFechaCalendario(e.target.value)} 
-                />
-                <select 
-                    className="input-field" 
-                    style={{ margin: 0 }} 
-                    value={filtroBarberoCal}
-                    onChange={e => setFiltroBarberoCal(e.target.value)}
-                >
-                    <option value="">Todos los Barberos</option>
-                    {trabajadores.map(t => (
-                        <option key={t.id} value={t.id}>{t.nombre}</option>
-                    ))}
-                </select>
-                <button className="btn-primary" onClick={() => {
-                    setNuevaCitaForm({
-                        rut: '',
-                        nombre: '',
-                        trabajador_id: trabajadores[0]?.id || '',
-                        hora: '10:00',
-                        servicio_id: servicios[0]?.id || '',
-                        monto: servicios[0]?.precio || 14000
-                    });
-                    setShowModalCita(true);
-                }}>+ Nueva Cita</button>
-            </div>
-        </div>
         
-        {/* Modal Nueva Cita */}
+        {/* Main Toolbar Header */}
+        <div style={{ background: 'rgba(26, 26, 26, 0.85)', backdropFilter: 'blur(10px)', padding: '18px 22px', borderRadius: '14px', border: '1px solid rgba(212,175,55,0.3)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
+            
+            {/* Title & Stats */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ width: '42px', height: '42px', borderRadius: '10px', background: 'rgba(212,175,55,0.15)', border: '1px solid var(--gold-jewel)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem' }}>
+                💈
+              </div>
+              <div>
+                <h2 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.4rem', letterSpacing: '0.5px' }}>
+                  Calendario Interactivo
+                </h2>
+                <div style={{ fontSize: '0.82rem', color: '#aaa', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span>{periodoInfo.titulo}</span>
+                  <span style={{
+                    fontSize: '0.72rem',
+                    padding: '2px 8px',
+                    borderRadius: '10px',
+                    fontWeight: 'bold',
+                    background: periodoInfo.badge === 'hoy' ? 'rgba(212,175,55,0.2)' : (periodoInfo.badge === 'pasado' ? 'rgba(255,255,255,0.1)' : 'rgba(46,204,113,0.2)'),
+                    color: periodoInfo.badge === 'hoy' ? 'var(--gold-jewel)' : (periodoInfo.badge === 'pasado' ? '#bbb' : '#2ecc71')
+                  }}>
+                    {periodoInfo.subtitulo}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* View Selector Buttons (Día, Semana, Mes) */}
+            <div style={{ display: 'flex', background: '#141414', padding: '4px', borderRadius: '10px', border: '1px solid rgba(212,175,55,0.4)', gap: '4px' }}>
+              {[
+                { id: 'dia', label: '📅 Día' },
+                { id: 'semana', label: '🗓️ Semana' },
+                { id: 'mes', label: '📆 Mes' }
+              ].map(v => {
+                const isActive = vistaCalendario === v.id;
+                return (
+                  <button
+                    key={v.id}
+                    onClick={() => {
+                      setVistaCalendario(v.id);
+                      cargarCalendario(fechaCalendario, v.id);
+                    }}
+                    style={{
+                      padding: '8px 18px',
+                      background: isActive ? 'linear-gradient(135deg, var(--gold-jewel), #b8860b)' : 'transparent',
+                      color: isActive ? '#000' : '#ccc',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontWeight: 'bold',
+                      fontSize: '0.85rem',
+                      boxShadow: isActive ? '0 0 12px rgba(212,175,55,0.4)' : 'none',
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    {v.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Action Buttons */}
+            <button
+              className="btn-primary"
+              style={{ padding: '10px 20px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}
+              onClick={() => {
+                setNuevaCitaForm({
+                  fecha: fechaCalendario,
+                  rut: '',
+                  nombre: '',
+                  telefono: '',
+                  trabajador_id: trabajadores[0]?.id || '',
+                  hora: '10:00',
+                  servicio_id: servicios[0]?.id || '',
+                  monto: servicios[0]?.precio || 14000,
+                  marcar_pagada: fechaCalendario < hoyStr,
+                  metodo_pago: 'Efectivo',
+                  descuento: 0
+                });
+                setShowModalCita(true);
+              }}
+            >
+              <span>➕</span> Nueva Cita
+            </button>
+
+          </div>
+
+          {/* Navigation & Filter Bar */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+            
+            {/* Period Navigation Buttons */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button
+                type="button"
+                onClick={() => cambiarPeriodoCalendario(-1)}
+                className="btn-outline-gold"
+                style={{ padding: '6px 14px', fontSize: '0.85rem' }}
+                title="Periodo anterior"
+              >
+                ◀ Anterior
+              </button>
+              <button
+                type="button"
+                onClick={irAHoy}
+                style={{
+                  padding: '6px 14px',
+                  background: fechaCalendario === hoyStr ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.06)',
+                  color: fechaCalendario === hoyStr ? '#000' : '#fff',
+                  border: '1px solid var(--gold-jewel)',
+                  borderRadius: '6px',
+                  fontWeight: 'bold',
+                  fontSize: '0.82rem',
+                  cursor: 'pointer'
+                }}
+              >
+                📍 Hoy
+              </button>
+              <button
+                type="button"
+                onClick={() => cambiarPeriodoCalendario(1)}
+                className="btn-outline-gold"
+                style={{ padding: '6px 14px', fontSize: '0.85rem' }}
+                title="Siguiente periodo"
+              >
+                Siguiente ▶
+              </button>
+            </div>
+
+            {/* Date Picker & Barber Filter */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '0.8rem', color: '#aaa' }}>Fecha:</span>
+                <input
+                  type="date"
+                  className="input-field"
+                  style={{ margin: 0, padding: '7px 12px', fontSize: '0.85rem' }}
+                  value={fechaCalendario}
+                  onChange={e => {
+                    setFechaCalendario(e.target.value);
+                    cargarCalendario(e.target.value, vistaCalendario);
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '0.8rem', color: '#aaa' }}>Barbero:</span>
+                <select
+                  className="input-field"
+                  style={{ margin: 0, padding: '7px 12px', fontSize: '0.85rem' }}
+                  value={filtroBarberoCal}
+                  onChange={e => setFiltroBarberoCal(e.target.value)}
+                >
+                  <option value="">💈 Todos los Barberos</option>
+                  {trabajadores.map(t => (
+                    <option key={t.id} value={t.id}>{t.nombre}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Total Appointments Counter */}
+              <div style={{ background: 'rgba(255,255,255,0.06)', padding: '6px 14px', borderRadius: '8px', fontSize: '0.82rem', border: '1px solid rgba(255,255,255,0.1)' }}>
+                <strong style={{ color: 'var(--gold-jewel)' }}>{citasCalendario.length}</strong> Cita(s) en periodo
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+
+        {/* Modal Nueva Cita (Con Soporte Retroactivo / Cobro Inmediato) */}
         {showModalCita && (
-            <div style={{ background: 'rgba(26, 26, 26, 0.95)', padding: '25px', borderRadius: '12px', border: '1px solid var(--gold-jewel)', marginBottom: '20px', boxShadow: '0 10px 30px rgba(0,0,0,0.8)' }}>
-                <h3 style={{ marginTop: 0, color: 'var(--gold-jewel)' }}>Agendar Nueva Cita</h3>
-                <form onSubmit={handleAgendarCita} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+          <div style={{
+            background: 'rgba(20, 20, 20, 0.98)',
+            padding: '28px',
+            borderRadius: '16px',
+            border: '2px solid var(--gold-jewel)',
+            boxShadow: '0 20px 50px rgba(0,0,0,0.9)',
+            animation: 'fadeIn 0.25s ease-out'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '14px', marginBottom: '18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '1.6rem' }}>📅</span>
+                <div>
+                  <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.25rem' }}>
+                    Agendar o Registrar Cita
+                  </h3>
+                  <span style={{ fontSize: '0.8rem', color: '#aaa' }}>
+                    Programa citas futuras o registra citas ya realizadas y cobradas de días anteriores
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowModalCita(false)}
+                style={{ background: 'transparent', border: 'none', color: '#fff', fontSize: '1.6rem', cursor: 'pointer' }}
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={handleAgendarCita} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+              
+              {/* Fecha */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
+                  📅 Fecha de la Cita *
+                </label>
+                <input
+                  type="date"
+                  required
+                  className="input-field"
+                  style={{ margin: 0 }}
+                  value={nuevaCitaForm.fecha}
+                  onChange={e => {
+                    const newF = e.target.value;
+                    const esPas = newF < hoyStr;
+                    setNuevaCitaForm({
+                      ...nuevaCitaForm,
+                      fecha: newF,
+                      marcar_pagada: esPas ? true : nuevaCitaForm.marcar_pagada
+                    });
+                  }}
+                />
+              </div>
+
+              {/* Hora */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
+                  🕒 Hora de la Cita *
+                </label>
+                <select
+                  className="input-field"
+                  style={{ margin: 0 }}
+                  value={nuevaCitaForm.hora}
+                  onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, hora: e.target.value })}
+                  required
+                >
+                  {horas.map(h => (
+                    <option key={h} value={h}>{h} hrs</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* RUT */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px' }}>
+                  RUT del Cliente *
+                </label>
+                <input
+                  className="input-field"
+                  style={{ margin: 0 }}
+                  placeholder="Ej: 12345678-9"
+                  value={nuevaCitaForm.rut}
+                  onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, rut: e.target.value })}
+                  required
+                />
+              </div>
+
+              {/* Nombre */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px' }}>
+                  Nombre del Cliente *
+                </label>
+                <input
+                  className="input-field"
+                  style={{ margin: 0 }}
+                  placeholder="Ej: Carlos Pérez"
+                  value={nuevaCitaForm.nombre}
+                  onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, nombre: e.target.value })}
+                  required
+                />
+              </div>
+
+              {/* Teléfono */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px' }}>
+                  Teléfono / WhatsApp (Opcional)
+                </label>
+                <input
+                  className="input-field"
+                  style={{ margin: 0 }}
+                  placeholder="+56 9 1234 5678"
+                  value={nuevaCitaForm.telefono}
+                  onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, telefono: e.target.value })}
+                />
+              </div>
+
+              {/* Barbero */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px' }}>
+                  Barbero Asignado *
+                </label>
+                <select
+                  className="input-field"
+                  style={{ margin: 0 }}
+                  value={nuevaCitaForm.trabajador_id}
+                  onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, trabajador_id: e.target.value })}
+                  required
+                >
+                  <option value="">-- Selecciona Barbero --</option>
+                  {trabajadores.map(t => (
+                    <option key={t.id} value={t.id}>{t.nombre}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Servicio */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px' }}>
+                  Servicio a Realizar
+                </label>
+                <select
+                  className="input-field"
+                  style={{ margin: 0 }}
+                  value={nuevaCitaForm.servicio_id}
+                  onChange={e => {
+                    const sId = e.target.value;
+                    const sFound = servicios.find(s => String(s.id) === String(sId));
+                    setNuevaCitaForm({
+                      ...nuevaCitaForm,
+                      servicio_id: sId,
+                      monto: sFound ? sFound.precio : nuevaCitaForm.monto
+                    });
+                  }}
+                >
+                  <option value="">Selecciona Servicio...</option>
+                  {servicios.map(s => (
+                    <option key={s.id} value={s.id}>{s.nombre} (${Number(s.precio).toLocaleString('es-CL')})</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Monto */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px' }}>
+                  Monto / Precio ($)
+                </label>
+                <input
+                  type="number"
+                  className="input-field"
+                  style={{ margin: 0 }}
+                  min="0"
+                  step="500"
+                  placeholder="Ej: 14000"
+                  value={nuevaCitaForm.monto}
+                  onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, monto: e.target.value })}
+                />
+              </div>
+
+              {/* Panel de Cobro Inmediato / Retroactivo */}
+              <div style={{
+                gridColumn: 'span 2',
+                background: nuevaCitaForm.marcar_pagada ? 'rgba(46, 204, 113, 0.1)' : 'rgba(212, 175, 55, 0.08)',
+                border: nuevaCitaForm.marcar_pagada ? '1px solid #2ecc71' : '1px solid rgba(212, 175, 55, 0.3)',
+                borderRadius: '12px',
+                padding: '16px',
+                transition: 'all 0.2s ease'
+              }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontWeight: 'bold', color: nuevaCitaForm.marcar_pagada ? '#2ecc71' : 'var(--gold-jewel)', fontSize: '0.95rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={nuevaCitaForm.marcar_pagada}
+                    onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, marcar_pagada: e.target.checked })}
+                    style={{ width: '20px', height: '20px', accentColor: '#2ecc71' }}
+                  />
+                  ⚡ Registrar Cita como ya Realizada y Cobrada (Inmediata o de Días Pasados)
+                </label>
+                <div style={{ fontSize: '0.78rem', color: '#aaa', marginTop: '6px', marginLeft: '30px' }}>
+                  {nuevaCitaForm.fecha < hoyStr
+                    ? '⚠️ Esta cita es de una fecha anterior: al guardarla se registrará como Completada y Pagada, sumando a los ingresos históricos y al contador de cortes del cliente.'
+                    : 'Permite registrar la cita inmediatamente pagada sin tener que pasar por la sala de espera.'}
+                </div>
+
+                {nuevaCitaForm.marcar_pagada && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '14px', paddingTop: '14px', borderTop: '1px dashed rgba(46, 204, 113, 0.3)' }}>
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#aaa', marginBottom: '4px' }}>RUT del Cliente *</label>
-                      <input className="input-field" style={{ margin: 0 }} placeholder="RUT Cliente (Ej: 11111111-1)" value={nuevaCitaForm.rut} onChange={e=>setNuevaCitaForm({...nuevaCitaForm, rut: e.target.value})} required />
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#aaa', marginBottom: '4px' }}>Nombre del Cliente *</label>
-                      <input className="input-field" style={{ margin: 0 }} placeholder="Nombre Cliente" value={nuevaCitaForm.nombre} onChange={e=>setNuevaCitaForm({...nuevaCitaForm, nombre: e.target.value})} required />
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#aaa', marginBottom: '4px' }}>Barbero *</label>
-                      <select className="input-field" style={{ margin: 0 }} value={nuevaCitaForm.trabajador_id} onChange={e=>setNuevaCitaForm({...nuevaCitaForm, trabajador_id: e.target.value})} required>
-                          <option value="">Selecciona Barbero...</option>
-                          {trabajadores.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#aaa', marginBottom: '4px' }}>Hora *</label>
-                      <select className="input-field" style={{ margin: 0 }} value={nuevaCitaForm.hora} onChange={e=>setNuevaCitaForm({...nuevaCitaForm, hora: e.target.value})} required>
-                          {horas.map(h => <option key={h} value={h}>{h}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#aaa', marginBottom: '4px' }}>Servicio</label>
-                      <select 
-                        className="input-field" 
-                        style={{ margin: 0 }} 
-                        value={nuevaCitaForm.servicio_id} 
-                        onChange={e => {
-                          const sId = e.target.value;
-                          const sFound = servicios.find(s => String(s.id) === String(sId));
-                          setNuevaCitaForm({
-                            ...nuevaCitaForm, 
-                            servicio_id: sId, 
-                            monto: sFound ? sFound.precio : nuevaCitaForm.monto
-                          });
-                        }}
+                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#ccc', marginBottom: '4px' }}>Método de Pago *</label>
+                      <select
+                        className="input-field"
+                        style={{ margin: 0 }}
+                        value={nuevaCitaForm.metodo_pago}
+                        onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, metodo_pago: e.target.value })}
                       >
-                        <option value="">Selecciona Servicio...</option>
-                        {servicios.map(s => (
-                          <option key={s.id} value={s.id}>{s.nombre} (${Number(s.precio).toLocaleString('es-CL')})</option>
-                        ))}
+                        <option value="Efectivo">💵 Efectivo</option>
+                        <option value="Transferencia">📲 Transferencia</option>
+                        <option value="Tarjeta de Débito">💳 Tarjeta de Débito</option>
+                        <option value="Tarjeta de Crédito">💳 Tarjeta de Crédito</option>
                       </select>
                     </div>
+
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#aaa', marginBottom: '4px' }}>Monto / Precio a Cobrar ($)</label>
-                      <input 
-                        type="number" 
-                        className="input-field" 
-                        style={{ margin: 0 }} 
-                        min="0" 
-                        step="500" 
-                        placeholder="Ej: 14000" 
-                        value={nuevaCitaForm.monto} 
-                        onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, monto: e.target.value })} 
+                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#ccc', marginBottom: '4px' }}>Descuento Aplicado ($)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="500"
+                        className="input-field"
+                        style={{ margin: 0 }}
+                        placeholder="0"
+                        value={nuevaCitaForm.descuento}
+                        onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, descuento: e.target.value })}
                       />
                     </div>
-                    <div style={{ gridColumn: 'span 2', display: 'flex', gap: '10px', marginTop: '10px' }}>
-                        <button type="submit" className="btn-primary" style={{ flex: 1 }}>Agendar Cita</button>
-                        <button type="button" className="btn-outline-gold" style={{ flex: 1 }} onClick={() => setShowModalCita(false)}>Cancelar</button>
+
+                    <div style={{ gridColumn: 'span 2', background: 'rgba(46, 204, 113, 0.2)', border: '1px solid #2ecc71', borderRadius: '8px', padding: '10px 14px', textAlign: 'center', color: '#2ecc71', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                      💰 Total Neto a Registrar como Cobrado: ${Math.max(0, (Number(nuevaCitaForm.monto) || 0) - (Number(nuevaCitaForm.descuento) || 0)).toLocaleString('es-CL')} ({nuevaCitaForm.metodo_pago})
                     </div>
-                </form>
-            </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ gridColumn: 'span 2', display: 'flex', gap: '12px', marginTop: '10px' }}>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  style={{ flex: 2, padding: '12px', fontWeight: 'bold', fontSize: '0.95rem' }}
+                >
+                  💾 {nuevaCitaForm.marcar_pagada ? 'Guardar y Registrar como Cobrada' : 'Agendar Cita'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-outline-gold"
+                  style={{ flex: 1, padding: '12px' }}
+                  onClick={() => setShowModalCita(false)}
+                >
+                  Cancelar
+                </button>
+              </div>
+
+            </form>
+          </div>
         )}
 
-        <div style={{ background: 'rgba(26, 26, 26, 0.6)', backdropFilter: 'blur(10px)', borderRadius: '12px', border: '1px solid #333', overflowX: 'auto', padding: '20px' }}>
-           {vistaCalendario === 'dia' && renderGridDia()}
-           {vistaCalendario === 'semana' && renderGridSemana()}
-           {vistaCalendario === 'mes' && renderGridMes()}
+        {/* Modal Detalle de Cita */}
+        {citaDetalleModal && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1250, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '15px' }}>
+            <div style={{ background: '#181818', borderRadius: '16px', width: '100%', maxWidth: '480px', maxHeight: '90vh', overflowY: 'auto', border: '2px solid var(--gold-jewel)', padding: '24px', boxShadow: '0 20px 50px rgba(0,0,0,0.95)' }}>
+              
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '1.6rem' }}>💈</span>
+                  <div>
+                    <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.15rem' }}>
+                      Cita #{citaDetalleModal.id}
+                    </h3>
+                    <span style={{ fontSize: '0.78rem', color: '#aaa' }}>
+                      {citaDetalleModal.fecha} a las {citaDetalleModal.hora?.substring(0,5)} hrs
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setCitaDetalleModal(null)}
+                  style={{ background: 'transparent', border: 'none', color: '#fff', fontSize: '1.6rem', cursor: 'pointer' }}
+                >
+                  ×
+                </button>
+              </div>
+
+              {/* Cita Info Grid */}
+              <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: '10px', padding: '14px', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.85rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#aaa' }}>Cliente:</span>
+                  <strong style={{ color: '#fff' }}>👤 {citaDetalleModal.cliente}</strong>
+                </div>
+                {citaDetalleModal.cliente_rut && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#aaa' }}>RUT:</span>
+                    <span style={{ color: 'var(--gold-jewel)' }}>{citaDetalleModal.cliente_rut}</span>
+                  </div>
+                )}
+                {citaDetalleModal.cliente_telefono && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#aaa' }}>Teléfono:</span>
+                    <span>{citaDetalleModal.cliente_telefono}</span>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#aaa' }}>Barbero:</span>
+                  <strong style={{ color: '#fff' }}>💈 {citaDetalleModal.trabajador}</strong>
+                </div>
+                {citaDetalleModal.servicios_nombres && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#aaa' }}>Servicios:</span>
+                    <span style={{ color: '#ddd' }}>✂️ {citaDetalleModal.servicios_nombres}</span>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+                  <span style={{ color: '#aaa' }}>Estado:</span>
+                  <span style={{
+                    padding: '3px 10px',
+                    borderRadius: '10px',
+                    fontWeight: 'bold',
+                    fontSize: '0.78rem',
+                    background: citaDetalleModal.estado === 'Completada' ? 'rgba(46, 204, 113, 0.2)' : (citaDetalleModal.estado === 'Cancelada' ? 'rgba(231, 76, 60, 0.2)' : 'rgba(212, 175, 55, 0.2)'),
+                    color: citaDetalleModal.estado === 'Completada' ? '#2ecc71' : (citaDetalleModal.estado === 'Cancelada' ? '#e74c3c' : 'var(--gold-jewel)')
+                  }}>
+                    {citaDetalleModal.estado}
+                  </span>
+                </div>
+                {citaDetalleModal.metodo_pago && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#aaa' }}>Método de Pago:</span>
+                    <strong style={{ color: '#2ecc71' }}>{citaDetalleModal.metodo_pago}</strong>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1rem', marginTop: '6px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+                  <span style={{ fontWeight: 'bold' }}>Total Cobrado / Pagado:</span>
+                  <strong style={{ color: 'var(--gold-jewel)', fontSize: '1.15rem' }}>
+                    ${Number(citaDetalleModal.total_pagado || citaDetalleModal.subtotal || 14000).toLocaleString('es-CL')}
+                  </strong>
+                </div>
+              </div>
+
+              {/* Botones de Acción */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {(citaDetalleModal.estado === 'Pendiente' || citaDetalleModal.estado === 'Terminado_Esperando_Pago') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const subVal = Number(citaDetalleModal.subtotal) > 0 ? Number(citaDetalleModal.subtotal) : (Number(citaDetalleModal.total_pagado) > 0 ? Number(citaDetalleModal.total_pagado) : 14000);
+                      setCobroActivo({
+                        ...citaDetalleModal,
+                        subtotal: subVal,
+                        barbero: citaDetalleModal.trabajador,
+                        descuento: Number(citaDetalleModal.descuento) || 0,
+                        metodo: citaDetalleModal.metodo_pago || 'Efectivo',
+                        decant_producto_id: ''
+                      });
+                      setCitaDetalleModal(null);
+                    }}
+                    className="btn-primary"
+                    style={{ padding: '12px', fontWeight: 'bold' }}
+                  >
+                    💰 Cobrar y Finalizar Cita Ahora
+                  </button>
+                )}
+
+                {citaDetalleModal.estado !== 'Cancelada' && (
+                  <button
+                    type="button"
+                    disabled={actualizandoCita}
+                    onClick={() => handleCambiarEstadoCita(citaDetalleModal.id, 'Cancelada')}
+                    style={{
+                      padding: '10px',
+                      background: 'rgba(231, 76, 60, 0.15)',
+                      border: '1px solid #e74c3c',
+                      color: '#e74c3c',
+                      borderRadius: '8px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ❌ Marcar como Cancelada
+                  </button>
+                )}
+
+                {citaDetalleModal.estado === 'Cancelada' && (
+                  <button
+                    type="button"
+                    disabled={actualizandoCita}
+                    onClick={() => handleCambiarEstadoCita(citaDetalleModal.id, 'Pendiente')}
+                    className="btn-outline-gold"
+                    style={{ padding: '10px' }}
+                  >
+                    🔄 Reactivar como Pendiente
+                  </button>
+                )}
+
+                <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                  <button
+                    type="button"
+                    disabled={actualizandoCita}
+                    onClick={() => handleEliminarCita(citaDetalleModal.id)}
+                    style={{
+                      flex: 1,
+                      padding: '8px',
+                      background: 'transparent',
+                      border: '1px solid #555',
+                      color: '#888',
+                      borderRadius: '6px',
+                      fontSize: '0.78rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    🗑️ Eliminar Cita
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-outline-gold"
+                    style={{ flex: 1, padding: '8px' }}
+                    onClick={() => setCitaDetalleModal(null)}
+                  >
+                    Cerrar
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* Main Grid Viewport */}
+        <div style={{ background: 'rgba(20, 20, 20, 0.75)', backdropFilter: 'blur(10px)', borderRadius: '14px', border: '1px solid #333', overflowX: 'auto', padding: '18px' }}>
+          {vistaCalendario === 'dia' && renderGridDia()}
+          {vistaCalendario === 'semana' && renderGridSemana()}
+          {vistaCalendario === 'mes' && renderGridMes()}
         </div>
+
       </div>
     );
   };

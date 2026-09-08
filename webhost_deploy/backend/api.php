@@ -162,6 +162,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $rut = isset($data['rut']) ? trim($data['rut']) : null;
             $telefono = isset($data['telefono']) ? trim($data['telefono']) : null;
             $montoCustom = (isset($data['monto']) && $data['monto'] !== null && $data['monto'] !== '') ? (float)$data['monto'] : null;
+            $marcarPagada = !empty($data['marcar_pagada']) || !empty($data['ya_pagada']) || (($data['estado'] ?? '') === 'Completada');
+            $metodoPago = $data['metodo_pago'] ?? 'Efectivo';
+            $descuento = isset($data['descuento']) ? (float)$data['descuento'] : 0;
+            $estadoCita = $marcarPagada ? 'Completada' : ($data['estado'] ?? 'Pendiente');
             
             if (!$cliente_id && !empty($rut)) {
                 $rutClean = strtoupper(preg_replace('/[^0-9K]/i', '', $rut));
@@ -188,14 +192,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 $stmtUpd->execute([$telefono, $cliente_id]);
             }
 
-            $stmt = $pdo->prepare("INSERT INTO citas (cliente_id, trabajador_id, fecha, hora) VALUES (?, ?, ?, ?)");
-            $stmt->execute([$cliente_id, $data['trabajador_id'], $data['fecha'], $data['hora']]);
+            // Calcular monto o servicios
+            $servicios = !empty($data['servicios']) && is_array($data['servicios']) ? $data['servicios'] : [];
+            $subtotalCalc = 0;
+            if (!empty($servicios)) {
+                foreach ($servicios as $servId) {
+                    $s = $pdo->prepare("SELECT precio FROM servicios WHERE id = ?");
+                    $s->execute([$servId]);
+                    $precioDb = $s->fetchColumn();
+                    $precioFinal = ($montoCustom !== null && count($servicios) === 1) ? $montoCustom : ($precioDb ?: 0);
+                    $subtotalCalc += $precioFinal;
+                }
+            } else {
+                $sDefault = $pdo->query("SELECT id, precio FROM servicios ORDER BY es_corte DESC, id ASC LIMIT 1")->fetch();
+                $precioFinal = ($montoCustom !== null) ? $montoCustom : ($sDefault ? ($sDefault['precio'] ?: 14000) : 14000);
+                $subtotalCalc = $precioFinal;
+            }
+
+            $totalPagado = $marcarPagada ? max(0, $subtotalCalc - $descuento) : null;
+            $metodoPagoFinal = $marcarPagada ? $metodoPago : null;
+
+            $stmt = $pdo->prepare("INSERT INTO citas (cliente_id, trabajador_id, fecha, hora, estado, metodo_pago, descuento, total_pagado) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$cliente_id, $data['trabajador_id'], $data['fecha'], $data['hora'], $estadoCita, $metodoPagoFinal, $descuento, $totalPagado]);
             $citaId = $pdo->lastInsertId();
             
             // Insertar detalles
             $stmtDet = $pdo->prepare("INSERT INTO cita_detalle (cita_id, servicio_id, precio_cobrado) VALUES (?, ?, ?)");
-            $servicios = !empty($data['servicios']) && is_array($data['servicios']) ? $data['servicios'] : [];
-            
             if (!empty($servicios)) {
                 foreach ($servicios as $servId) {
                     $s = $pdo->prepare("SELECT precio FROM servicios WHERE id = ?");
@@ -205,15 +227,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                     $stmtDet->execute([$citaId, $servId, $precioFinal]);
                 }
             } else {
-                // Si no se pasaron servicios específicos pero es cita manual / express, asociar al primer servicio
                 $sDefault = $pdo->query("SELECT id, precio FROM servicios ORDER BY es_corte DESC, id ASC LIMIT 1")->fetch();
                 if ($sDefault) {
                     $precioFinal = ($montoCustom !== null) ? $montoCustom : ($sDefault['precio'] ?: 14000);
                     $stmtDet->execute([$citaId, $sDefault['id'], $precioFinal]);
                 }
             }
+
+            // Si fue marcada como completada y pagada, sumamos el corte acumulado al cliente
+            if ($marcarPagada && $cliente_id) {
+                $pdo->prepare("UPDATE clientes SET cortes_acumulados = cortes_acumulados + 1 WHERE id = ?")->execute([$cliente_id]);
+            }
             
-            echo json_encode(["status" => "success", "cita_id" => $citaId, "cliente_id" => $cliente_id]);
+            echo json_encode([
+                "status" => "success", 
+                "cita_id" => $citaId, 
+                "cliente_id" => $cliente_id,
+                "marcar_pagada" => $marcarPagada,
+                "estado" => $estadoCita,
+                "total_pagado" => $totalPagado
+            ]);
             break;
         case 'nuevo_pedido':
             $cliente_id = $data['cliente_id'] ?? null;

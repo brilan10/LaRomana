@@ -125,9 +125,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $end_date = $_GET['end_date'] ?? $start_date;
             
             $stmt = $pdo->prepare("
-                SELECT c.id, c.fecha, c.hora, c.estado, cl.nombre as cliente, t.nombre as trabajador,
+                SELECT c.id, c.fecha, c.hora, c.estado, cl.id as cliente_id, cl.nombre as cliente, cl.rut as cliente_rut, cl.telefono as cliente_telefono,
+                t.id as trabajador_id, t.nombre as trabajador,
                 COALESCE((SELECT SUM(precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id), c.total_pagado, 0) as subtotal,
-                cl.cortes_acumulados, c.descuento, c.total_pagado, c.metodo_pago
+                (SELECT GROUP_CONCAT(s.nombre SEPARATOR ', ') FROM cita_detalle cd JOIN servicios s ON cd.servicio_id = s.id WHERE cd.cita_id = c.id) as servicios_nombres,
+                cl.cortes_acumulados, c.descuento, c.total_pagado, c.metodo_pago, c.decant_entregado
                 FROM citas c
                 JOIN clientes cl ON c.cliente_id = cl.id
                 JOIN trabajadores t ON c.trabajador_id = t.id
@@ -1010,6 +1012,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $stmt = $pdo->prepare("DELETE FROM pagos_trabajadores WHERE id = ?");
             $stmt->execute([$pago_id]);
             echo json_encode(["status" => "success", "message" => "Registro de pago eliminado con éxito."]);
+            break;
+
+        case 'cambiar_estado_cita':
+            $cita_id = $data['cita_id'] ?? 0;
+            $nuevo_estado = $data['estado'] ?? 'Pendiente';
+            if (!$cita_id) {
+                echo json_encode(["status" => "error", "message" => "ID de cita inválido."]);
+                break;
+            }
+            $stmt = $pdo->prepare("UPDATE citas SET estado = ? WHERE id = ?");
+            $stmt->execute([$nuevo_estado, $cita_id]);
+            echo json_encode(["status" => "success", "message" => "Estado de la cita actualizado a $nuevo_estado."]);
+            break;
+
+        case 'eliminar_cita':
+            $cita_id = $data['cita_id'] ?? 0;
+            if (!$cita_id) {
+                echo json_encode(["status" => "error", "message" => "ID de cita inválido."]);
+                break;
+            }
+            $pdo->prepare("DELETE FROM cita_detalle WHERE cita_id = ?")->execute([$cita_id]);
+            $pdo->prepare("DELETE FROM citas WHERE id = ?")->execute([$cita_id]);
+            echo json_encode(["status" => "success", "message" => "Cita eliminada correctamente."]);
             break;
 
         default:
