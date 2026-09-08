@@ -48,6 +48,11 @@ try {
     $stmtConf = $pdo->prepare("INSERT INTO configuraciones (clave, valor, descripcion) VALUES ('meta_cortes_premio', '3', 'Cantidad de cortes requeridos para ganar premio') ON DUPLICATE KEY UPDATE clave=clave");
     $stmtConf->execute();
 
+    // Actualizar columnas de estado en pedidos para permitir 'Pagado', 'Entregado', etc.
+    try {
+        $pdo->exec("ALTER TABLE pedidos MODIFY COLUMN estado VARCHAR(50) DEFAULT 'Pendiente'");
+    } catch (Exception $e) {}
+
     echo "Base de datos actualizada con exito.\n";
 
 } catch (PDOException $e) {

@@ -11,6 +11,10 @@ $mes_actual = date('Y-m-01');
 echo "Fecha Hoy: $hoy\n";
 echo "Inicio Mes: $mes_actual\n\n";
 
+echo "--- ESTRUCTURA DE TABLA PEDIDOS ---\n";
+print_r($pdo->query("DESCRIBE pedidos")->fetchAll(PDO::FETCH_ASSOC));
+echo "\n";
+
 // 1. Citas
 $totCitas = $pdo->query("SELECT COUNT(*) FROM citas")->fetchColumn();
 $citasMes = $pdo->query("SELECT COUNT(*) FROM citas WHERE fecha >= '$mes_actual' AND estado = 'Completada'")->fetchColumn();

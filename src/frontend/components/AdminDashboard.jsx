@@ -435,12 +435,28 @@ export default function AdminDashboard({ session, logout }) {
   };
 
   const cambiarEstadoPedido = async (id, estado) => {
-    await fetch(`${API_URL}/admin_api.php?action=update_pedido_estado`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({id, estado})
-    });
-    cargarPedidosAdmin();
+    // Actualización optimista inmediata en la UI
+    setPedidosAdmin(prev => prev.map(p => p.id === id ? { ...p, estado } : p));
+    if (ticketDetalleModal && ticketDetalleModal.id === id) {
+      setTicketDetalleModal(prev => ({ ...prev, estado }));
+    }
+
+    try {
+      const res = await fetch(`${API_URL}/admin_api.php?action=update_pedido_estado`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id, estado})
+      });
+      const data = await res.json();
+      if (data.status !== 'success') {
+        alert("Atención: " + (data.message || "No se pudo actualizar el estado"));
+      }
+      await cargarPedidosAdmin();
+      cargarDashboard();
+    } catch (err) {
+      console.error("Error al actualizar estado del ticket:", err);
+      cargarPedidosAdmin();
+    }
   };
 
   const cargarDashboard = async () => {
@@ -3841,6 +3857,83 @@ export default function AdminDashboard({ session, logout }) {
                <span style={{ fontSize: '1.3rem', fontWeight: 'bold', color: 'var(--gold-jewel)' }}>
                  ${Number(ticketDetalleModal.total).toLocaleString('es-CL')}
                </span>
+             </div>
+
+             {/* Selector de Estado Rápido en Modal de Boleta */}
+             <div style={{ background: 'rgba(0,0,0,0.4)', borderRadius: '10px', padding: '12px 14px', border: '1px solid rgba(255,255,255,0.08)', marginBottom: '16px' }}>
+               <div style={{ fontSize: '0.78rem', color: 'var(--gold-jewel)', marginBottom: '8px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                 ⚡ Cambiar Estado del Ticket:
+               </div>
+               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                 <button 
+                   type="button"
+                   onClick={() => cambiarEstadoPedido(ticketDetalleModal.id, 'Pagado')}
+                   style={{
+                     padding: '8px 10px',
+                     borderRadius: '6px',
+                     border: ticketDetalleModal.estado === 'Pagado' ? '2px solid #2ecc71' : '1px solid rgba(46,204,113,0.3)',
+                     background: ticketDetalleModal.estado === 'Pagado' ? 'rgba(46,204,113,0.3)' : 'rgba(0,0,0,0.3)',
+                     color: '#2ecc71',
+                     fontWeight: 'bold',
+                     fontSize: '0.8rem',
+                     cursor: 'pointer',
+                     transition: 'all 0.15s ease'
+                   }}
+                 >
+                   🟢 Marcar Pagado
+                 </button>
+                 <button 
+                   type="button"
+                   onClick={() => cambiarEstadoPedido(ticketDetalleModal.id, 'Entregado')}
+                   style={{
+                     padding: '8px 10px',
+                     borderRadius: '6px',
+                     border: ticketDetalleModal.estado === 'Entregado' ? '2px solid var(--gold-jewel)' : '1px solid rgba(212,175,55,0.3)',
+                     background: ticketDetalleModal.estado === 'Entregado' ? 'rgba(212,175,55,0.3)' : 'rgba(0,0,0,0.3)',
+                     color: 'var(--gold-jewel)',
+                     fontWeight: 'bold',
+                     fontSize: '0.8rem',
+                     cursor: 'pointer',
+                     transition: 'all 0.15s ease'
+                   }}
+                 >
+                   ✨ Entregado
+                 </button>
+                 <button 
+                   type="button"
+                   onClick={() => cambiarEstadoPedido(ticketDetalleModal.id, 'Preparando')}
+                   style={{
+                     padding: '8px 10px',
+                     borderRadius: '6px',
+                     border: ticketDetalleModal.estado === 'Preparando' ? '2px solid #3498db' : '1px solid rgba(52,152,219,0.3)',
+                     background: ticketDetalleModal.estado === 'Preparando' ? 'rgba(52,152,219,0.3)' : 'rgba(0,0,0,0.3)',
+                     color: '#3498db',
+                     fontWeight: 'bold',
+                     fontSize: '0.8rem',
+                     cursor: 'pointer',
+                     transition: 'all 0.15s ease'
+                   }}
+                 >
+                   🔵 Preparando
+                 </button>
+                 <button 
+                   type="button"
+                   onClick={() => cambiarEstadoPedido(ticketDetalleModal.id, 'Cancelado')}
+                   style={{
+                     padding: '8px 10px',
+                     borderRadius: '6px',
+                     border: ticketDetalleModal.estado === 'Cancelado' ? '2px solid #e74c3c' : '1px solid rgba(231,76,60,0.3)',
+                     background: ticketDetalleModal.estado === 'Cancelado' ? 'rgba(231,76,60,0.3)' : 'rgba(0,0,0,0.3)',
+                     color: '#e74c3c',
+                     fontWeight: 'bold',
+                     fontSize: '0.8rem',
+                     cursor: 'pointer',
+                     transition: 'all 0.15s ease'
+                   }}
+                 >
+                   🔴 Cancelar
+                 </button>
+               </div>
              </div>
 
              {/* Acciones */}

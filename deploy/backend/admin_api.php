@@ -36,7 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $ingresos_cortes = $stmtIngresosCortes->fetchColumn() ?: 0;
 
             // Ventas Tienda Hoy
-            $stmtVentas = $pdo->prepare("SELECT SUM(total), COUNT(*) FROM pedidos WHERE DATE(fecha_creacion) = ? AND estado = 'Entregado'");
+            $stmtVentas = $pdo->prepare("SELECT SUM(total), COUNT(*) FROM pedidos WHERE DATE(fecha_creacion) = ? AND estado IN ('Entregado', 'Pagado')");
             $stmtVentas->execute([$hoy]);
             $ventas = $stmtVentas->fetch(PDO::FETCH_NUM);
             $metrics['ventas_tienda'] = $ventas[0] ?: 0;
@@ -53,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $stmtIngMes->execute([$mes_actual]);
             $ingresos_cortes_mes = $stmtIngMes->fetchColumn() ?: 0;
 
-            $stmtVentasMes = $pdo->prepare("SELECT SUM(total) FROM pedidos WHERE fecha_creacion >= ? AND estado = 'Entregado'");
+            $stmtVentasMes = $pdo->prepare("SELECT SUM(total) FROM pedidos WHERE fecha_creacion >= ? AND estado IN ('Entregado', 'Pagado')");
             $stmtVentasMes->execute([$mes_actual]);
             $ventas_mes = $stmtVentasMes->fetchColumn() ?: 0;
 
@@ -108,7 +108,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 $stmtC->execute([$fecha]);
                 $c = (float)($stmtC->fetchColumn() ?: 0);
 
-                $stmtP = $pdo->prepare("SELECT SUM(total) FROM pedidos WHERE DATE(fecha_creacion) = ? AND estado = 'Entregado'");
+                $stmtP = $pdo->prepare("SELECT SUM(total) FROM pedidos WHERE DATE(fecha_creacion) = ? AND estado IN ('Entregado', 'Pagado')");
                 $stmtP->execute([$fecha]);
                 $p = (float)($stmtP->fetchColumn() ?: 0);
 
@@ -758,8 +758,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             echo json_encode(["status" => "success"]);
             break;
         case 'update_pedido_estado':
-            $pdo->prepare("UPDATE pedidos SET estado=? WHERE id=?")->execute([$data['estado'], $data['id']]);
-            echo json_encode(["status" => "success"]);
+            $nuevoEstado = $data['estado'] ?? 'Pendiente';
+            $pedidoId = (int)($data['id'] ?? 0);
+
+            if ($pedidoId <= 0) {
+                http_response_code(400);
+                echo json_encode(["status" => "error", "message" => "ID de pedido inválido"]);
+                break;
+            }
+
+            try {
+                $stmt = $pdo->prepare("UPDATE pedidos SET estado=? WHERE id=?");
+                $stmt->execute([$nuevoEstado, $pedidoId]);
+                echo json_encode(["status" => "success", "id" => $pedidoId, "estado" => $nuevoEstado]);
+            } catch (\PDOException $e) {
+                // Si la columna estado era ENUM restringido, auto-migramos a VARCHAR(50) y reintentamos
+                try {
+                    $pdo->exec("ALTER TABLE pedidos MODIFY COLUMN estado VARCHAR(50) DEFAULT 'Pendiente'");
+                    $stmt = $pdo->prepare("UPDATE pedidos SET estado=? WHERE id=?");
+                    $stmt->execute([$nuevoEstado, $pedidoId]);
+                    echo json_encode(["status" => "success", "id" => $pedidoId, "estado" => $nuevoEstado]);
+                } catch (\Exception $ex) {
+                    http_response_code(500);
+                    echo json_encode(["status" => "error", "message" => $ex->getMessage()]);
+                }
+            }
             break;
 
         // --- EQUIPO ---
