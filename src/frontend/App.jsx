@@ -3,6 +3,7 @@ import PortalCliente from './components/PortalCliente';
 import PosTrabajador from './components/PosTrabajador';
 import AdminDashboard from './components/AdminDashboard';
 import Tienda from './components/Tienda';
+import ErrorBoundary from './components/ErrorBoundary';
 
 export const API_URL = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && window.location.hostname === 'localhost' ? 'http://localhost:8000' : '/backend');
 
@@ -362,8 +363,16 @@ function App() {
           </>
         )}
 
-        {session && view === 'trabajador' && <PosTrabajador session={session} />}
-        {session && view === 'admin' && <AdminDashboard session={session} logout={logout} />}
+        {session && view === 'trabajador' && (
+          <ErrorBoundary fallbackTitle="Error en Panel de Staff">
+            <PosTrabajador session={session} />
+          </ErrorBoundary>
+        )}
+        {session && view === 'admin' && (
+          <ErrorBoundary fallbackTitle="Error en Panel de Administración">
+            <AdminDashboard session={session} logout={logout} />
+          </ErrorBoundary>
+        )}
 
         {/* --- REDES SOCIALES Y CRÉDITOS AL FINAL DEL APARTADO DE CLIENTES --- */}
         {view !== 'admin' && view !== 'trabajador' && (

@@ -3,6 +3,14 @@ import { API_URL } from '../App';
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
+import ErrorBoundary from './ErrorBoundary';
+
+const formatDateYMD = (d = new Date()) => {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 export default function AdminDashboard({ session, logout }) {
   const [tab, setTab] = useState('dashboard');
@@ -61,8 +69,14 @@ export default function AdminDashboard({ session, logout }) {
 
   // Datos de Liquidación y Comisiones de Barberos
   const [liqPeriodo, setLiqPeriodo] = useState('este_mes');
-  const [liqFechaInicio, setLiqFechaInicio] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]);
-  const [liqFechaFin, setLiqFechaFin] = useState(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().split('T')[0]);
+  const [liqFechaInicio, setLiqFechaInicio] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+  });
+  const [liqFechaFin, setLiqFechaFin] = useState(() => {
+    const d = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
   const [liqBarberoId, setLiqBarberoId] = useState('todos');
   const [liquidacionData, setLiquidacionData] = useState(null);
   const [loadingLiquidacion, setLoadingLiquidacion] = useState(false);
@@ -282,37 +296,40 @@ export default function AdminDashboard({ session, logout }) {
     setLiqPeriodo(tipo);
     const hoy = new Date();
     let inicio = '';
-    let fin = hoy.toISOString().split('T')[0];
+    let fin = formatDateYMD(hoy);
 
     if (tipo === 'esta_semana') {
       const d = new Date();
       const day = d.getDay();
       const diff = d.getDate() - day + (day === 0 ? -6 : 1);
       const startOfWeek = new Date(d.setDate(diff));
-      inicio = startOfWeek.toISOString().split('T')[0];
+      inicio = formatDateYMD(startOfWeek);
       const endOfWeek = new Date(startOfWeek);
       endOfWeek.setDate(startOfWeek.getDate() + 6);
-      fin = endOfWeek.toISOString().split('T')[0];
+      fin = formatDateYMD(endOfWeek);
     } else if (tipo === 'semana_anterior') {
       const d = new Date();
       const day = d.getDay();
       const diff = d.getDate() - day + (day === 0 ? -6 : 1) - 7;
       const startOfPrevWeek = new Date(d.setDate(diff));
-      inicio = startOfPrevWeek.toISOString().split('T')[0];
+      inicio = formatDateYMD(startOfPrevWeek);
       const endOfPrevWeek = new Date(startOfPrevWeek);
       endOfPrevWeek.setDate(startOfPrevWeek.getDate() + 6);
-      fin = endOfPrevWeek.toISOString().split('T')[0];
+      fin = formatDateYMD(endOfPrevWeek);
     } else if (tipo === 'este_mes') {
-      inicio = new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString().split('T')[0];
-      fin = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).toISOString().split('T')[0];
+      inicio = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-01`;
+      const endOfMonth = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0);
+      fin = formatDateYMD(endOfMonth);
     } else if (tipo === 'mes_anterior') {
-      inicio = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1).toISOString().split('T')[0];
-      fin = new Date(hoy.getFullYear(), hoy.getMonth(), 0).toISOString().split('T')[0];
+      const prevMonth = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1);
+      inicio = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}-01`;
+      const endOfPrevMonth = new Date(hoy.getFullYear(), hoy.getMonth(), 0);
+      fin = formatDateYMD(endOfPrevMonth);
     } else if (tipo === 'ultimos_30') {
       const hace30 = new Date();
       hace30.setDate(hoy.getDate() - 30);
-      inicio = hace30.toISOString().split('T')[0];
-      fin = new Date().toISOString().split('T')[0];
+      inicio = formatDateYMD(hace30);
+      fin = formatDateYMD(hoy);
     }
 
     if (inicio) {
@@ -2124,8 +2141,22 @@ export default function AdminDashboard({ session, logout }) {
   };
 
   const renderAnalitica = () => {
-    const tot = liquidacionData?.totales_generales;
-    const barberosList = liquidacionData?.barberos || [];
+    const rangoInicio = liquidacionData?.rango?.inicio || liqFechaInicio;
+    const rangoFin = liquidacionData?.rango?.fin || liqFechaFin;
+    const tot = liquidacionData?.totales_generales || {
+      total_cortes: 0,
+      total_bruto: 0,
+      total_descuentos: 0,
+      total_neto: 0,
+      total_comision_barberos: 0,
+      total_ganancia_tienda: 0,
+      dias_trabajados_total: 0,
+      total_comision_pagada: 0,
+      total_comision_pendiente: 0,
+      barberos_pagados_count: 0,
+      barberos_pendientes_count: 0
+    };
+    const barberosList = Array.isArray(liquidacionData?.barberos) ? liquidacionData.barberos : [];
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '25px', animation: 'fadeIn 0.3s ease-in' }}>
@@ -2252,60 +2283,65 @@ export default function AdminDashboard({ session, logout }) {
           </div>
         </div>
 
-        {/* Tarjetas KPI de Resumen del Período */}
-        {tot && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px' }}>
-            <div className="stat-card-badge">
-              <span style={{ fontSize: '0.78rem', color: '#aaa' }}>💈 Cortes Realizados</span>
-              <strong style={{ fontSize: '1.4rem', color: '#fff' }}>{tot.total_cortes} citas</strong>
-              <span style={{ fontSize: '0.72rem', color: 'var(--gold-jewel)' }}>{tot.dias_trabajados_total} días con actividad</span>
-            </div>
-
-            <div className="stat-card-badge">
-              <span style={{ fontSize: '0.78rem', color: '#aaa' }}>💰 Total Bruto Facturado</span>
-              <strong style={{ fontSize: '1.4rem', color: 'var(--gold-jewel)' }}>
-                ${Number(tot.total_bruto).toLocaleString('es-CL')}
-              </strong>
-              <span style={{ fontSize: '0.72rem', color: '#aaa' }}>En servicios de barbería</span>
-            </div>
-
-            <div className="stat-card-badge" style={{ borderLeft: '4px solid #3498db' }}>
-              <span style={{ fontSize: '0.78rem', color: '#aaa' }}>💵 Comisiones Devengadas</span>
-              <strong style={{ fontSize: '1.4rem', color: '#3498db' }}>
-                ${Number(tot.total_comision_barberos).toLocaleString('es-CL')}
-              </strong>
-              <span style={{ fontSize: '0.72rem', color: '#aaa' }}>Total a pagar barberos</span>
-            </div>
-
-            <div className="stat-card-badge" style={{ borderLeft: '4px solid #2ecc71' }}>
-              <span style={{ fontSize: '0.78rem', color: '#aaa' }}>🟢 Comisiones Pagadas</span>
-              <strong style={{ fontSize: '1.4rem', color: '#2ecc71' }}>
-                ${Number(tot.total_comision_pagada || 0).toLocaleString('es-CL')}
-              </strong>
-              <span style={{ fontSize: '0.72rem', color: '#2ecc71' }}>
-                {tot.barberos_pagados_count || 0} barberos liquidados
-              </span>
-            </div>
-
-            <div className="stat-card-badge" style={{ borderLeft: '4px solid #f1c40f' }}>
-              <span style={{ fontSize: '0.78rem', color: '#aaa' }}>🟡 Pendiente de Pago</span>
-              <strong style={{ fontSize: '1.4rem', color: '#f1c40f' }}>
-                ${Number(tot.total_comision_pendiente || 0).toLocaleString('es-CL')}
-              </strong>
-              <span style={{ fontSize: '0.72rem', color: '#f1c40f' }}>
-                {tot.barberos_pendientes_count || 0} barberos por pagar
-              </span>
-            </div>
-
-            <div className="stat-card-badge" style={{ borderLeft: '4px solid var(--gold-jewel)' }}>
-              <span style={{ fontSize: '0.78rem', color: '#aaa' }}>🏬 Ganancia Local (Tienda)</span>
-              <strong style={{ fontSize: '1.4rem', color: 'var(--gold-jewel)' }}>
-                ${Number(tot.total_ganancia_tienda).toLocaleString('es-CL')}
-              </strong>
-              <span style={{ fontSize: '0.72rem', color: '#aaa' }}>Margen neto retenido</span>
-            </div>
+        {/* Indicador de Carga */}
+        {loadingLiquidacion && (
+          <div style={{ textAlign: 'center', padding: '20px', color: 'var(--gold-jewel)', background: 'rgba(26,26,26,0.5)', borderRadius: '10px' }}>
+            ⏳ Actualizando datos de liquidación y comisiones...
           </div>
         )}
+
+        {/* Tarjetas KPI de Resumen del Período */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px' }}>
+          <div className="stat-card-badge">
+            <span style={{ fontSize: '0.78rem', color: '#aaa' }}>💈 Cortes Realizados</span>
+            <strong style={{ fontSize: '1.4rem', color: '#fff' }}>{tot.total_cortes || 0} citas</strong>
+            <span style={{ fontSize: '0.72rem', color: 'var(--gold-jewel)' }}>{tot.dias_trabajados_total || 0} días con actividad</span>
+          </div>
+
+          <div className="stat-card-badge">
+            <span style={{ fontSize: '0.78rem', color: '#aaa' }}>💰 Total Bruto Facturado</span>
+            <strong style={{ fontSize: '1.4rem', color: 'var(--gold-jewel)' }}>
+              ${Number(tot.total_bruto || 0).toLocaleString('es-CL')}
+            </strong>
+            <span style={{ fontSize: '0.72rem', color: '#aaa' }}>En servicios de barbería</span>
+          </div>
+
+          <div className="stat-card-badge" style={{ borderLeft: '4px solid #3498db' }}>
+            <span style={{ fontSize: '0.78rem', color: '#aaa' }}>💵 Comisiones Devengadas</span>
+            <strong style={{ fontSize: '1.4rem', color: '#3498db' }}>
+              ${Number(tot.total_comision_barberos || 0).toLocaleString('es-CL')}
+            </strong>
+            <span style={{ fontSize: '0.72rem', color: '#aaa' }}>Total a pagar barberos</span>
+          </div>
+
+          <div className="stat-card-badge" style={{ borderLeft: '4px solid #2ecc71' }}>
+            <span style={{ fontSize: '0.78rem', color: '#aaa' }}>🟢 Comisiones Pagadas</span>
+            <strong style={{ fontSize: '1.4rem', color: '#2ecc71' }}>
+              ${Number(tot.total_comision_pagada || 0).toLocaleString('es-CL')}
+            </strong>
+            <span style={{ fontSize: '0.72rem', color: '#2ecc71' }}>
+              {tot.barberos_pagados_count || 0} barberos liquidados
+            </span>
+          </div>
+
+          <div className="stat-card-badge" style={{ borderLeft: '4px solid #f1c40f' }}>
+            <span style={{ fontSize: '0.78rem', color: '#aaa' }}>🟡 Pendiente de Pago</span>
+            <strong style={{ fontSize: '1.4rem', color: '#f1c40f' }}>
+              ${Number(tot.total_comision_pendiente || 0).toLocaleString('es-CL')}
+            </strong>
+            <span style={{ fontSize: '0.72rem', color: '#f1c40f' }}>
+              {tot.barberos_pendientes_count || 0} barberos por pagar
+            </span>
+          </div>
+
+          <div className="stat-card-badge" style={{ borderLeft: '4px solid var(--gold-jewel)' }}>
+            <span style={{ fontSize: '0.78rem', color: '#aaa' }}>🏬 Ganancia Local (Tienda)</span>
+            <strong style={{ fontSize: '1.4rem', color: 'var(--gold-jewel)' }}>
+              ${Number(tot.total_ganancia_tienda || 0).toLocaleString('es-CL')}
+            </strong>
+            <span style={{ fontSize: '0.72rem', color: '#aaa' }}>Margen neto retenido</span>
+          </div>
+        </div>
 
         {/* Banner Informativo de Dinámica de Comisiones y Registro de Pagos */}
         <div style={{ background: 'rgba(212, 175, 55, 0.08)', border: '1px solid rgba(212, 175, 55, 0.25)', borderRadius: '10px', padding: '12px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
@@ -2324,7 +2360,7 @@ export default function AdminDashboard({ session, logout }) {
         <div style={{ background: 'rgba(26, 26, 26, 0.6)', backdropFilter: 'blur(10px)', borderRadius: '12px', border: '1px solid #333', overflowX: 'auto', boxShadow: '0 8px 25px rgba(0,0,0,0.5)' }}>
           <div style={{ padding: '16px 20px', borderBottom: '1px solid #333', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
             <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.1rem' }}>
-              📋 Liquidación Consolidada por Barbero ({liquidacionData?.rango?.inicio} a {liquidacionData?.rango?.fin})
+              📋 Liquidación Consolidada por Barbero ({rangoInicio} al {rangoFin})
             </h3>
             <span style={{ fontSize: '0.8rem', color: '#aaa' }}>Haz clic en Registrar Pago para liquidar o en Desglose para ver el día a día</span>
           </div>
@@ -2349,7 +2385,7 @@ export default function AdminDashboard({ session, logout }) {
 
                 return (
                   <tr 
-                    key={b.barbero_id} 
+                    key={b.barbero_id || i} 
                     style={{ background: i % 2 === 0 ? 'rgba(20, 20, 20, 0.7)' : 'transparent', borderBottom: '1px solid rgba(255,255,255,0.05)' }}
                   >
                     {/* Barbero */}
@@ -2368,17 +2404,17 @@ export default function AdminDashboard({ session, logout }) {
                     </td>
 
                     {/* Días y Cortes */}
-                    <td style={{ ...tableCellStyle, textAlign: 'center' }}>{b.dias_trabajados}</td>
-                    <td style={{ ...tableCellStyle, textAlign: 'center', fontWeight: 'bold' }}>{b.total_cortes}</td>
+                    <td style={{ ...tableCellStyle, textAlign: 'center' }}>{b.dias_trabajados || 0}</td>
+                    <td style={{ ...tableCellStyle, textAlign: 'center', fontWeight: 'bold' }}>{b.total_cortes || 0}</td>
 
                     {/* Total Bruto */}
                     <td style={{ ...tableCellStyle, textAlign: 'right', fontWeight: 'bold' }}>
-                      ${Number(b.total_bruto).toLocaleString('es-CL')}
+                      ${Number(b.total_bruto || 0).toLocaleString('es-CL')}
                     </td>
 
                     {/* Comisión Barbero */}
                     <td style={{ ...tableCellStyle, textAlign: 'right', color: '#3498db', fontWeight: 'bold', fontSize: '0.95rem' }}>
-                      ${Number(b.total_comision_barbero).toLocaleString('es-CL')}
+                      ${Number(b.total_comision_barbero || 0).toLocaleString('es-CL')}
                     </td>
 
                     {/* Estado de Pago Badge */}
@@ -2423,12 +2459,12 @@ export default function AdminDashboard({ session, logout }) {
 
                     {/* Ganancia Tienda */}
                     <td style={{ ...tableCellStyle, textAlign: 'right', color: 'var(--gold-jewel)', fontWeight: 'bold' }}>
-                      ${Number(b.total_ganancia_tienda).toLocaleString('es-CL')}
+                      ${Number(b.total_ganancia_tienda || 0).toLocaleString('es-CL')}
                     </td>
 
                     {/* Promedio Diario */}
                     <td style={{ ...tableCellStyle, textAlign: 'right', color: '#ccc' }}>
-                      ${Number(b.promedio_diario_bruto).toLocaleString('es-CL')}
+                      ${Number(b.promedio_diario_bruto || 0).toLocaleString('es-CL')}
                     </td>
 
                     {/* Acciones */}
@@ -2546,68 +2582,75 @@ export default function AdminDashboard({ session, logout }) {
 
           {/* Grid de Gráficos */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '20px' }}>
-            {customCharts.map(chart => (
-              <div key={chart.id} style={{ background: 'rgba(26, 26, 26, 0.6)', backdropFilter: 'blur(10px)', borderRadius: '12px', border: '1px solid #333', padding: '20px', height: '350px', position: 'relative' }}>
-                <button onClick={() => borrarGrafico(chart.id)} style={{ position: 'absolute', top: '15px', right: '15px', background: 'transparent', border: 'none', color: '#e74c3c', cursor: 'pointer', fontSize: '1.2rem' }}>✖</button>
-                <h3 style={{ margin: '0 0 5px 0', color: 'var(--gold-jewel)', fontSize: '1rem', paddingRight: '30px' }}>{chart.config.title}</h3>
-                <p style={{ margin: '0 0 15px 0', fontSize: '0.75rem', color: '#888' }}>{chart.config.startDate} a {chart.config.endDate}</p>
-                
-                <ResponsiveContainer width="100%" height="75%">
-                  {chart.config.chartType === 'line' ? (
-                    <LineChart data={chart.data} margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                      <XAxis dataKey="label" stroke="#888" tick={{fontSize: 10}} />
-                      <YAxis stroke="#888" tick={{fontSize: 10}} tickFormatter={v => chart.config.metric.includes('ingresos') ? `$${Number(v).toLocaleString('es-CL')}` : v} />
-                      <Tooltip contentStyle={{ backgroundColor: '#111', border: '1px solid var(--gold-jewel)' }} itemStyle={{ color: 'var(--gold-jewel)' }} formatter={v => chart.config.metric.includes('ingresos') ? [`$${Number(v).toLocaleString('es-CL')}`, 'Monto'] : [v, 'Cantidad']} />
-                      <Line type="monotone" dataKey="valor" stroke="var(--gold-jewel)" strokeWidth={3} />
-                    </LineChart>
-                  ) : chart.config.chartType === 'bar' ? (
-                    <BarChart data={chart.data} margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                      <XAxis dataKey="label" stroke="#888" tick={{fontSize: 10}} />
-                      <YAxis stroke="#888" tick={{fontSize: 10}} tickFormatter={v => chart.config.metric.includes('ingresos') ? `$${Number(v).toLocaleString('es-CL')}` : v} />
-                      <Tooltip contentStyle={{ backgroundColor: '#111', border: '1px solid var(--gold-jewel)' }} itemStyle={{ color: 'var(--gold-jewel)' }} cursor={{fill: '#222'}} formatter={v => chart.config.metric.includes('ingresos') ? [`$${Number(v).toLocaleString('es-CL')}`, 'Monto'] : [v, 'Cantidad']} />
-                      <Bar dataKey="valor" fill="var(--gold-jewel)" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  ) : (
-                    <PieChart margin={{ top: 10, right: 10, left: 10, bottom: 10 }}>
-                      <Tooltip 
-                        contentStyle={{ backgroundColor: '#111', border: '1px solid #D4AF37', borderRadius: '8px' }} 
-                        itemStyle={{ color: '#D4AF37' }} 
-                        formatter={(v, name, item) => chart.config.metric.includes('ingresos') ? [`$${Number(v).toLocaleString('es-CL')}`, item?.payload?.label || name || 'Monto'] : [v, item?.payload?.label || name || 'Cantidad']} 
-                      />
-                      <Pie 
-                        data={chart.data} 
-                        dataKey="valor" 
-                        nameKey="label" 
-                        cx="50%" 
-                        cy="50%" 
-                        innerRadius={40} 
-                        outerRadius={75} 
-                        paddingAngle={2}
-                        label={({ label, percent }) => {
-                          const pct = (percent * 100).toFixed(0);
-                          if (pct < 3) return '';
-                          const cleanName = label ? (label.length > 12 ? label.substring(5) : label) : '';
-                          return `${cleanName} (${pct}%)`;
-                        }}
-                      >
-                        {chart.data.map((entry, index) => (
-                          <Cell 
-                            key={`cell-${index}`} 
-                            fill={[
-                              '#D4AF37', '#E67E22', '#3498DB', '#2ECC71', 
-                              '#9B59B6', '#E74C3C', '#1ABC9C', '#F39C12', 
-                              '#34495E', '#16A085', '#E84393', '#00CEC9'
-                            ][index % 12]} 
+            {customCharts.map(chart => {
+              const chartData = Array.isArray(chart?.data) ? chart.data : [];
+              const chartConfig = chart?.config || { title: 'Gráfico', metric: '', chartType: 'bar', startDate: '', endDate: '' };
+
+              return (
+                <div key={chart.id} style={{ background: 'rgba(26, 26, 26, 0.6)', backdropFilter: 'blur(10px)', borderRadius: '12px', border: '1px solid #333', padding: '20px', minHeight: '350px', position: 'relative' }}>
+                  <button onClick={() => borrarGrafico(chart.id)} style={{ position: 'absolute', top: '15px', right: '15px', background: 'transparent', border: 'none', color: '#e74c3c', cursor: 'pointer', fontSize: '1.2rem' }}>✖</button>
+                  <h3 style={{ margin: '0 0 5px 0', color: 'var(--gold-jewel)', fontSize: '1rem', paddingRight: '30px' }}>{chartConfig.title}</h3>
+                  <p style={{ margin: '0 0 15px 0', fontSize: '0.75rem', color: '#888' }}>{chartConfig.startDate} a {chartConfig.endDate}</p>
+                  
+                  <div style={{ width: '100%', height: 260 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      {chartConfig.chartType === 'line' ? (
+                        <LineChart data={chartData} margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                          <XAxis dataKey="label" stroke="#888" tick={{fontSize: 10}} />
+                          <YAxis stroke="#888" tick={{fontSize: 10}} tickFormatter={v => (chartConfig.metric || '').includes('ingresos') ? `$${Number(v || 0).toLocaleString('es-CL')}` : v} />
+                          <Tooltip contentStyle={{ backgroundColor: '#111', border: '1px solid var(--gold-jewel)' }} itemStyle={{ color: 'var(--gold-jewel)' }} formatter={v => (chartConfig.metric || '').includes('ingresos') ? [`$${Number(v || 0).toLocaleString('es-CL')}`, 'Monto'] : [v, 'Cantidad']} />
+                          <Line type="monotone" dataKey="valor" stroke="var(--gold-jewel)" strokeWidth={3} />
+                        </LineChart>
+                      ) : chartConfig.chartType === 'bar' ? (
+                        <BarChart data={chartData} margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                          <XAxis dataKey="label" stroke="#888" tick={{fontSize: 10}} />
+                          <YAxis stroke="#888" tick={{fontSize: 10}} tickFormatter={v => (chartConfig.metric || '').includes('ingresos') ? `$${Number(v || 0).toLocaleString('es-CL')}` : v} />
+                          <Tooltip contentStyle={{ backgroundColor: '#111', border: '1px solid var(--gold-jewel)' }} itemStyle={{ color: 'var(--gold-jewel)' }} cursor={{fill: '#222'}} formatter={v => (chartConfig.metric || '').includes('ingresos') ? [`$${Number(v || 0).toLocaleString('es-CL')}`, 'Monto'] : [v, 'Cantidad']} />
+                          <Bar dataKey="valor" fill="var(--gold-jewel)" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      ) : (
+                        <PieChart margin={{ top: 10, right: 10, left: 10, bottom: 10 }}>
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: '#111', border: '1px solid #D4AF37', borderRadius: '8px' }} 
+                            itemStyle={{ color: '#D4AF37' }} 
+                            formatter={(v, name, item) => (chartConfig.metric || '').includes('ingresos') ? [`$${Number(v || 0).toLocaleString('es-CL')}`, item?.payload?.label || name || 'Monto'] : [v, item?.payload?.label || name || 'Cantidad']} 
                           />
-                        ))}
-                      </Pie>
-                    </PieChart>
-                  )}
-                </ResponsiveContainer>
-              </div>
-            ))}
+                          <Pie 
+                            data={chartData} 
+                            dataKey="valor" 
+                            nameKey="label" 
+                            cx="50%" 
+                            cy="50%" 
+                            innerRadius={40} 
+                            outerRadius={75} 
+                            paddingAngle={2}
+                            label={({ label, percent }) => {
+                              const pct = ((percent || 0) * 100).toFixed(0);
+                              if (Number(pct) < 3) return '';
+                              const cleanName = label ? (label.length > 12 ? label.substring(0, 10) + '...' : label) : '';
+                              return `${cleanName} (${pct}%)`;
+                            }}
+                          >
+                            {chartData.map((entry, index) => (
+                              <Cell 
+                                key={`cell-${index}`} 
+                                fill={[
+                                  '#D4AF37', '#E67E22', '#3498DB', '#2ECC71', 
+                                  '#9B59B6', '#E74C3C', '#1ABC9C', '#F39C12', 
+                                  '#34495E', '#16A085', '#E84393', '#00CEC9'
+                                ][index % 12]} 
+                              />
+                            ))}
+                          </Pie>
+                        </PieChart>
+                      )}
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -3204,15 +3247,17 @@ export default function AdminDashboard({ session, logout }) {
 
        {/* Área de Contenido Principal Autoajustable */}
        <div style={{ flex: 1, height: '100%', padding: isMobile ? '16px 12px 60px' : '30px 40px', overflowY: 'auto', background: 'transparent', width: '100%' }}>
-         {tab === 'dashboard' && renderDashboard()}
-         {tab === 'calendario' && renderCalendario()}
-         {tab === 'analitica' && renderAnalitica()}
-         {tab === 'servicios' && renderServicios()}
-         {tab === 'bodega' && renderBodega()}
-         {tab === 'equipo' && renderEquipo()}
-         {tab === 'pedidos' && renderPedidos()}
-         {tab === 'caja' && renderCaja()}
-         {tab === 'crm' && renderCRM()}
+         <ErrorBoundary fallbackTitle={`Error cargando sección ${currentTabInfo.label}`}>
+           {tab === 'dashboard' && renderDashboard()}
+           {tab === 'calendario' && renderCalendario()}
+           {tab === 'analitica' && renderAnalitica()}
+           {tab === 'servicios' && renderServicios()}
+           {tab === 'bodega' && renderBodega()}
+           {tab === 'equipo' && renderEquipo()}
+           {tab === 'pedidos' && renderPedidos()}
+           {tab === 'caja' && renderCaja()}
+           {tab === 'crm' && renderCRM()}
+         </ErrorBoundary>
        </div>
 
        {/* Modal Cobro */}

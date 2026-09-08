@@ -281,38 +281,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $fecha_fin = $_GET['fin'] ?? date('Y-m-t');
             $barbero_id = $_GET['barbero_id'] ?? '';
 
-            $sql = "
-                SELECT c.id, c.fecha, c.hora, c.descuento, c.total_pagado, c.metodo_pago,
-                       cl.id as cliente_id, cl.nombre as cliente_nombre, cl.rut as cliente_rut,
-                       t.id as barbero_id, t.nombre as barbero_nombre,
-                       (SELECT SUM(cd.precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id) as subtotal,
-                       (SELECT GROUP_CONCAT(s.nombre SEPARATOR ' + ') FROM cita_detalle cd JOIN servicios s ON cd.servicio_id = s.id WHERE cd.cita_id = c.id) as servicios_nombres,
-                       IFNULL(cdi.porcentaje_barbero, 60.00) as porcentaje_barbero,
-                       IFNULL(cdi.porcentaje_tienda, 40.00) as porcentaje_tienda
-                FROM citas c
-                JOIN clientes cl ON c.cliente_id = cl.id
-                JOIN trabajadores t ON c.trabajador_id = t.id
-                LEFT JOIN cierres_diarios cdi ON c.fecha = cdi.fecha
-                WHERE c.estado = 'Completada' AND c.fecha BETWEEN ? AND ?
-            ";
-            $params = [$fecha_inicio, $fecha_fin];
-            if (!empty($barbero_id) && $barbero_id !== 'todos') {
-                $sql .= " AND t.id = ? ";
-                $params[] = $barbero_id;
-            }
-            $sql .= " ORDER BY t.nombre ASC, c.fecha ASC, c.hora ASC ";
-
-            $stmt = $pdo->prepare($sql);
-            $stmt->execute($params);
-            $citas = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-            // Nombres de días en español
-            $diasSemana = [
-                'Sunday' => 'Domingo', 'Monday' => 'Lunes', 'Tuesday' => 'Martes', 
-                'Wednesday' => 'Miércoles', 'Thursday' => 'Jueves', 'Friday' => 'Viernes', 'Saturday' => 'Sábado'
-            ];
-
-            $barberosMap = [];
             $totalesGenerales = [
                 'total_cortes' => 0,
                 'total_bruto' => 0,
@@ -320,155 +288,201 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 'total_neto' => 0,
                 'total_comision_barberos' => 0,
                 'total_ganancia_tienda' => 0,
+                'dias_trabajados_total' => 0,
+                'promedio_diario_bruto_global' => 0,
+                'ticket_promedio_global' => 0,
+                'total_comision_pagada' => 0,
+                'total_comision_pendiente' => 0,
+                'barberos_pagados_count' => 0,
+                'barberos_pendientes_count' => 0,
                 'dias_unicos_totales' => []
             ];
-
-            foreach ($citas as $c) {
-                $bId = $c['barbero_id'];
-                $bNombre = $c['barbero_nombre'];
-                $fecha = $c['fecha'];
-                $subtotal = floatval($c['subtotal'] ?? 0);
-                $descuento = floatval($c['descuento'] ?? 0);
-                $totalReal = max(0, $subtotal - $descuento);
-                $pctB = floatval($c['porcentaje_barbero']);
-                $pctT = floatval($c['porcentaje_tienda']);
-                $comisionB = $totalReal * ($pctB / 100);
-                $comisionT = $totalReal * ($pctT / 100);
-
-                if (!isset($barberosMap[$bId])) {
-                    $barberosMap[$bId] = [
-                        'barbero_id' => $bId,
-                        'barbero_nombre' => $bNombre,
-                        'total_cortes' => 0,
-                        'total_bruto' => 0,
-                        'total_descuentos' => 0,
-                        'total_neto' => 0,
-                        'total_comision_barbero' => 0,
-                        'total_ganancia_tienda' => 0,
-                        'dias_map' => [],
-                        'citas' => []
-                    ];
-                }
-
-                $barberosMap[$bId]['total_cortes']++;
-                $barberosMap[$bId]['total_bruto'] += $subtotal;
-                $barberosMap[$bId]['total_descuentos'] += $descuento;
-                $barberosMap[$bId]['total_neto'] += $totalReal;
-                $barberosMap[$bId]['total_comision_barbero'] += $comisionB;
-                $barberosMap[$bId]['total_ganancia_tienda'] += $comisionT;
-
-                // Agrupar día a día
-                if (!isset($barberosMap[$bId]['dias_map'][$fecha])) {
-                    $dayNameEn = date('l', strtotime($fecha));
-                    $barberosMap[$bId]['dias_map'][$fecha] = [
-                        'fecha' => $fecha,
-                        'dia_nombre' => $diasSemana[$dayNameEn] ?? $dayNameEn,
-                        'cortes_dia' => 0,
-                        'total_bruto_dia' => 0,
-                        'descuento_dia' => 0,
-                        'total_neto_dia' => 0,
-                        'porcentaje_barbero' => $pctB,
-                        'porcentaje_tienda' => $pctT,
-                        'comision_barbero_dia' => 0,
-                        'ganancia_tienda_dia' => 0
-                    ];
-                }
-
-                $barberosMap[$bId]['dias_map'][$fecha]['cortes_dia']++;
-                $barberosMap[$bId]['dias_map'][$fecha]['total_bruto_dia'] += $subtotal;
-                $barberosMap[$bId]['dias_map'][$fecha]['descuento_dia'] += $descuento;
-                $barberosMap[$bId]['dias_map'][$fecha]['total_neto_dia'] += $totalReal;
-                $barberosMap[$bId]['dias_map'][$fecha]['comision_barbero_dia'] += $comisionB;
-                $barberosMap[$bId]['dias_map'][$fecha]['ganancia_tienda_dia'] += $comisionT;
-
-                // Cita individual
-                $c['subtotal'] = $subtotal;
-                $c['descuento'] = $descuento;
-                $c['total_neto'] = $totalReal;
-                $c['comision_barbero'] = $comisionB;
-                $c['comision_tienda'] = $comisionT;
-                $barberosMap[$bId]['citas'][] = $c;
-
-                // Totales generales
-                $totalesGenerales['total_cortes']++;
-                $totalesGenerales['total_bruto'] += $subtotal;
-                $totalesGenerales['total_descuentos'] += $descuento;
-                $totalesGenerales['total_neto'] += $totalReal;
-                $totalesGenerales['total_comision_barberos'] += $comisionB;
-                $totalesGenerales['total_ganancia_tienda'] += $comisionT;
-                $totalesGenerales['dias_unicos_totales'][$fecha] = true;
-            }
-
-            // Consultar pagos registrados para este período exacto
-            $stmtPagos = $pdo->prepare("
-                SELECT * FROM pagos_trabajadores 
-                WHERE periodo_inicio = ? AND periodo_fin = ?
-            ");
-            $stmtPagos->execute([$fecha_inicio, $fecha_fin]);
-            $pagosRegistrados = $stmtPagos->fetchAll(PDO::FETCH_ASSOC);
-            $pagosMap = [];
-            foreach ($pagosRegistrados as $p) {
-                $pagosMap[$p['trabajador_id']] = $p;
-            }
-
-            $totalMontoPagado = 0;
-            $barberosPagadosCount = 0;
-
-            // Formatear resumen por barbero y calcular promedios
             $barberosResumen = [];
-            foreach ($barberosMap as $b) {
-                $diasTrabajados = count($b['dias_map']);
-                $totalCortes = $b['total_cortes'];
-                $totalBruto = $b['total_bruto'];
-                $totalComision = $b['total_comision_barbero'];
 
-                $promDiarioBruto = $diasTrabajados > 0 ? round($totalBruto / $diasTrabajados) : 0;
-                $promDiarioComision = $diasTrabajados > 0 ? round($totalComision / $diasTrabajados) : 0;
-                $promCortesDia = $diasTrabajados > 0 ? round($totalCortes / $diasTrabajados, 1) : 0;
-                $ticketPromedio = $totalCortes > 0 ? round($totalBruto / $totalCortes) : 0;
+            try {
+                $sql = "
+                    SELECT c.id, c.fecha, c.hora, c.descuento, c.total_pagado, c.metodo_pago,
+                           cl.id as cliente_id, cl.nombre as cliente_nombre, cl.rut as cliente_rut,
+                           t.id as barbero_id, t.nombre as barbero_nombre,
+                           (SELECT SUM(cd.precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id) as subtotal,
+                           (SELECT GROUP_CONCAT(s.nombre SEPARATOR ' + ') FROM cita_detalle cd JOIN servicios s ON cd.servicio_id = s.id WHERE cd.cita_id = c.id) as servicios_nombres,
+                           IFNULL(cdi.porcentaje_barbero, 60.00) as porcentaje_barbero,
+                           IFNULL(cdi.porcentaje_tienda, 40.00) as porcentaje_tienda
+                    FROM citas c
+                    JOIN clientes cl ON c.cliente_id = cl.id
+                    JOIN trabajadores t ON c.trabajador_id = t.id
+                    LEFT JOIN cierres_diarios cdi ON c.fecha = cdi.fecha
+                    WHERE c.estado = 'Completada' AND c.fecha BETWEEN ? AND ?
+                ";
+                $params = [$fecha_inicio, $fecha_fin];
+                if (!empty($barbero_id) && $barbero_id !== 'todos') {
+                    $sql .= " AND t.id = ? ";
+                    $params[] = $barbero_id;
+                }
+                $sql .= " ORDER BY t.nombre ASC, c.fecha ASC, c.hora ASC ";
 
-                // Convertir mapa de días a lista ordenada por fecha
-                $detalleDias = array_values($b['dias_map']);
-                usort($detalleDias, function($a, $b) {
-                    return strcmp($a['fecha'], $b['fecha']);
-                });
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute($params);
+                $citas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-                $pagoInfo = $pagosMap[$b['barbero_id']] ?? null;
-                $estadoPago = $pagoInfo ? 'Pagado' : 'Pendiente';
-                if ($pagoInfo) {
-                    $totalMontoPagado += floatval($pagoInfo['monto']);
-                    $barberosPagadosCount++;
+                // Nombres de días en español
+                $diasSemana = [
+                    'Sunday' => 'Domingo', 'Monday' => 'Lunes', 'Tuesday' => 'Martes', 
+                    'Wednesday' => 'Miércoles', 'Thursday' => 'Jueves', 'Friday' => 'Viernes', 'Saturday' => 'Sábado'
+                ];
+
+                $barberosMap = [];
+
+                foreach ($citas as $c) {
+                    $bId = $c['barbero_id'];
+                    $bNombre = $c['barbero_nombre'];
+                    $fecha = $c['fecha'];
+                    $subtotal = floatval($c['subtotal'] ?? 0);
+                    $descuento = floatval($c['descuento'] ?? 0);
+                    $totalReal = max(0, $subtotal - $descuento);
+                    $pctB = floatval($c['porcentaje_barbero']);
+                    $pctT = floatval($c['porcentaje_tienda']);
+                    $comisionB = $totalReal * ($pctB / 100);
+                    $comisionT = $totalReal * ($pctT / 100);
+
+                    if (!isset($barberosMap[$bId])) {
+                        $barberosMap[$bId] = [
+                            'barbero_id' => $bId,
+                            'barbero_nombre' => $bNombre,
+                            'total_cortes' => 0,
+                            'total_bruto' => 0,
+                            'total_descuentos' => 0,
+                            'total_neto' => 0,
+                            'total_comision_barbero' => 0,
+                            'total_ganancia_tienda' => 0,
+                            'dias_map' => [],
+                            'citas' => []
+                        ];
+                    }
+
+                    $barberosMap[$bId]['total_cortes']++;
+                    $barberosMap[$bId]['total_bruto'] += $subtotal;
+                    $barberosMap[$bId]['total_descuentos'] += $descuento;
+                    $barberosMap[$bId]['total_neto'] += $totalReal;
+                    $barberosMap[$bId]['total_comision_barbero'] += $comisionB;
+                    $barberosMap[$bId]['total_ganancia_tienda'] += $comisionT;
+
+                    // Agrupar día a día
+                    if (!isset($barberosMap[$bId]['dias_map'][$fecha])) {
+                        $dayNameEn = date('l', strtotime($fecha));
+                        $barberosMap[$bId]['dias_map'][$fecha] = [
+                            'fecha' => $fecha,
+                            'dia_nombre' => $diasSemana[$dayNameEn] ?? $dayNameEn,
+                            'cortes_dia' => 0,
+                            'total_bruto_dia' => 0,
+                            'descuento_dia' => 0,
+                            'total_neto_dia' => 0,
+                            'porcentaje_barbero' => $pctB,
+                            'porcentaje_tienda' => $pctT,
+                            'comision_barbero_dia' => 0,
+                            'ganancia_tienda_dia' => 0
+                        ];
+                    }
+
+                    $barberosMap[$bId]['dias_map'][$fecha]['cortes_dia']++;
+                    $barberosMap[$bId]['dias_map'][$fecha]['total_bruto_dia'] += $subtotal;
+                    $barberosMap[$bId]['dias_map'][$fecha]['descuento_dia'] += $descuento;
+                    $barberosMap[$bId]['dias_map'][$fecha]['total_neto_dia'] += $totalReal;
+                    $barberosMap[$bId]['dias_map'][$fecha]['comision_barbero_dia'] += $comisionB;
+                    $barberosMap[$bId]['dias_map'][$fecha]['ganancia_tienda_dia'] += $comisionT;
+
+                    // Cita individual
+                    $c['subtotal'] = $subtotal;
+                    $c['descuento'] = $descuento;
+                    $c['total_neto'] = $totalReal;
+                    $c['comision_barbero'] = $comisionB;
+                    $c['comision_tienda'] = $comisionT;
+                    $barberosMap[$bId]['citas'][] = $c;
+
+                    // Totales generales
+                    $totalesGenerales['total_cortes']++;
+                    $totalesGenerales['total_bruto'] += $subtotal;
+                    $totalesGenerales['total_descuentos'] += $descuento;
+                    $totalesGenerales['total_neto'] += $totalReal;
+                    $totalesGenerales['total_comision_barberos'] += $comisionB;
+                    $totalesGenerales['total_ganancia_tienda'] += $comisionT;
+                    $totalesGenerales['dias_unicos_totales'][$fecha] = true;
                 }
 
-                $barberosResumen[] = [
-                    'barbero_id' => $b['barbero_id'],
-                    'barbero_nombre' => $b['barbero_nombre'],
-                    'dias_trabajados' => $diasTrabajados,
-                    'total_cortes' => $totalCortes,
-                    'total_bruto' => $totalBruto,
-                    'total_descuentos' => $b['total_descuentos'],
-                    'total_neto' => $b['total_neto'],
-                    'total_comision_barbero' => $totalComision,
-                    'total_ganancia_tienda' => $b['total_ganancia_tienda'],
-                    'promedio_diario_bruto' => $promDiarioBruto,
-                    'promedio_diario_comision' => $promDiarioComision,
-                    'promedio_cortes_dia' => $promCortesDia,
-                    'ticket_promedio' => $ticketPromedio,
-                    'estado_pago' => $estadoPago,
-                    'pago_info' => $pagoInfo,
-                    'detalle_dias' => $detalleDias,
-                    'citas' => $b['citas']
-                ];
-            }
+                // Consultar pagos registrados para este período exacto
+                $pagosMap = [];
+                try {
+                    $stmtPagos = $pdo->prepare("
+                        SELECT * FROM pagos_trabajadores 
+                        WHERE periodo_inicio = ? AND periodo_fin = ?
+                    ");
+                    $stmtPagos->execute([$fecha_inicio, $fecha_fin]);
+                    $pagosRegistrados = $stmtPagos->fetchAll(PDO::FETCH_ASSOC);
+                    foreach ($pagosRegistrados as $p) {
+                        $pagosMap[$p['trabajador_id']] = $p;
+                    }
+                } catch (\Exception $exPagos) {}
 
-            $cantDiasUnicos = count($totalesGenerales['dias_unicos_totales']);
-            $totalesGenerales['dias_trabajados_total'] = $cantDiasUnicos;
-            $totalesGenerales['promedio_diario_bruto_global'] = $cantDiasUnicos > 0 ? round($totalesGenerales['total_bruto'] / $cantDiasUnicos) : 0;
-            $totalesGenerales['ticket_promedio_global'] = $totalesGenerales['total_cortes'] > 0 ? round($totalesGenerales['total_bruto'] / $totalesGenerales['total_cortes']) : 0;
-            $totalesGenerales['total_comision_pagada'] = $totalMontoPagado;
-            $totalesGenerales['total_comision_pendiente'] = max(0, $totalesGenerales['total_comision_barberos'] - $totalMontoPagado);
-            $totalesGenerales['barberos_pagados_count'] = $barberosPagadosCount;
-            $totalesGenerales['barberos_pendientes_count'] = count($barberosResumen) - $barberosPagadosCount;
+                $totalMontoPagado = 0;
+                $barberosPagadosCount = 0;
+
+                // Formatear resumen por barbero y calcular promedios
+                foreach ($barberosMap as $b) {
+                    $diasTrabajados = count($b['dias_map']);
+                    $totalCortes = $b['total_cortes'];
+                    $totalBruto = $b['total_bruto'];
+                    $totalComision = $b['total_comision_barbero'];
+
+                    $promDiarioBruto = $diasTrabajados > 0 ? round($totalBruto / $diasTrabajados) : 0;
+                    $promDiarioComision = $diasTrabajados > 0 ? round($totalComision / $diasTrabajados) : 0;
+                    $promCortesDia = $diasTrabajados > 0 ? round($totalCortes / $diasTrabajados, 1) : 0;
+                    $ticketPromedio = $totalCortes > 0 ? round($totalBruto / $totalCortes) : 0;
+
+                    // Convertir mapa de días a lista ordenada por fecha
+                    $detalleDias = array_values($b['dias_map']);
+                    usort($detalleDias, function($a, $b) {
+                        return strcmp($a['fecha'], $b['fecha']);
+                    });
+
+                    $pagoInfo = $pagosMap[$b['barbero_id']] ?? null;
+                    $estadoPago = $pagoInfo ? 'Pagado' : 'Pendiente';
+                    if ($pagoInfo) {
+                        $totalMontoPagado += floatval($pagoInfo['monto']);
+                        $barberosPagadosCount++;
+                    }
+
+                    $barberosResumen[] = [
+                        'barbero_id' => $b['barbero_id'],
+                        'barbero_nombre' => $b['barbero_nombre'],
+                        'dias_trabajados' => $diasTrabajados,
+                        'total_cortes' => $totalCortes,
+                        'total_bruto' => $totalBruto,
+                        'total_descuentos' => $b['total_descuentos'],
+                        'total_neto' => $b['total_neto'],
+                        'total_comision_barbero' => $totalComision,
+                        'total_ganancia_tienda' => $b['total_ganancia_tienda'],
+                        'promedio_diario_bruto' => $promDiarioBruto,
+                        'promedio_diario_comision' => $promDiarioComision,
+                        'promedio_cortes_dia' => $promCortesDia,
+                        'ticket_promedio' => $ticketPromedio,
+                        'estado_pago' => $estadoPago,
+                        'pago_info' => $pagoInfo,
+                        'detalle_dias' => $detalleDias,
+                        'citas' => $b['citas']
+                    ];
+                }
+
+                $cantDiasUnicos = count($totalesGenerales['dias_unicos_totales']);
+                $totalesGenerales['dias_trabajados_total'] = $cantDiasUnicos;
+                $totalesGenerales['promedio_diario_bruto_global'] = $cantDiasUnicos > 0 ? round($totalesGenerales['total_bruto'] / $cantDiasUnicos) : 0;
+                $totalesGenerales['ticket_promedio_global'] = $totalesGenerales['total_cortes'] > 0 ? round($totalesGenerales['total_bruto'] / $totalesGenerales['total_cortes']) : 0;
+                $totalesGenerales['total_comision_pagada'] = $totalMontoPagado;
+                $totalesGenerales['total_comision_pendiente'] = max(0, $totalesGenerales['total_comision_barberos'] - $totalMontoPagado);
+                $totalesGenerales['barberos_pagados_count'] = $barberosPagadosCount;
+                $totalesGenerales['barberos_pendientes_count'] = count($barberosResumen) - $barberosPagadosCount;
+            } catch (\Exception $ex) {
+                // Fallback silencioso con estructura válida
+            }
             unset($totalesGenerales['dias_unicos_totales']);
 
             echo json_encode([
