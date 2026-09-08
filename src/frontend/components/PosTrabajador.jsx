@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { API_URL } from '../App';
+import { printThermalTicket } from '../utils/printTicket';
 
 export default function PosTrabajador({ session }) {
   const [selectedClient, setSelectedClient] = useState(null);
   const [isPaid, setIsPaid] = useState(false);
+  const [ultimoCobroInfo, setUltimoCobroInfo] = useState(null);
   const [agendados, setAgendados] = useState([]);
   
   // States for Express Booking
@@ -123,6 +125,34 @@ export default function PosTrabajador({ session }) {
 
   const handleCobrarAqui = async () => {
     if (!checkVip()) return;
+    const subVal = Number(selectedClient.precio || selectedClient.monto || 14000);
+    const descVal = Number(descuento) || 0;
+    const totVal = Math.max(0, subVal - descVal);
+
+    const ticketData = {
+      tipo: 'corte',
+      folio: `LR-CITA-${String(selectedClient.id).padStart(4, '0')}`,
+      fecha: new Date(),
+      cliente: selectedClient.nombre || 'Cliente General',
+      rut: selectedClient.rut || '',
+      telefono: selectedClient.telefono || '',
+      barbero: session?.usuario?.nombre || 'Barbero Staff',
+      items: [
+        {
+          nombre: selectedClient.servicio_nombre || 'Servicio de Barbería',
+          cantidad: 1,
+          precio: subVal,
+          subtotal: subVal
+        }
+      ],
+      subtotal: subVal,
+      descuento: descVal,
+      total: totVal,
+      metodoPago: metodoPago,
+      estado: 'PAGADO',
+      cortesAcumulados: selectedClient.cortes !== undefined ? (selectedClient.cortes + 1) : null
+    };
+
     try {
       const res = await fetch(`${API_URL}/api.php?action=finalizar_cita`, {
         method: 'POST',
@@ -135,13 +165,8 @@ export default function PosTrabajador({ session }) {
       });
       const data = await res.json();
       if (data.status === 'success') {
+        setUltimoCobroInfo(ticketData);
         setIsPaid(true);
-        setTimeout(() => {
-          setIsPaid(false);
-          setSelectedClient(null);
-          setAromaVIP('');
-          fetchAgenda();
-        }, 2500);
       }
     } catch (error) {
       console.error(error);
@@ -174,10 +199,37 @@ export default function PosTrabajador({ session }) {
     if (isPaid) {
       return (
         <div style={{ padding: '40px 20px', textAlign: 'center' }}>
-          <div className="card" style={{ maxWidth: '400px', margin: '0 auto', padding: '40px 20px' }}>
-            <div style={{ fontSize: '4rem', marginBottom: '20px' }}>💳</div>
-            <h2 style={{ color: 'var(--gold-jewel)', marginBottom: '15px' }}>¡Cobro Realizado!</h2>
-            <p style={{ color: 'var(--text-secondary)' }}>El pago se ha procesado con éxito y la cita se cerró.</p>
+          <div className="card" style={{ maxWidth: '420px', margin: '0 auto', padding: '30px 20px', border: '2px solid var(--gold-jewel)' }}>
+            <div style={{ fontSize: '3.5rem', marginBottom: '15px' }}>💳</div>
+            <h2 style={{ color: 'var(--gold-jewel)', margin: '0 0 10px 0' }}>¡Cobro Realizado con Éxito!</h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '20px' }}>
+              El pago se ha procesado con éxito y la cita se cerró.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {ultimoCobroInfo && (
+                <button 
+                  className="btn-primary" 
+                  style={{ padding: '12px', fontWeight: 'bold', fontSize: '0.95rem' }} 
+                  onClick={() => printThermalTicket(ultimoCobroInfo)}
+                >
+                  🖨️ Imprimir Boleta Térmica (POS-80)
+                </button>
+              )}
+              <button 
+                className="btn-outline-gold" 
+                style={{ padding: '10px' }} 
+                onClick={() => {
+                  setIsPaid(false);
+                  setSelectedClient(null);
+                  setAromaVIP('');
+                  setUltimoCobroInfo(null);
+                  fetchAgenda();
+                }}
+              >
+                Volver a la Agenda
+              </button>
+            </div>
           </div>
         </div>
       );

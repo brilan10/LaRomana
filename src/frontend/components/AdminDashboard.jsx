@@ -5,6 +5,7 @@ import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import ErrorBoundary from './ErrorBoundary';
 import { resolveImageUrl } from '../utils/imageHelper';
+import { printThermalTicket } from '../utils/printTicket';
 
 const formatDateYMD = (d = new Date()) => {
   const year = d.getFullYear();
@@ -2427,6 +2428,42 @@ export default function AdminDashboard({ session, logout }) {
 
               {/* Botones de Acción */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const subVal = Number(citaDetalleModal.subtotal) > 0 ? Number(citaDetalleModal.subtotal) : (Number(citaDetalleModal.total_pagado) > 0 ? Number(citaDetalleModal.total_pagado) : 14000);
+                    const descVal = Number(citaDetalleModal.descuento) || 0;
+                    const totVal = Number(citaDetalleModal.total_pagado) > 0 ? Number(citaDetalleModal.total_pagado) : Math.max(0, subVal - descVal);
+                    printThermalTicket({
+                      tipo: 'corte',
+                      folio: `LR-CITA-${String(citaDetalleModal.id).padStart(4, '0')}`,
+                      fecha: `${citaDetalleModal.fecha} ${citaDetalleModal.hora?.substring(0,5) || ''}`,
+                      cliente: citaDetalleModal.cliente,
+                      rut: citaDetalleModal.cliente_rut,
+                      telefono: citaDetalleModal.cliente_telefono,
+                      barbero: citaDetalleModal.trabajador,
+                      items: [
+                        {
+                          nombre: citaDetalleModal.servicios_nombres || 'Corte de Cabello / Barbería',
+                          cantidad: 1,
+                          precio: subVal,
+                          subtotal: subVal
+                        }
+                      ],
+                      subtotal: subVal,
+                      descuento: descVal,
+                      total: totVal,
+                      metodoPago: citaDetalleModal.metodo_pago || 'Efectivo',
+                      estado: citaDetalleModal.estado === 'Completada' ? 'PAGADO' : (citaDetalleModal.estado || 'REGISTRADO'),
+                      cortesAcumulados: citaDetalleModal.cortes_acumulados
+                    });
+                  }}
+                  className="btn-outline-gold"
+                  style={{ padding: '11px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: 'bold', fontSize: '0.9rem' }}
+                >
+                  🖨️ Imprimir Boleta / Ticket Térmico (POS-80)
+                </button>
+
                 {(citaDetalleModal.estado === 'Pendiente' || citaDetalleModal.estado === 'Terminado_Esperando_Pago') && (
                   <button
                     type="button"
@@ -4318,7 +4355,7 @@ export default function AdminDashboard({ session, logout }) {
              <div style={{ marginBottom: '15px', color: 'var(--green-emerald-light)', fontSize: '1.25rem', fontWeight: 'bold' }}>
                Total a Pagar: ${Math.max(0, (Number(cobroActivo.subtotal) || 0) - (Number(cobroActivo.descuento) || 0)).toLocaleString('es-CL')}
              </div>
-             <div style={{ marginBottom: '20px' }}>
+             <div style={{ marginBottom: '15px' }}>
                <label style={{ display: 'block', marginBottom: '5px', fontSize: '0.85rem' }}>Método de Pago</label>
                <select className="input-field" value={cobroActivo.metodo} onChange={e => setCobroActivo({...cobroActivo, metodo: e.target.value})}>
                  <option value="Efectivo" style={{color: '#000'}}>Efectivo</option>
@@ -4326,10 +4363,57 @@ export default function AdminDashboard({ session, logout }) {
                  <option value="Tarjeta" style={{color: '#000'}}>Tarjeta</option>
                </select>
              </div>
-             <div style={{ display: 'flex', gap: '15px' }}>
-               <button className="btn-primary" style={{ flex: 1 }} onClick={() => handleCobrarCaja(cobroActivo.id, cobroActivo.subtotal, cobroActivo.descuento, cobroActivo.metodo, cobroActivo.decant_producto_id)}>Confirmar Pago</button>
-               <button className="btn-outline-gold" style={{ flex: 1 }} onClick={() => setCobroActivo(null)}>Cancelar</button>
-             </div>
+             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <button 
+                  className="btn-primary" 
+                  style={{ width: '100%', padding: '12px', fontWeight: 'bold' }} 
+                  onClick={() => {
+                    const subVal = Number(cobroActivo.subtotal) || 0;
+                    const descVal = Number(cobroActivo.descuento) || 0;
+                    const totVal = Math.max(0, subVal - descVal);
+                    printThermalTicket({
+                      tipo: 'corte',
+                      folio: `LR-CITA-${String(cobroActivo.id).padStart(4, '0')}`,
+                      cliente: cobroActivo.cliente,
+                      rut: cobroActivo.cliente_rut,
+                      telefono: cobroActivo.cliente_telefono,
+                      barbero: cobroActivo.barbero || cobroActivo.trabajador,
+                      items: [
+                        {
+                          nombre: cobroActivo.servicios_nombres || 'Corte de Cabello / Barbería',
+                          cantidad: 1,
+                          precio: subVal,
+                          subtotal: subVal
+                        }
+                      ],
+                      subtotal: subVal,
+                      descuento: descVal,
+                      total: totVal,
+                      metodoPago: cobroActivo.metodo,
+                      estado: 'PAGADO'
+                    });
+                    handleCobrarCaja(cobroActivo.id, cobroActivo.subtotal, cobroActivo.descuento, cobroActivo.metodo, cobroActivo.decant_producto_id);
+                  }}
+                >
+                  🖨️ Confirmar Pago e Imprimir Boleta
+                </button>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button 
+                    className="btn-outline-gold" 
+                    style={{ flex: 1, padding: '10px' }} 
+                    onClick={() => handleCobrarCaja(cobroActivo.id, cobroActivo.subtotal, cobroActivo.descuento, cobroActivo.metodo, cobroActivo.decant_producto_id)}
+                  >
+                    Solo Cobrar
+                  </button>
+                  <button 
+                    className="btn-outline-gold" 
+                    style={{ flex: 1, padding: '10px', color: '#aaa', borderColor: '#555' }} 
+                    onClick={() => setCobroActivo(null)}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
            </div>
          </div>
        )}
@@ -5011,29 +5095,70 @@ export default function AdminDashboard({ session, logout }) {
              </div>
 
              {/* Acciones */}
-             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-               {ticketDetalleModal.cliente_telefono && (
-                 <a 
-                   href={`https://wa.me/${ticketDetalleModal.cliente_telefono.replace(/\D/g, '')}?text=${encodeURIComponent(
-                     `Hola ${ticketDetalleModal.cliente}! Te contactamos de La Romana Barber Shop por tu ticket LR-${String(ticketDetalleModal.id).padStart(4, '0')} con un total de $${Number(ticketDetalleModal.total).toLocaleString('es-CL')}. Tu pedido se encuentra en estado: ${ticketDetalleModal.estado}.`
-                   )}`}
-                   target="_blank"
-                   rel="noreferrer"
-                   className="btn-primary"
-                   style={{ textAlign: 'center', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px' }}
-                 >
-                   💬 Contactar por WhatsApp
-                 </a>
-               )}
-               
-               <button 
-                 onClick={() => setTicketDetalleModal(null)} 
-                 className="btn-outline-gold" 
-                 style={{ width: '100%', padding: '10px' }}
-               >
-                 Cerrar Comprobante
-               </button>
-             </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    printThermalTicket({
+                      tipo: 'producto',
+                      folio: `LR-${String(ticketDetalleModal.id).padStart(4, '0')}`,
+                      fecha: ticketDetalleModal.fecha_creacion,
+                      cliente: ticketDetalleModal.cliente || 'Cliente Tienda',
+                      rut: ticketDetalleModal.cliente_rut,
+                      telefono: ticketDetalleModal.cliente_telefono,
+                      items: (ticketDetalleModal.detalles || []).map(d => ({
+                        nombre: d.producto || 'Producto',
+                        cantidad: Number(d.cantidad) || 1,
+                        precio: Number(d.precio_unitario) || 0,
+                        subtotal: (Number(d.precio_unitario) || 0) * (Number(d.cantidad) || 1)
+                      })),
+                      subtotal: Number(ticketDetalleModal.total) || 0,
+                      descuento: 0,
+                      total: Number(ticketDetalleModal.total) || 0,
+                      metodoPago: ticketDetalleModal.metodo_pago || 'Tienda / Local',
+                      estado: ticketDetalleModal.estado || 'Pagado'
+                    });
+                  }}
+                  style={{
+                    padding: '11px',
+                    background: 'rgba(212, 175, 55, 0.15)',
+                    border: '1px solid var(--gold-jewel)',
+                    color: 'var(--gold-jewel)',
+                    borderRadius: '8px',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    fontSize: '0.9rem'
+                  }}
+                >
+                  🖨️ Imprimir Boleta / Ticket Térmico (POS-80)
+                </button>
+
+                {ticketDetalleModal.cliente_telefono && (
+                  <a 
+                    href={`https://wa.me/${ticketDetalleModal.cliente_telefono.replace(/\D/g, '')}?text=${encodeURIComponent(
+                      `Hola ${ticketDetalleModal.cliente}! Te contactamos de La Romana Barber Shop por tu ticket LR-${String(ticketDetalleModal.id).padStart(4, '0')} con un total de ${Number(ticketDetalleModal.total).toLocaleString('es-CL')}. Tu pedido se encuentra en estado: ${ticketDetalleModal.estado}.`
+                    )}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-primary"
+                    style={{ textAlign: 'center', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px' }}
+                  >
+                    💬 Contactar por WhatsApp
+                  </a>
+                )}
+                
+                <button 
+                  onClick={() => setTicketDetalleModal(null)} 
+                  className="btn-outline-gold" 
+                  style={{ width: '100%', padding: '10px' }}
+                >
+                  Cerrar Comprobante
+                </button>
+              </div>
            </div>
          </div>
        )}
