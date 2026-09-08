@@ -6254,6 +6254,557 @@ export default function AdminDashboard({ session, logout }) {
           </div>
         )}
 
+
+        {/* Modal de Venta Directa de Catálogo en Caja (POS) */}
+        {showVentaCatalogoModal && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.88)', zIndex: 1300, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: isMobile ? '10px' : '20px' }}>
+            <div style={{ 
+              background: '#151515', 
+              borderRadius: '16px', 
+              width: '100%', 
+              maxWidth: '1100px', 
+              maxHeight: '92vh', 
+              overflowY: 'auto', 
+              border: '2px solid var(--gold-jewel)', 
+              padding: isMobile ? '18px' : '26px', 
+              boxShadow: '0 25px 60px rgba(0,0,0,0.95)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '18px'
+            }}>
+              
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(212, 175, 55, 0.25)', paddingBottom: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ width: '42px', height: '42px', borderRadius: '10px', background: 'rgba(212, 175, 55, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', border: '1px solid var(--gold-jewel)' }}>
+                    🛒
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: isMobile ? '1.15rem' : '1.35rem', fontWeight: 'bold' }}>
+                      Venta Directa de Catálogo (Caja)
+                    </h3>
+                    <span style={{ fontSize: '0.8rem', color: '#aaa' }}>
+                      Vende gorras, perfumes, decants o productos de bodega y emite boleta térmica 80mm
+                    </span>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setShowVentaCatalogoModal(false)} 
+                  style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '1.8rem', cursor: 'pointer', lineHeight: 1 }}
+                  onMouseEnter={e => e.currentTarget.style.color = '#fff'}
+                  onMouseLeave={e => e.currentTarget.style.color = '#aaa'}
+                >
+                  ×
+                </button>
+              </div>
+
+              {/* Contenido Principal: Grid 2 Columnas */}
+              <div style={{ 
+                display: 'grid', 
+                gridTemplateColumns: isMobile ? '1fr' : '1.25fr 1fr', 
+                gap: '20px',
+                alignItems: 'start'
+              }}>
+
+                {/* Columna Izquierda: Catálogo de Productos y Filtros */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                    <strong style={{ color: '#fff', fontSize: '0.95rem' }}>📦 Catálogo Disponible</strong>
+                    <span style={{ fontSize: '0.78rem', color: '#888' }}>
+                      {(productos || []).filter(p => Number(p.stock) > 0).length} en stock
+                    </span>
+                  </div>
+
+                  {/* Buscador de Producto */}
+                  <div style={{ position: 'relative' }}>
+                    <input 
+                      type="text"
+                      className="input-field"
+                      style={{ margin: 0, paddingLeft: '34px' }}
+                      placeholder="Buscar por nombre, perfume, gorra..."
+                      value={busquedaProdVenta}
+                      onChange={e => setBusquedaProdVenta(e.target.value)}
+                    />
+                    <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', opacity: 0.5, fontSize: '0.85rem' }}>🔍</span>
+                    {busquedaProdVenta && (
+                      <button 
+                        onClick={() => setBusquedaProdVenta('')}
+                        style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '1rem' }}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Filtro por Categorías */}
+                  <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setCatVentaFiltro('todas')}
+                      style={{
+                        padding: '5px 12px',
+                        borderRadius: '20px',
+                        fontSize: '0.76rem',
+                        fontWeight: 'bold',
+                        border: '1px solid',
+                        borderColor: catVentaFiltro === 'todas' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.15)',
+                        background: catVentaFiltro === 'todas' ? 'rgba(212, 175, 55, 0.2)' : 'rgba(255,255,255,0.04)',
+                        color: catVentaFiltro === 'todas' ? 'var(--gold-jewel)' : '#ccc',
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      🌟 Todos
+                    </button>
+                    {Array.from(new Set((productos || []).map(p => p.categoria_nombre || 'General').filter(Boolean))).map(catName => (
+                      <button
+                        key={catName}
+                        type="button"
+                        onClick={() => setCatVentaFiltro(catName)}
+                        style={{
+                          padding: '5px 12px',
+                          borderRadius: '20px',
+                          fontSize: '0.76rem',
+                          fontWeight: 'bold',
+                          border: '1px solid',
+                          borderColor: catVentaFiltro === catName ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.15)',
+                          background: catVentaFiltro === catName ? 'rgba(212, 175, 55, 0.2)' : 'rgba(255,255,255,0.04)',
+                          color: catVentaFiltro === catName ? 'var(--gold-jewel)' : '#ccc',
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap'
+                        }}
+                      >
+                        {catName}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Grid de Productos */}
+                  <div style={{ 
+                    display: 'grid', 
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(145px, 1fr))', 
+                    gap: '10px', 
+                    maxHeight: '400px', 
+                    overflowY: 'auto',
+                    paddingRight: '4px'
+                  }}>
+                    {(productos || [])
+                      .filter(prod => {
+                        const matchCat = catVentaFiltro === 'todas' || (prod.categoria_nombre || 'General') === catVentaFiltro;
+                        const matchTxt = !busquedaProdVenta || 
+                          prod.nombre.toLowerCase().includes(busquedaProdVenta.toLowerCase()) || 
+                          (prod.descripcion && prod.descripcion.toLowerCase().includes(busquedaProdVenta.toLowerCase()));
+                        return matchCat && matchTxt;
+                      })
+                      .map(prod => {
+                        const stockDisp = Number(prod.stock) || 0;
+                        const itemEnCarro = carritoVenta.find(it => it.id === prod.id);
+                        const cantEnCarro = itemEnCarro ? itemEnCarro.cantidad : 0;
+                        const sinStock = stockDisp <= 0;
+                        const topeStock = cantEnCarro >= stockDisp;
+
+                        return (
+                          <div 
+                            key={prod.id} 
+                            style={{ 
+                              background: '#1f1f1f', 
+                              borderRadius: '10px', 
+                              border: itemEnCarro ? '1px solid var(--gold-jewel)' : '1px solid rgba(255,255,255,0.08)', 
+                              padding: '10px', 
+                              display: 'flex', 
+                              flexDirection: 'column', 
+                              justifyContent: 'space-between',
+                              opacity: sinStock ? 0.45 : 1,
+                              transition: 'all 0.2s ease',
+                              position: 'relative'
+                            }}
+                          >
+                            {cantEnCarro > 0 && (
+                              <div style={{ position: 'absolute', top: '6px', right: '6px', background: 'var(--gold-jewel)', color: '#000', fontWeight: 'bold', fontSize: '0.7rem', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                {cantEnCarro}
+                              </div>
+                            )}
+
+                            <div>
+                              {/* Imagen o Ícono */}
+                              <div style={{ width: '100%', height: '80px', borderRadius: '6px', background: 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', marginBottom: '8px' }}>
+                                {prod.imagen_url ? (
+                                  <img 
+                                    src={resolveImageUrl(prod.imagen_url)} 
+                                    alt={prod.nombre} 
+                                    style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                                    onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement.innerHTML = '🧴'; }}
+                                  />
+                                ) : (
+                                  <span style={{ fontSize: '2rem' }}>
+                                    {(prod.nombre || '').toLowerCase().includes('gorra') ? '🧢' : (prod.nombre || '').toLowerCase().includes('decant') ? '💎' : '🧴'}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div style={{ fontSize: '0.7rem', color: '#888', textTransform: 'uppercase' }}>
+                                {prod.categoria_nombre || 'General'}
+                              </div>
+                              <div style={{ fontSize: '0.82rem', fontWeight: 'bold', color: '#fff', lineHeight: '1.2', marginTop: '2px', minHeight: '30px' }}>
+                                {prod.nombre}
+                              </div>
+                            </div>
+
+                            <div style={{ marginTop: '8px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                                <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#2ecc71' }}>
+                                  ${Number(prod.precio || 0).toLocaleString('es-CL')}
+                                </span>
+                                <span style={{ 
+                                  fontSize: '0.68rem', 
+                                  padding: '2px 5px', 
+                                  borderRadius: '4px',
+                                  fontWeight: 'bold',
+                                  background: sinStock ? 'rgba(231,76,60,0.2)' : stockDisp <= 3 ? 'rgba(243,156,18,0.2)' : 'rgba(46,204,113,0.15)',
+                                  color: sinStock ? '#e74c3c' : stockDisp <= 3 ? '#f39c12' : '#2ecc71'
+                                }}>
+                                  {sinStock ? 'Agotado' : `Stock: ${stockDisp}`}
+                                </span>
+                              </div>
+
+                              <button
+                                type="button"
+                                disabled={sinStock || topeStock}
+                                onClick={() => agregarAlCarritoVenta(prod)}
+                                style={{
+                                  width: '100%',
+                                  padding: '6px 0',
+                                  borderRadius: '6px',
+                                  fontSize: '0.78rem',
+                                  fontWeight: 'bold',
+                                  cursor: (sinStock || topeStock) ? 'not-allowed' : 'pointer',
+                                  background: itemEnCarro ? 'rgba(212, 175, 55, 0.25)' : 'rgba(255,255,255,0.08)',
+                                  border: itemEnCarro ? '1px solid var(--gold-jewel)' : '1px solid rgba(255,255,255,0.15)',
+                                  color: itemEnCarro ? 'var(--gold-jewel)' : '#fff',
+                                  transition: 'background 0.2s'
+                                }}
+                              >
+                                {sinStock ? 'Sin Stock' : topeStock ? 'Tope Stock' : '+ Agregar'}
+                              </button>
+                            </div>
+
+                          </div>
+                        );
+                      })}
+                  </div>
+
+                </div>
+
+                {/* Columna Derecha: Cliente, Carrito y Confirmación */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+                  {/* 1. Datos del Cliente */}
+                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '14px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <strong style={{ color: 'var(--gold-jewel)', fontSize: '0.88rem' }}>👤 Datos del Comprador</strong>
+                      <button
+                        type="button"
+                        onClick={setClienteMostradorVenta}
+                        style={{ background: 'rgba(212,175,55,0.12)', border: '1px solid rgba(212,175,55,0.3)', color: 'var(--gold-jewel)', padding: '3px 8px', borderRadius: '4px', fontSize: '0.72rem', cursor: 'pointer', fontWeight: 'bold' }}
+                      >
+                        ⚡ Cliente Mostrador
+                      </button>
+                    </div>
+
+                    {/* Buscador de RUT con autocompletado */}
+                    <div style={{ position: 'relative', marginBottom: '10px' }}>
+                      <label style={{ display: 'block', fontSize: '0.75rem', color: '#aaa', marginBottom: '3px', fontWeight: 'bold' }}>
+                        RUT Cliente (Valida o autocompleta)
+                      </label>
+                      <div style={{ display: 'flex', alignItems: 'center', position: 'relative' }}>
+                        <input 
+                          type="text"
+                          className="input-field"
+                          style={{ margin: 0, paddingRight: '30px' }}
+                          placeholder="Ej: 19.876.543-2"
+                          value={ventaCatalogoForm.rut}
+                          onChange={e => handleRutChangeVenta(e.target.value)}
+                        />
+                        {buscandoClienteVenta && (
+                          <span style={{ position: 'absolute', right: '10px', fontSize: '0.8rem', color: 'var(--gold-jewel)' }}>⏳</span>
+                        )}
+                      </div>
+
+                      {/* Dropdown de Sugerencias */}
+                      {showDropdownVentaRut && sugerenciasVentaRut.length > 0 && (
+                        <div style={{ 
+                          position: 'absolute', 
+                          top: '100%', 
+                          left: 0, 
+                          right: 0, 
+                          background: '#222', 
+                          border: '1px solid var(--gold-jewel)', 
+                          borderRadius: '8px', 
+                          zIndex: 1400, 
+                          maxHeight: '180px', 
+                          overflowY: 'auto',
+                          boxShadow: '0 8px 20px rgba(0,0,0,0.8)'
+                        }}>
+                          {sugerenciasVentaRut.map(c => (
+                            <div 
+                              key={c.id} 
+                              onClick={() => seleccionarSugerenciaVenta(c)}
+                              style={{ 
+                                padding: '8px 12px', 
+                                borderBottom: '1px solid rgba(255,255,255,0.05)', 
+                                cursor: 'pointer',
+                                fontSize: '0.8rem',
+                                color: '#fff'
+                              }}
+                              onMouseEnter={e => e.currentTarget.style.background = 'rgba(212,175,55,0.15)'}
+                              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                            >
+                              <div style={{ fontWeight: 'bold', color: 'var(--gold-jewel)' }}>{c.nombre}</div>
+                              <div style={{ fontSize: '0.72rem', color: '#aaa' }}>RUT: {c.rut} {c.telefono ? `• 📞 ${c.telefono}` : ''}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {clienteVentaEncontrado && (
+                      <div style={{ background: 'rgba(46,204,113,0.12)', border: '1px solid rgba(46,204,113,0.3)', borderRadius: '6px', padding: '6px 10px', fontSize: '0.75rem', color: '#2ecc71', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span>✓</span>
+                        <span>Cliente Registrado: <strong>{clienteVentaEncontrado.nombre}</strong></span>
+                      </div>
+                    )}
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.75rem', color: '#aaa', marginBottom: '3px' }}>Nombre Cliente *</label>
+                        <input 
+                          type="text"
+                          className="input-field"
+                          style={{ margin: 0 }}
+                          placeholder="Nombre y Apellido"
+                          value={ventaCatalogoForm.nombre}
+                          onChange={e => setVentaCatalogoForm({ ...ventaCatalogoForm, nombre: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.75rem', color: '#aaa', marginBottom: '3px' }}>Teléfono / WhatsApp</label>
+                        <input 
+                          type="text"
+                          className="input-field"
+                          style={{ margin: 0 }}
+                          placeholder="+569..."
+                          value={ventaCatalogoForm.telefono}
+                          onChange={e => setVentaCatalogoForm({ ...ventaCatalogoForm, telefono: e.target.value })}
+                        />
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {/* 2. Carrito de Compras */}
+                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '14px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <strong style={{ color: '#fff', fontSize: '0.88rem' }}>🛍️ Productos en Carrito ({carritoVenta.length})</strong>
+                      {carritoVenta.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setCarritoVenta([])}
+                          style={{ background: 'none', border: 'none', color: '#e74c3c', fontSize: '0.72rem', cursor: 'pointer', textDecoration: 'underline' }}
+                        >
+                          Vaciar
+                        </button>
+                      )}
+                    </div>
+
+                    {carritoVenta.length === 0 ? (
+                      <div style={{ padding: '24px 10px', textAlign: 'center', color: '#777', fontSize: '0.82rem', border: '1px dashed rgba(255,255,255,0.1)', borderRadius: '8px' }}>
+                        👈 Selecciona productos del catálogo a la izquierda para armar la venta.
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto' }}>
+                        {carritoVenta.map(item => (
+                          <div 
+                            key={item.id}
+                            style={{ 
+                              display: 'flex', 
+                              justifyContent: 'space-between', 
+                              alignItems: 'center', 
+                              background: '#1f1f1f', 
+                              padding: '8px 10px', 
+                              borderRadius: '8px',
+                              border: '1px solid rgba(255,255,255,0.05)'
+                            }}
+                          >
+                            <div style={{ flex: 1, minWidth: 0, paddingRight: '8px' }}>
+                              <div style={{ fontSize: '0.82rem', fontWeight: 'bold', color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {item.nombre}
+                              </div>
+                              <div style={{ fontSize: '0.72rem', color: '#aaa' }}>
+                                ${item.precio.toLocaleString('es-CL')} c/u
+                              </div>
+                            </div>
+
+                            {/* Controles de Cantidad */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <button
+                                type="button"
+                                onClick={() => modificarCantidadCarritoVenta(item.id, -1)}
+                                style={{ width: '24px', height: '24px', borderRadius: '4px', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', cursor: 'pointer', fontWeight: 'bold' }}
+                              >
+                                -
+                              </button>
+                              <span style={{ fontWeight: 'bold', fontSize: '0.85rem', color: '#fff', minWidth: '18px', textAlign: 'center' }}>
+                                {item.cantidad}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => modificarCantidadCarritoVenta(item.id, 1)}
+                                style={{ width: '24px', height: '24px', borderRadius: '4px', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', cursor: 'pointer', fontWeight: 'bold' }}
+                              >
+                                +
+                              </button>
+                            </div>
+
+                            <div style={{ minWidth: '65px', textAlign: 'right', fontWeight: 'bold', color: '#2ecc71', fontSize: '0.85rem', marginLeft: '8px' }}>
+                              ${(item.precio * item.cantidad).toLocaleString('es-CL')}
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => eliminarDelCarritoVenta(item.id)}
+                              style={{ background: 'none', border: 'none', color: '#e74c3c', cursor: 'pointer', marginLeft: '6px', fontSize: '0.9rem' }}
+                              title="Eliminar"
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 3. Totales, Forma de Pago e Impresión */}
+                  <div style={{ background: 'rgba(212, 175, 55, 0.05)', padding: '14px', borderRadius: '12px', border: '1px solid rgba(212, 175, 55, 0.2)' }}>
+                    
+                    {/* Método de Pago */}
+                    <div style={{ marginBottom: '12px' }}>
+                      <label style={{ display: 'block', fontSize: '0.75rem', color: '#aaa', marginBottom: '4px', fontWeight: 'bold' }}>
+                        Método de Pago
+                      </label>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px' }}>
+                        {[
+                          { id: 'Efectivo', label: '💵 Efectivo' },
+                          { id: 'Transferencia', label: '🏦 Transf.' },
+                          { id: 'Tarjeta', label: '💳 Tarjeta' }
+                        ].map(m => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => setVentaCatalogoForm({ ...ventaCatalogoForm, metodo_pago: m.id })}
+                            style={{
+                              padding: '8px 4px',
+                              borderRadius: '6px',
+                              fontSize: '0.75rem',
+                              fontWeight: 'bold',
+                              border: '1px solid',
+                              borderColor: ventaCatalogoForm.metodo_pago === m.id ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.1)',
+                              background: ventaCatalogoForm.metodo_pago === m.id ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.05)',
+                              color: ventaCatalogoForm.metodo_pago === m.id ? '#000' : '#fff',
+                              cursor: 'pointer',
+                              transition: 'all 0.2s'
+                            }}
+                          >
+                            {m.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Descuento si aplica */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <span style={{ fontSize: '0.8rem', color: '#aaa' }}>Descuento Promocional ($):</span>
+                      <input 
+                        type="number"
+                        min="0"
+                        className="input-field"
+                        style={{ margin: 0, width: '90px', padding: '4px 8px', fontSize: '0.8rem', textAlign: 'right' }}
+                        value={ventaCatalogoForm.descuento || ''}
+                        placeholder="0"
+                        onChange={e => setVentaCatalogoForm({ ...ventaCatalogoForm, descuento: Math.max(0, parseInt(e.target.value) || 0) })}
+                      />
+                    </div>
+
+                    {/* Total a Cobrar */}
+                    {(() => {
+                      const subtotal = carritoVenta.reduce((sum, it) => sum + (it.precio * it.cantidad), 0);
+                      const desc = Math.min(subtotal, Number(ventaCatalogoForm.descuento) || 0);
+                      const totalFinal = Math.max(0, subtotal - desc);
+
+                      return (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '10px', marginBottom: '12px' }}>
+                          <span style={{ fontSize: '1rem', fontWeight: 'bold', color: '#fff' }}>TOTAL A COBRAR:</span>
+                          <span style={{ fontSize: '1.45rem', fontWeight: 'bold', color: 'var(--gold-jewel)' }}>
+                            ${totalFinal.toLocaleString('es-CL')}
+                          </span>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Checkbox Imprimir Boleta Térmica */}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.82rem', color: '#fff', marginBottom: '14px' }}>
+                      <input 
+                        type="checkbox"
+                        checked={imprimirBoletaVenta}
+                        onChange={e => setImprimirBoletaVenta(e.target.checked)}
+                        style={{ width: '16px', height: '16px', accentColor: 'var(--gold-jewel)' }}
+                      />
+                      <span>🖨️ <strong>Imprimir Boleta Térmica 80mm</strong> al confirmar</span>
+                    </label>
+
+                    {/* Botones de Acción */}
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                      <button
+                        type="button"
+                        disabled={guardandoVentaCatalogo || carritoVenta.length === 0}
+                        onClick={() => handleConfirmarVentaCatalogo(imprimirBoletaVenta)}
+                        className="btn-primary"
+                        style={{
+                          flex: 2,
+                          padding: '12px',
+                          fontWeight: 'bold',
+                          fontSize: '0.95rem',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          opacity: (guardandoVentaCatalogo || carritoVenta.length === 0) ? 0.5 : 1,
+                          cursor: (guardandoVentaCatalogo || carritoVenta.length === 0) ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        {guardandoVentaCatalogo ? '⏳ Procesando Venta...' : '✅ Confirmar Venta'}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="btn-outline-gold"
+                        onClick={() => setShowVentaCatalogoModal(false)}
+                        style={{ flex: 1, padding: '12px', fontSize: '0.85rem' }}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+
+                  </div>
+
+                </div>
+
+              </div>
+
+            </div>
+          </div>
+        )}
+
     </div>
   );
 }
