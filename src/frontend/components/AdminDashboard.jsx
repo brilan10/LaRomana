@@ -144,6 +144,27 @@ export default function AdminDashboard({ session, logout }) {
   const [guardandoCliente, setGuardandoCliente] = useState(false);
   const [crmSearch, setCrmSearch] = useState('');
 
+  // Estados para Venta Directa de Catálogo en Caja (POS)
+  const [showVentaCatalogoModal, setShowVentaCatalogoModal] = useState(false);
+  const [ventaCatalogoForm, setVentaCatalogoForm] = useState({
+    rut: '',
+    nombre: '',
+    telefono: '',
+    email: '',
+    cliente_id: null,
+    metodo_pago: 'Efectivo',
+    descuento: 0
+  });
+  const [sugerenciasVentaRut, setSugerenciasVentaRut] = useState([]);
+  const [buscandoClienteVenta, setBuscandoClienteVenta] = useState(false);
+  const [showDropdownVentaRut, setShowDropdownVentaRut] = useState(false);
+  const [clienteVentaEncontrado, setClienteVentaEncontrado] = useState(null);
+  const [carritoVenta, setCarritoVenta] = useState([]);
+  const [catVentaFiltro, setCatVentaFiltro] = useState('todas');
+  const [busquedaProdVenta, setBusquedaProdVenta] = useState('');
+  const [guardandoVentaCatalogo, setGuardandoVentaCatalogo] = useState(false);
+  const [imprimirBoletaVenta, setImprimirBoletaVenta] = useState(true);
+
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
@@ -268,7 +289,7 @@ export default function AdminDashboard({ session, logout }) {
   useEffect(() => {
     const fetchData = () => {
       // Si hay un modal de cobro o edición abierto, no interferir con la interacción del usuario
-      if (cobroActivo || showModalCita || showNuevoClienteModal || ticketDetalleModal || pagoModalData || showAbrirCaja || showCerrarCaja || showPremioModal || barberoDetalleModal || historialPagosModal) {
+      if (cobroActivo || showModalCita || showNuevoClienteModal || ticketDetalleModal || pagoModalData || showAbrirCaja || showCerrarCaja || showPremioModal || barberoDetalleModal || historialPagosModal || showVentaCatalogoModal) {
         return;
       }
 
@@ -277,7 +298,10 @@ export default function AdminDashboard({ session, logout }) {
       if (tab === 'equipo') cargarEquipo();
       if (tab === 'servicios') cargarServicios();
       if (tab === 'pedidos') cargarPedidosAdmin();
-      if (tab === 'caja') cargarCaja();
+      if (tab === 'caja') {
+        cargarCaja();
+        cargarBodega();
+      }
       if (tab === 'analitica') {
         cargarLiquidaciones();
         cargarEquipo();
@@ -644,10 +668,263 @@ export default function AdminDashboard({ session, logout }) {
       cargarDashboard();
       cargarBodega(); // Refrescar stock de decants si se usó
       cargarCRM();
-      cargarCalendario();
       showToast('Cobro finalizado con éxito.', 'success');
     } else {
       showToast(data.error || 'Error al procesar cobro', 'error');
+    }
+  };
+
+  const abrirModalVentaCatalogo = () => {
+    cargarBodega();
+    setVentaCatalogoForm({
+      rut: '',
+      nombre: '',
+      telefono: '',
+      email: '',
+      cliente_id: null,
+      metodo_pago: 'Efectivo',
+      descuento: 0
+    });
+    setSugerenciasVentaRut([]);
+    setShowDropdownVentaRut(false);
+    setClienteVentaEncontrado(null);
+    setBuscandoClienteVenta(false);
+    setCarritoVenta([]);
+    setCatVentaFiltro('todas');
+    setBusquedaProdVenta('');
+    setImprimirBoletaVenta(true);
+    setShowVentaCatalogoModal(true);
+  };
+
+  const handleRutChangeVenta = async (rawVal) => {
+    const formatted = formatRut(rawVal);
+    setVentaCatalogoForm(prev => ({ ...prev, rut: formatted }));
+
+    const clean = rawVal.replace(/[^0-9kK]/g, '');
+    if (clean.length >= 2) {
+      setBuscandoClienteVenta(true);
+      try {
+        const resp = await fetch(`${API_URL}/api.php?action=search_clientes&q=${encodeURIComponent(clean)}`);
+        const data = await resp.json();
+        if (Array.isArray(data) && data.length > 0) {
+          setSugerenciasVentaRut(data);
+          setShowDropdownVentaRut(true);
+
+          const exact = data.find(c => {
+            const cClean = (c.rut || '').replace(/[^0-9kK]/gi, '').toUpperCase();
+            return cClean === clean.toUpperCase();
+          });
+
+          if (exact) {
+            setClienteVentaEncontrado(exact);
+            setVentaCatalogoForm(prev => ({
+              ...prev,
+              rut: exact.rut || formatted,
+              nombre: exact.nombre || prev.nombre,
+              telefono: exact.telefono || prev.telefono || '',
+              email: exact.email || prev.email || '',
+              cliente_id: exact.id
+            }));
+          } else {
+            setClienteVentaEncontrado(null);
+            setVentaCatalogoForm(prev => ({ ...prev, cliente_id: null }));
+          }
+        } else {
+          setSugerenciasVentaRut([]);
+          setShowDropdownVentaRut(false);
+          setClienteVentaEncontrado(null);
+          setVentaCatalogoForm(prev => ({ ...prev, cliente_id: null }));
+        }
+      } catch (err) {
+        console.error("Error buscando cliente:", err);
+        setSugerenciasVentaRut([]);
+      } finally {
+        setBuscandoClienteVenta(false);
+      }
+    } else {
+      setSugerenciasVentaRut([]);
+      setShowDropdownVentaRut(false);
+      setClienteVentaEncontrado(null);
+      setVentaCatalogoForm(prev => ({ ...prev, cliente_id: null }));
+    }
+  };
+
+  const seleccionarSugerenciaVenta = (cli) => {
+    setVentaCatalogoForm(prev => ({
+      ...prev,
+      rut: cli.rut,
+      nombre: cli.nombre,
+      telefono: cli.telefono || '',
+      email: cli.email || '',
+      cliente_id: cli.id
+    }));
+    setClienteVentaEncontrado(cli);
+    setSugerenciasVentaRut([]);
+    setShowDropdownVentaRut(false);
+  };
+
+  const setClienteMostradorVenta = () => {
+    setVentaCatalogoForm(prev => ({
+      ...prev,
+      rut: '11.111.111-1',
+      nombre: 'Cliente Mostrador / General',
+      telefono: '',
+      email: 'mostrador@laromana.cl',
+      cliente_id: null
+    }));
+    setClienteVentaEncontrado({ nombre: 'Cliente Mostrador / General', rut: '11.111.111-1' });
+    setSugerenciasVentaRut([]);
+    setShowDropdownVentaRut(false);
+  };
+
+  const agregarAlCarritoVenta = (prod) => {
+    const stockDisp = Number(prod.stock) || 0;
+    if (stockDisp <= 0) {
+      showToast(`El producto "${prod.nombre}" no tiene stock disponible.`, 'error');
+      return;
+    }
+
+    setCarritoVenta(prev => {
+      const idx = prev.findIndex(item => item.id === prod.id);
+      if (idx !== -1) {
+        const actual = prev[idx];
+        if (actual.cantidad >= stockDisp) {
+          showToast(`No puedes agregar más unidades. Stock disponible: ${stockDisp}`, 'error');
+          return prev;
+        }
+        const updated = [...prev];
+        updated[idx] = { ...actual, cantidad: actual.cantidad + 1 };
+        return updated;
+      } else {
+        return [...prev, {
+          id: prod.id,
+          nombre: prod.nombre,
+          precio: Number(prod.precio),
+          stock: stockDisp,
+          imagen_url: prod.imagen_url,
+          categoria_nombre: prod.categoria_nombre,
+          cantidad: 1
+        }];
+      }
+    });
+  };
+
+  const modificarCantidadCarritoVenta = (prodId, delta) => {
+    setCarritoVenta(prev => {
+      return prev.map(item => {
+        if (item.id === prodId) {
+          const nuevaCant = item.cantidad + delta;
+          if (nuevaCant <= 0) return null;
+          if (nuevaCant > item.stock) {
+            showToast(`Límite de stock alcanzado (${item.stock} disponibles).`, 'error');
+            return item;
+          }
+          return { ...item, cantidad: nuevaCant };
+        }
+        return item;
+      }).filter(Boolean);
+    });
+  };
+
+  const eliminarDelCarritoVenta = (prodId) => {
+    setCarritoVenta(prev => prev.filter(item => item.id !== prodId));
+  };
+
+  const handleConfirmarVentaCatalogo = async (imprimirBoleta = true) => {
+    if (carritoVenta.length === 0) {
+      showToast('Por favor agrega al menos un producto al carrito', 'error');
+      return;
+    }
+
+    if (!ventaCatalogoForm.nombre.trim() && !ventaCatalogoForm.rut.trim()) {
+      showToast('Por favor ingresa el RUT o Nombre del cliente', 'error');
+      return;
+    }
+
+    const subtotalCalc = carritoVenta.reduce((sum, it) => sum + (it.precio * it.cantidad), 0);
+    const descCalc = Math.min(subtotalCalc, Math.max(0, Number(ventaCatalogoForm.descuento) || 0));
+    const totalCalc = Math.max(0, subtotalCalc - descCalc);
+
+    const payload = {
+      cliente_id: ventaCatalogoForm.cliente_id,
+      rut: ventaCatalogoForm.rut.trim(),
+      nombre: ventaCatalogoForm.nombre.trim() || 'Cliente Mostrador',
+      telefono: ventaCatalogoForm.telefono.trim(),
+      email: ventaCatalogoForm.email.trim(),
+      carrito: carritoVenta.map(it => ({
+        id: it.id,
+        nombre: it.nombre,
+        precio: it.precio,
+        cantidad: it.cantidad
+      })),
+      subtotal: subtotalCalc,
+      descuento: descCalc,
+      total: totalCalc,
+      metodo_pago: ventaCatalogoForm.metodo_pago || 'Efectivo',
+      estado: 'Pagado'
+    };
+
+    setGuardandoVentaCatalogo(true);
+    try {
+      const res = await fetch(`${API_URL}/admin_api.php?action=venta_directa_caja`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+
+      if (data.status === 'success') {
+        showToast(`✅ Venta ${data.folio || ''} registrada ($${totalCalc.toLocaleString('es-CL')} • ${payload.metodo_pago})`, 'success');
+
+        if (imprimirBoleta) {
+          printThermalTicket({
+            tipo: 'producto',
+            folio: data.folio || `LR-VTA-${String(data.pedido_id).padStart(4, '0')}`,
+            fecha: new Date(),
+            cliente: data.cliente_nombre || payload.nombre,
+            rut: data.cliente_rut || payload.rut,
+            telefono: data.cliente_telefono || payload.telefono,
+            barbero: 'Caja Principal / Administrador',
+            items: carritoVenta.map(it => ({
+              nombre: it.nombre,
+              cantidad: it.cantidad,
+              precio: it.precio,
+              subtotal: it.precio * it.cantidad
+            })),
+            subtotal: subtotalCalc,
+            descuento: descCalc,
+            total: totalCalc,
+            metodoPago: payload.metodo_pago,
+            estado: 'PAGADO',
+            notas: 'Venta Directa de Mostrador / Catálogo'
+          });
+        }
+
+        setShowVentaCatalogoModal(false);
+        setCarritoVenta([]);
+        setVentaCatalogoForm({
+          rut: '',
+          nombre: '',
+          telefono: '',
+          email: '',
+          cliente_id: null,
+          metodo_pago: 'Efectivo',
+          descuento: 0
+        });
+
+        cargarCaja();
+        cargarBodega();
+        cargarDashboard();
+        cargarPedidosAdmin();
+        cargarCRM();
+      } else {
+        showToast(data.message || 'Error al procesar la venta', 'error');
+      }
+    } catch (err) {
+      console.error("Error en venta de catálogo:", err);
+      showToast('Error de conexión al procesar la venta', 'error');
+    } finally {
+      setGuardandoVentaCatalogo(false);
     }
   };
 
@@ -1200,23 +1477,55 @@ export default function AdminDashboard({ session, logout }) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', animation: 'fadeIn 0.3s ease-in' }}>
         
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 style={{ margin: 0, color: 'var(--gold-jewel)' }}>Caja (Por Cobrar)</h2>
-          <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
+          <div>
+            <h2 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.4rem' }}>💰 Caja y Cobros</h2>
+            <span style={{ fontSize: '0.82rem', color: '#aaa' }}>Recepción de pagos de servicios y venta directa de productos de tienda</span>
+          </div>
+
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
             {estadoCaja === 'abierta' && (
-               <button className="btn-outline-gold" style={{ borderColor: '#e74c3c', color: '#e74c3c' }} onClick={() => setShowCerrarCaja(true)}>Cerrar Caja</button>
+              <>
+                <button 
+                  className="btn-primary" 
+                  style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '8px', 
+                    padding: '9px 18px', 
+                    fontWeight: 'bold', 
+                    fontSize: '0.9rem',
+                    background: 'linear-gradient(135deg, #d4af37 0%, #aa820a 100%)',
+                    color: '#000',
+                    border: 'none',
+                    boxShadow: '0 4px 15px rgba(212, 175, 55, 0.4)'
+                  }} 
+                  onClick={abrirModalVentaCatalogo}
+                >
+                  <span style={{ fontSize: '1.1rem' }}>🛒</span> Vender Producto (Catálogo)
+                </button>
+
+                <button 
+                  className="btn-outline-gold" 
+                  style={{ borderColor: '#e74c3c', color: '#e74c3c', padding: '9px 16px', fontWeight: 'bold' }} 
+                  onClick={() => setShowCerrarCaja(true)}
+                >
+                  Cerrar Caja
+                </button>
+              </>
             )}
-            <div style={{ display: 'flex', gap: '15px', alignItems: 'center', background: 'rgba(26, 26, 26, 0.6)', padding: '10px 20px', borderRadius: '12px', border: '1px solid #333' }}>
-              <span style={{ color: '#aaa', fontSize: '0.9rem' }}>Comisiones (Hoy):</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <span style={{ fontSize: '0.8rem' }}>Barbero %</span>
-                <input type="number" className="input-field" style={{ margin: 0, padding: '5px', width: '60px' }} value={comisionesConfig.porcentaje_barbero} onChange={e => setComisionesConfig({...comisionesConfig, porcentaje_barbero: e.target.value})} />
+
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', background: 'rgba(26, 26, 26, 0.8)', padding: '8px 16px', borderRadius: '10px', border: '1px solid #333' }}>
+              <span style={{ color: '#aaa', fontSize: '0.82rem' }}>Comisiones:</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <span style={{ fontSize: '0.75rem', color: '#ccc' }}>Barbero %</span>
+                <input type="number" className="input-field" style={{ margin: 0, padding: '4px 6px', width: '55px', fontSize: '0.85rem' }} value={comisionesConfig.porcentaje_barbero} onChange={e => setComisionesConfig({...comisionesConfig, porcentaje_barbero: e.target.value})} />
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <span style={{ fontSize: '0.8rem' }}>Tienda %</span>
-                <input type="number" className="input-field" style={{ margin: 0, padding: '5px', width: '60px' }} value={comisionesConfig.porcentaje_tienda} onChange={e => setComisionesConfig({...comisionesConfig, porcentaje_tienda: e.target.value})} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <span style={{ fontSize: '0.75rem', color: '#ccc' }}>Tienda %</span>
+                <input type="number" className="input-field" style={{ margin: 0, padding: '4px 6px', width: '55px', fontSize: '0.85rem' }} value={comisionesConfig.porcentaje_tienda} onChange={e => setComisionesConfig({...comisionesConfig, porcentaje_tienda: e.target.value})} />
               </div>
-              <button className="btn-outline-gold" style={{ padding: '5px 15px', fontSize: '0.8rem' }} onClick={guardarComisiones}>Guardar</button>
+              <button className="btn-outline-gold" style={{ padding: '4px 12px', fontSize: '0.78rem' }} onClick={guardarComisiones}>Guardar</button>
             </div>
           </div>
         </div>
@@ -1234,49 +1543,90 @@ export default function AdminDashboard({ session, logout }) {
              )}
            </div>
         ) : (
-        <div style={{ background: 'rgba(26, 26, 26, 0.6)', backdropFilter: 'blur(10px)', borderRadius: '12px', border: '1px solid #333', overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                <th style={tableHeaderStyle}>Hora</th>
-                <th style={tableHeaderStyle}>Cliente</th>
-                <th style={tableHeaderStyle}>Barbero</th>
-                <th style={tableHeaderStyle}>Subtotal</th>
-                <th style={tableHeaderStyle}>Cobrar</th>
-              </tr>
-            </thead>
-            <tbody>
-              {citasCaja.length === 0 ? (
-                <tr><td colSpan="5" style={{...tableCellStyle, textAlign: 'center'}}>No hay clientes esperando pago.</td></tr>
-              ) : (
-                citasCaja.map((c, i) => (
-                  <tr key={c.id}>
-                    <td style={tableCellStyle}>{c.hora.slice(0,5)}</td>
-                    <td style={tableCellStyle}>{c.cliente}</td>
-                    <td style={tableCellStyle}>{c.barbero}</td>
-                    <td style={{...tableCellStyle, color: 'var(--gold-jewel)'}}>${Number(c.subtotal).toLocaleString('es-CL')}</td>
-                    <td style={tableCellStyle}>
-                      {c.estado === 'Completada' ? (
-                          <span style={{ color: 'var(--green-emerald-light)', fontWeight: 'bold' }}>Cobrado (${Number(c.total_pagado).toLocaleString('es-CL')})</span>
-                      ) : (
-                          <button className="btn-primary" onClick={() => {
-                            const subVal = Number(c.subtotal) > 0 ? Number(c.subtotal) : (Number(c.total_pagado) > 0 ? Number(c.total_pagado) : 14000);
-                            setCobroActivo({
-                              ...c,
-                              subtotal: subVal,
-                              descuento: Number(c.descuento) || 0,
-                              metodo: c.metodo_pago || 'Efectivo',
-                              decant_producto_id: ''
-                            });
-                          }}>Cobrar</button>
-                      )}
-                    </td>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            
+            {/* Banner de Acciones Rápidas y Métricas de Caja */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '15px' }}>
+              
+              <div style={{ background: 'rgba(212, 175, 55, 0.08)', border: '1px solid rgba(212, 175, 55, 0.3)', borderRadius: '12px', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <span style={{ fontSize: '0.78rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '1px' }}>Venta Rápida de Mostrador</span>
+                  <div style={{ fontSize: '1.05rem', fontWeight: 'bold', color: '#fff', marginTop: '3px' }}>Vender Perfume, Gorra o Accesorio</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--gold-jewel)', marginTop: '2px' }}>Emisión directa de boleta térmica</div>
+                </div>
+                <button
+                  className="btn-primary"
+                  style={{ padding: '10px 18px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}
+                  onClick={abrirModalVentaCatalogo}
+                >
+                  <span>🛒</span> Vender
+                </button>
+              </div>
+
+              <div style={{ background: 'rgba(46, 204, 113, 0.08)', border: '1px solid rgba(46, 204, 113, 0.3)', borderRadius: '12px', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <span style={{ fontSize: '0.78rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '1px' }}>Ingresos Acumulados Hoy</span>
+                  <div style={{ fontSize: '1.35rem', fontWeight: 'bold', color: '#2ecc71', marginTop: '2px' }}>
+                    ${Number(datosCaja?.ingresos?.Total || 0).toLocaleString('es-CL')}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right', fontSize: '0.78rem', color: '#aaa', lineHeight: '1.5' }}>
+                  <div>Efectivo: <strong style={{ color: '#fff' }}>${Number(datosCaja?.ingresos?.Efectivo || 0).toLocaleString('es-CL')}</strong></div>
+                  <div>Transf / Tarjeta: <strong style={{ color: '#fff' }}>${Number((datosCaja?.ingresos?.Transferencia || 0) + (datosCaja?.ingresos?.Tarjeta || 0)).toLocaleString('es-CL')}</strong></div>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Tabla de Clientes Esperando Cobro */}
+            <div style={{ background: 'rgba(26, 26, 26, 0.6)', backdropFilter: 'blur(10px)', borderRadius: '12px', border: '1px solid #333', overflowX: 'auto' }}>
+              <div style={{ padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong style={{ color: 'var(--gold-jewel)', fontSize: '0.95rem' }}>✂️ Clientes / Citas Esperando Cobro</strong>
+                <span style={{ fontSize: '0.8rem', color: '#888' }}>{citasCaja.filter(c => c.estado !== 'Completada').length} pendientes</span>
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    <th style={tableHeaderStyle}>Hora</th>
+                    <th style={tableHeaderStyle}>Cliente</th>
+                    <th style={tableHeaderStyle}>Barbero</th>
+                    <th style={tableHeaderStyle}>Subtotal</th>
+                    <th style={tableHeaderStyle}>Cobrar</th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody>
+                  {citasCaja.length === 0 ? (
+                    <tr><td colSpan="5" style={{...tableCellStyle, textAlign: 'center'}}>No hay clientes esperando pago.</td></tr>
+                  ) : (
+                    citasCaja.map((c, i) => (
+                      <tr key={c.id}>
+                        <td style={tableCellStyle}>{c.hora.slice(0,5)}</td>
+                        <td style={tableCellStyle}>{c.cliente}</td>
+                        <td style={tableCellStyle}>{c.barbero}</td>
+                        <td style={{...tableCellStyle, color: 'var(--gold-jewel)'}}>${Number(c.subtotal).toLocaleString('es-CL')}</td>
+                        <td style={tableCellStyle}>
+                          {c.estado === 'Completada' ? (
+                              <span style={{ color: 'var(--green-emerald-light)', fontWeight: 'bold' }}>Cobrado (${Number(c.total_pagado).toLocaleString('es-CL')})</span>
+                          ) : (
+                              <button className="btn-primary" onClick={() => {
+                                const subVal = Number(c.subtotal) > 0 ? Number(c.subtotal) : (Number(c.total_pagado) > 0 ? Number(c.total_pagado) : 14000);
+                                setCobroActivo({
+                                  ...c,
+                                  subtotal: subVal,
+                                  descuento: Number(c.descuento) || 0,
+                                  metodo: c.metodo_pago || 'Efectivo',
+                                  decant_producto_id: ''
+                                });
+                              }}>Cobrar</button>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
       </div>
     );
@@ -5703,25 +6053,25 @@ export default function AdminDashboard({ session, logout }) {
                           📅 {p.fecha_pago}
                         </td>
                         <td style={{ ...tableCellStyle, fontWeight: 'bold', color: '#fff' }}>
-                          💈 {p.barbero_nombre}
+                          {p.barbero_nombre || 'Barbero'}
                         </td>
-                        <td style={{ ...tableCellStyle, color: 'var(--gold-jewel)', fontSize: '0.78rem' }}>
-                          {p.periodo_inicio} al {p.periodo_fin}
-                        </td>
-                        <td style={{ ...tableCellStyle, textAlign: 'right', color: '#2ecc71', fontWeight: 'bold', fontSize: '0.95rem' }}>
-                          ${Number(p.monto).toLocaleString('es-CL')}
+                        <td style={tableCellStyle}>{p.periodo_cubierto || '-'}</td>
+                        <td style={{ ...tableCellStyle, textAlign: 'right', fontWeight: 'bold', color: '#2ecc71' }}>
+                          ${Number(p.monto || 0).toLocaleString('es-CL')}
                         </td>
                         <td style={{ ...tableCellStyle, textAlign: 'center' }}>
-                          <span style={{ background: 'rgba(255,255,255,0.08)', padding: '2px 8px', borderRadius: '6px' }}>
+                          <span style={{ 
+                            padding: '3px 8px', 
+                            borderRadius: '4px', 
+                            fontSize: '0.75rem', 
+                            background: p.metodo_pago === 'Efectivo' ? 'rgba(46, 204, 113, 0.15)' : 'rgba(52, 152, 219, 0.15)',
+                            color: p.metodo_pago === 'Efectivo' ? '#2ecc71' : '#3498db'
+                          }}>
                             {p.metodo_pago}
                           </span>
                         </td>
-                        <td style={{ ...tableCellStyle, color: '#ccc', fontStyle: p.numero_comprobante ? 'normal' : 'italic' }}>
-                          {p.numero_comprobante || '-'}
-                        </td>
-                        <td style={{ ...tableCellStyle, color: '#aaa', fontSize: '0.75rem', maxWidth: '180px' }}>
-                          {p.notas || '-'}
-                        </td>
+                        <td style={tableCellStyle}>{p.numero_comprobante || '-'}</td>
+                        <td style={{ ...tableCellStyle, color: '#aaa', fontStyle: 'italic' }}>{p.notas || '-'}</td>
                         <td style={{ ...tableCellStyle, textAlign: 'center' }}>
                           <button 
                             onClick={() => handleEliminarPago(p.id)}

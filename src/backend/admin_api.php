@@ -195,19 +195,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 
                 $ingresos = ['Efectivo' => 0, 'Transferencia' => 0, 'Tarjeta' => 0, 'Otro' => 0, 'Total' => 0];
                 foreach ($ventas_citas as $v) {
-                    if (isset($ingresos[$v['metodo_pago']])) {
-                        $ingresos[$v['metodo_pago']] += $v['total'];
+                    $mp = $v['metodo_pago'] ?? 'Efectivo';
+                    if (isset($ingresos[$mp])) {
+                        $ingresos[$mp] += floatval($v['total']);
                     } else {
-                        $ingresos['Otro'] += $v['total'];
+                        $ingresos['Otro'] += floatval($v['total']);
                     }
-                    $ingresos['Total'] += $v['total'];
+                    $ingresos['Total'] += floatval($v['total']);
                 }
                 
-                $stmtPed = $pdo->prepare("SELECT SUM(total) FROM pedidos WHERE DATE(fecha_creacion) = ? AND estado = 'Pagado'");
-                $stmtPed->execute([$fecha]);
-                $pedidos_tot = $stmtPed->fetchColumn() ?: 0;
-                $ingresos['Efectivo'] += $pedidos_tot;
-                $ingresos['Total'] += $pedidos_tot;
+                try {
+                    $stmtPed = $pdo->prepare("SELECT IFNULL(metodo_pago, 'Efectivo') as metodo_pago, SUM(total) as total FROM pedidos WHERE DATE(fecha_creacion) = ? AND estado IN ('Pagado', 'Entregado') GROUP BY metodo_pago");
+                    $stmtPed->execute([$fecha]);
+                    $ventas_pedidos = $stmtPed->fetchAll(PDO::FETCH_ASSOC);
+                    foreach ($ventas_pedidos as $vp) {
+                        $m = $vp['metodo_pago'] ?: 'Efectivo';
+                        $tot = floatval($vp['total'] ?? 0);
+                        if (isset($ingresos[$m])) {
+                            $ingresos[$m] += $tot;
+                        } else {
+                            $ingresos['Otro'] += $tot;
+                        }
+                        $ingresos['Total'] += $tot;
+                    }
+                } catch (\Exception $e) {
+                    $stmtPed = $pdo->prepare("SELECT SUM(total) FROM pedidos WHERE DATE(fecha_creacion) = ? AND estado IN ('Pagado', 'Entregado')");
+                    $stmtPed->execute([$fecha]);
+                    $pedidos_tot = floatval($stmtPed->fetchColumn() ?: 0);
+                    $ingresos['Efectivo'] += $pedidos_tot;
+                    $ingresos['Total'] += $pedidos_tot;
+                }
                 
                 echo json_encode([
                     'estado' => $caja['cerrado_por_admin'] ? 'cerrada' : 'abierta',
@@ -237,7 +254,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             
         case 'get_pedidos_admin':
             $stmt = $pdo->query("
-                SELECT p.id, p.total, p.estado, p.fecha_creacion, cl.nombre as cliente, cl.rut as cliente_rut, cl.telefono as cliente_telefono, cl.email as cliente_email
+                SELECT p.id, p.total, p.estado, IFNULL(p.metodo_pago, 'Efectivo') as metodo_pago, p.fecha_creacion, cl.nombre as cliente, cl.rut as cliente_rut, cl.telefono as cliente_telefono, cl.email as cliente_email
                 FROM pedidos p
                 JOIN clientes cl ON p.cliente_id = cl.id
                 ORDER BY p.fecha_creacion DESC
@@ -799,6 +816,123 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $fecha = $pdo->query("SELECT CURDATE()")->fetchColumn();
             $pdo->prepare("UPDATE cierres_diarios SET cerrado_por_admin = 0 WHERE fecha = ?")->execute([$fecha]);
             echo json_encode(['status' => 'success']);
+            break;
+
+        case 'venta_directa_caja':
+            $cliente_id = !empty($data['cliente_id']) ? intval($data['cliente_id']) : null;
+            $rut = isset($data['rut']) ? trim($data['rut']) : null;
+            $nombre = isset($data['nombre']) ? trim($data['nombre']) : '';
+            $telefono = isset($data['telefono']) ? trim($data['telefono']) : null;
+            $email = isset($data['email']) ? trim($data['email']) : null;
+            $carrito = $data['carrito'] ?? [];
+            $total = floatval($data['total'] ?? 0);
+            $descuento = floatval($data['descuento'] ?? 0);
+            $metodo_pago = !empty($data['metodo_pago']) ? trim($data['metodo_pago']) : 'Efectivo';
+            $estado = !empty($data['estado']) ? trim($data['estado']) : 'Pagado';
+
+            if (empty($carrito) || !is_array($carrito)) {
+                echo json_encode(["status" => "error", "message" => "El carrito de venta no contiene productos."]);
+                break;
+            }
+
+            // 1. Identificar o Crear Cliente si no existe
+            if (!$cliente_id && !empty($rut)) {
+                $rutClean = strtoupper(preg_replace('/[^0-9K]/i', '', $rut));
+                $stmtCli = $pdo->prepare("SELECT id, nombre, telefono, email FROM clientes WHERE REPLACE(REPLACE(UPPER(rut), '.', ''), '-', '') = ? OR UPPER(rut) = ? LIMIT 1");
+                $stmtCli->execute([$rutClean, strtoupper(trim($rut))]);
+                $cliExistente = $stmtCli->fetch();
+                
+                if ($cliExistente) {
+                    $cliente_id = $cliExistente['id'];
+                    $nombre = !empty($nombre) ? $nombre : $cliExistente['nombre'];
+                    if (!empty($telefono) && empty($cliExistente['telefono'])) {
+                        $pdo->prepare("UPDATE clientes SET telefono = ? WHERE id = ?")->execute([$telefono, $cliente_id]);
+                    }
+                } else {
+                    $nombreFinal = !empty($nombre) ? $nombre : ('Cliente ' . substr($rut, 0, 8));
+                    $emailFinal = !empty($email) ? $email : ("cliente_" . preg_replace('/[^0-9kK]/', '', $rut) . "@laromana.cl");
+                    $hash = password_hash('123456', PASSWORD_DEFAULT);
+                    $stmtIns = $pdo->prepare("INSERT INTO clientes (rut, nombre, telefono, email, password_hash) VALUES (?, ?, ?, ?, ?)");
+                    $stmtIns->execute([$rut, $nombreFinal, $telefono, $emailFinal, $hash]);
+                    $cliente_id = $pdo->lastInsertId();
+                    $nombre = $nombreFinal;
+                }
+            } elseif (!$cliente_id) {
+                // Cliente Mostrador
+                $stmtGen = $pdo->query("SELECT id, nombre FROM clientes WHERE rut = 'CLIENTE-GENERAL' OR nombre = 'Cliente Mostrador' LIMIT 1")->fetch();
+                if ($stmtGen) {
+                    $cliente_id = $stmtGen['id'];
+                    $nombre = !empty($nombre) ? $nombre : $stmtGen['nombre'];
+                } else {
+                    $hash = password_hash('123456', PASSWORD_DEFAULT);
+                    $stmtIns = $pdo->prepare("INSERT INTO clientes (rut, nombre, email, password_hash) VALUES ('CLIENTE-GENERAL', 'Cliente Mostrador', 'mostrador@laromana.cl', ?)");
+                    $stmtIns->execute([$hash]);
+                    $cliente_id = $pdo->lastInsertId();
+                    $nombre = 'Cliente Mostrador';
+                }
+            }
+
+            try {
+                $pdo->beginTransaction();
+
+                // 2. Insertar en pedidos
+                try {
+                    $stmtPed = $pdo->prepare("INSERT INTO pedidos (cliente_id, total, estado, metodo_pago, fecha_creacion) VALUES (?, ?, ?, ?, NOW())");
+                    $stmtPed->execute([$cliente_id, $total, $estado, $metodo_pago]);
+                } catch (\Exception $exPed) {
+                    $stmtPed = $pdo->prepare("INSERT INTO pedidos (cliente_id, total, estado, fecha_creacion) VALUES (?, ?, ?, NOW())");
+                    $stmtPed->execute([$cliente_id, $total, $estado]);
+                }
+                $pedido_id = $pdo->lastInsertId();
+
+                // 3. Insertar detalles y descontar stock en bodega
+                $stmtDet = $pdo->prepare("INSERT INTO pedido_detalle (pedido_id, producto_id, cantidad, precio_unitario) VALUES (?, ?, ?, ?)");
+                $stmtStock = $pdo->prepare("UPDATE productos SET stock = GREATEST(0, stock - ?), ventas = ventas + ? WHERE id = ?");
+
+                $detallesResumen = [];
+
+                foreach ($carrito as $item) {
+                    $prod_id = intval($item['id']);
+                    $cantidad = max(1, intval($item['cantidad'] ?? 1));
+                    $precio_unit = floatval($item['precio'] ?? 0);
+
+                    $stmtDet->execute([$pedido_id, $prod_id, $cantidad, $precio_unit]);
+                    $stmtStock->execute([$cantidad, $cantidad, $prod_id]);
+
+                    $detallesResumen[] = [
+                        'producto_id' => $prod_id,
+                        'nombre' => $item['nombre'] ?? 'Producto',
+                        'cantidad' => $cantidad,
+                        'precio_unitario' => $precio_unit,
+                        'subtotal' => $precio_unit * $cantidad
+                    ];
+                }
+
+                $pdo->commit();
+
+                echo json_encode([
+                    "status" => "success",
+                    "message" => "Venta de catálogo registrada exitosamente en caja.",
+                    "pedido_id" => $pedido_id,
+                    "folio" => "LR-VTA-" . str_pad($pedido_id, 4, '0', STR_PAD_LEFT),
+                    "cliente_id" => $cliente_id,
+                    "cliente_nombre" => $nombre,
+                    "cliente_rut" => $rut,
+                    "cliente_telefono" => $telefono,
+                    "total" => $total,
+                    "descuento" => $descuento,
+                    "metodo_pago" => $metodo_pago,
+                    "fecha" => date('Y-m-d H:i:s'),
+                    "detalles" => $detallesResumen
+                ]);
+
+            } catch (\Exception $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                http_response_code(500);
+                echo json_encode(["status" => "error", "message" => "Error procesando la venta: " . $e->getMessage()]);
+            }
             break;
 
         // --- BODEGA ---

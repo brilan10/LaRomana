@@ -73,10 +73,18 @@ try {
     $stmtConf = $pdo->prepare("INSERT INTO configuraciones (clave, valor, descripcion) VALUES ('meta_cortes_premio', '3', 'Cantidad de cortes requeridos para ganar premio') ON DUPLICATE KEY UPDATE clave=clave");
     $stmtConf->execute();
 
-    // Actualizar columnas de estado en pedidos para permitir 'Pagado', 'Entregado', etc.
+    // Actualizar columnas de estado y metodo_pago en pedidos para permitir 'Pagado', 'Entregado', etc.
     try {
         $pdo->exec("ALTER TABLE pedidos MODIFY COLUMN estado VARCHAR(50) DEFAULT 'Pendiente'");
     } catch (Exception $e) {}
+
+    try {
+        $pdo->exec("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS metodo_pago VARCHAR(50) DEFAULT 'Efectivo'");
+    } catch (Exception $e) {
+        try {
+            $pdo->exec("ALTER TABLE pedidos ADD COLUMN metodo_pago VARCHAR(50) DEFAULT 'Efectivo'");
+        } catch (Exception $ex) {}
+    }
 
     // Ampliar soporte de imágenes a LONGTEXT para fotos en base64 o URLs largas
     try {
