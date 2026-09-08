@@ -2,7 +2,6 @@
 $ErrorActionPreference = "Stop"
 $Workspace = $PSScriptRoot
 $DeployDir = "$Workspace\deploy"
-$WebhostDeployDir = "$Workspace\webhost_deploy"
 
 Set-Location $Workspace
 
@@ -14,32 +13,22 @@ Write-Host "=================================================" -ForegroundColor 
 Write-Host "`n[1/5] Compilando Frontend (React + Vite)..." -ForegroundColor Yellow
 npm.cmd run build
 
-# 2. Limpiar / Crear carpetas de despliegue
-Write-Host "`n[2/5] Creando directorios de despliegue (deploy y webhost_deploy)..." -ForegroundColor Yellow
+# 2. Limpiar / Crear carpeta de despliegue deploy/
+Write-Host "`n[2/5] Creando directorio de despliegue (deploy)..." -ForegroundColor Yellow
 if (Test-Path $DeployDir) {
     Remove-Item -Recurse -Force "$DeployDir\*"
 } else {
     New-Item -ItemType Directory -Force -Path $DeployDir | Out-Null
 }
 
-if (Test-Path $WebhostDeployDir) {
-    Remove-Item -Recurse -Force "$WebhostDeployDir\*"
-} else {
-    New-Item -ItemType Directory -Force -Path $WebhostDeployDir | Out-Null
-}
-
 # 3. Copiar Frontend compilado (dist)
 Write-Host "`n[3/5] Copiando archivos compilados del Frontend..." -ForegroundColor Yellow
 Copy-Item -Path "dist\*" -Destination $DeployDir -Recurse -Force
-Copy-Item -Path "dist\*" -Destination $WebhostDeployDir -Recurse -Force
 
 # 4. Crear carpeta backend y copiar scripts PHP
 Write-Host "`n[4/5] Copiando Backend PHP a /backend..." -ForegroundColor Yellow
 New-Item -ItemType Directory -Force -Path "$DeployDir\backend" | Out-Null
 Copy-Item -Path "src\backend\*" -Destination "$DeployDir\backend" -Recurse -Force
-
-New-Item -ItemType Directory -Force -Path "$WebhostDeployDir\backend" | Out-Null
-Copy-Item -Path "src\backend\*" -Destination "$WebhostDeployDir\backend" -Recurse -Force
 
 # 5. Crear archivo .htaccess para enrutamiento limpio SPA + PHP
 Write-Host "`n[5/5] Generando .htaccess, base de datos SQL e instrucciones..." -ForegroundColor Yellow
@@ -73,28 +62,23 @@ AddDefaultCharset UTF-8
 "@
 
 Set-Content -Path "$DeployDir\.htaccess" -Value $htaccessContent -Encoding UTF8
-Set-Content -Path "$WebhostDeployDir\.htaccess" -Value $htaccessContent -Encoding UTF8
 
 # Copiar base de datos SQL
 if (Test-Path "database_full.sql") {
     Copy-Item -Path "database_full.sql" -Destination "$DeployDir\database_la_romana.sql" -Force
-    Copy-Item -Path "database_full.sql" -Destination "$WebhostDeployDir\database_la_romana.sql" -Force
 }
 
 # Copiar Instrucciones de Despliegue y Credenciales
 if (Test-Path "INSTRUCCIONES_DEPLOY_WEBHOST.txt") {
     Copy-Item -Path "INSTRUCCIONES_DEPLOY_WEBHOST.txt" -Destination "$DeployDir\INSTRUCCIONES_DEPLOY_WEBHOST.txt" -Force
-    Copy-Item -Path "INSTRUCCIONES_DEPLOY_WEBHOST.txt" -Destination "$WebhostDeployDir\INSTRUCCIONES_DEPLOY_WEBHOST.txt" -Force
     Copy-Item -Path "INSTRUCCIONES_DEPLOY_WEBHOST.txt" -Destination "$DeployDir\INSTRUCCIONES_DESPLIEGUE.txt" -Force
-    Copy-Item -Path "INSTRUCCIONES_DEPLOY_WEBHOST.txt" -Destination "$WebhostDeployDir\INSTRUCCIONES_DESPLIEGUE.txt" -Force
 }
 
 if (Test-Path "CREDENCIALES_PRODUCCION.txt") {
     Copy-Item -Path "CREDENCIALES_PRODUCCION.txt" -Destination "$DeployDir\CREDENCIALES_PRODUCCION.txt" -Force
-    Copy-Item -Path "CREDENCIALES_PRODUCCION.txt" -Destination "$WebhostDeployDir\CREDENCIALES_PRODUCCION.txt" -Force
 }
 
-# Configurar db.php optimizado para WebHost Chile en las carpetas de despliegue
+# Configurar db.php optimizado para WebHost Chile en la carpeta deploy
 $dbProdContent = @'
 <?php
 // db.php - Configuración Oficial y Conexión Resiliente para WebHost Chile
@@ -181,7 +165,6 @@ if (!$pdo) {
 '@
 
 Set-Content -Path "$DeployDir\backend\db.php" -Value $dbProdContent -Encoding UTF8
-Set-Content -Path "$WebhostDeployDir\backend\db.php" -Value $dbProdContent -Encoding UTF8
 
 # 6. Generar archivo zip comprimido listo para cPanel
 $zipPath = "$Workspace\deploy.zip"
@@ -191,9 +174,10 @@ Compress-Archive -Path "$DeployDir\*" -DestinationPath $zipPath -Force
 Write-Host "`n=================================================" -ForegroundColor Green
 Write-Host "  DESPLIEGUE GENERADO EXITOSAMENTE PARA WEBHOST CHILE" -ForegroundColor Green
 Write-Host "  BD Produccion: laromana_basededatos (laromana_ronin)" -ForegroundColor Green
-Write-Host "  Carpeta lista en: $DeployDir" -ForegroundColor Green
-Write-Host "  Archivo ZIP listo: $zipPath" -ForegroundColor Green
+Write-Host "  Carpeta oficial de despliegue: $DeployDir" -ForegroundColor Green
+Write-Host "  Archivo ZIP listo para cPanel: $zipPath" -ForegroundColor Green
 Write-Host "=================================================" -ForegroundColor Green
+
 
 
 

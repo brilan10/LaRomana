@@ -20,6 +20,6 @@
 ## 📌 Arquitectura y Reglas de Despliegue
 - El comando para generar el build y el paquete de despliegue es:
   `powershell -ExecutionPolicy Bypass -File .\prepare_deploy.ps1`
-- La carpeta de despliegue generada es `deploy/` y `webhost_deploy/`.
-- El script compila el frontend con Vite (`npm run build`), copia los archivos estáticos a la raíz, copia el backend PHP a `/backend`, exporta la base de datos SQL e incluye `.htaccess` e instrucciones de despliegue.
+- La carpeta oficial de despliegue generada es `deploy/` y el archivo comprimido listo para cPanel es `deploy.zip`.
+- El script compila el frontend con Vite (`npm run build`), copia los archivos estáticos a la raíz de `deploy/`, copia el backend PHP a `/backend`, exporta la base de datos SQL e incluye `.htaccess` y `deploy.zip`.
 - Git Remote: `https://github.com/brilan10/La-Romana-Peluqueria.git` (Rama `main`).

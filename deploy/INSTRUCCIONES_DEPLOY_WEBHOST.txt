@@ -4,7 +4,7 @@
 ================================================================================
 
 Este documento explica en detalle cómo está estructurada la carpeta de despliegue
-(`deploy/` y `webhost_deploy/`), cómo subirla a tu proveedor de hosting (WebHost Chile,
+(`deploy/` y el archivo `deploy.zip`), cómo subirla a tu proveedor de hosting (WebHost Chile,
 cPanel, Hostinger, VPS, etc.) y cómo mantener la aplicación en producción.
 
 ================================================================================
@@ -55,9 +55,8 @@ PASO 1: SUBIR EL CONTENIDO AL SERVIDOR
 --------------------------------------------------------------------------------
 1. Abre el Administrador de Archivos de tu cPanel o conéctate vía FTP (FileZilla).
 2. Dirígete a la carpeta `public_html/`.
-3. Sube todos los archivos y carpetas que están adentro de `deploy/` (o `webhost_deploy/`).
-   *Consejo:* Puedes comprimir el contenido de `deploy/` en un archivo `.zip`,
-   subirlo a `public_html/` y extraerlo allí mismo para mayor rapidez.
+3. Sube todos los archivos y carpetas que están adentro de `deploy/` (o sube directamente `deploy.zip`).
+   *Consejo:* Puedes subir directamente el archivo `deploy.zip` a `public_html/` y extraerlo allí mismo con 1 clic para mayor rapidez.
 
 --------------------------------------------------------------------------------
 PASO 2: CREAR E IMPORTAR LA BASE DE DATOS
