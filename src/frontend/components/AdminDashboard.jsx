@@ -166,6 +166,7 @@ export default function AdminDashboard({ session, logout }) {
   const [imprimirBoletaVenta, setImprimirBoletaVenta] = useState(true);
 
   // Estados para Registro e Historial de Ventas y Boletas en Caja
+  const [cajaSubTab, setCajaSubTab] = useState('vender'); // 'vender', 'cobros', 'boletas'
   const [ventasCajaHoy, setVentasCajaHoy] = useState([]);
   const [filtroTipoVentaCaja, setFiltroTipoVentaCaja] = useState('todas'); // 'todas', 'corte', 'producto'
   const [busquedaVentaCaja, setBusquedaVentaCaja] = useState('');
@@ -606,6 +607,7 @@ export default function AdminDashboard({ session, logout }) {
 
   const cargarCaja = async () => {
     try {
+      cargarBodega(); // Asegurar catálogo listo en caja
       const res = await fetch(`${API_URL}/admin_api.php?action=get_citas_por_cobrar`);
       setCitasCaja(await res.json());
       
@@ -1550,432 +1552,800 @@ export default function AdminDashboard({ session, logout }) {
   };
 
   const renderCaja = () => {
+    const citasPendientesCount = citasCaja.filter(c => c.estado !== 'Completada').length;
+    const prodsDisponibles = (productos || []).filter(p => {
+      const matchCat = catVentaFiltro === 'todas' || String(p.categoria_id) === String(catVentaFiltro);
+      if (!matchCat) return false;
+      if (!busquedaProdVenta.trim()) return true;
+      const term = busquedaProdVenta.trim().toLowerCase();
+      return (
+        (p.nombre && p.nombre.toLowerCase().includes(term)) ||
+        (p.categoria_nombre && p.categoria_nombre.toLowerCase().includes(term)) ||
+        (p.descripcion && p.descripcion.toLowerCase().includes(term))
+      );
+    });
+
+    const subtotalVenta = carritoVenta.reduce((sum, it) => {
+      const p = parseFloat(String(it.precio).replace(/[^0-9.-]+/g, '')) || 0;
+      const c = parseInt(it.cantidad, 10) || 1;
+      return sum + (p * c);
+    }, 0);
+    const descVenta = Math.min(subtotalVenta, Math.max(0, parseFloat(String(ventaCatalogoForm.descuento).replace(/[^0-9.-]+/g, '')) || 0));
+    const totalVenta = Math.max(0, subtotalVenta - descVenta);
+
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', animation: 'fadeIn 0.3s ease-in' }}>
         
+        {/* Cabecera Principal de Caja */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
           <div>
-            <h2 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.4rem' }}>💰 Caja y Cobros</h2>
-            <span style={{ fontSize: '0.82rem', color: '#aaa' }}>Recepción de pagos de servicios y venta directa de productos de tienda</span>
+            <h2 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
+              💰 Caja & Punto de Venta (POS)
+              {estadoCaja === 'abierta' && (
+                <span style={{ fontSize: '0.75rem', background: 'rgba(46, 204, 113, 0.2)', color: '#2ecc71', border: '1px solid #2ecc71', padding: '2px 8px', borderRadius: '12px' }}>
+                  🟢 Caja Abierta
+                </span>
+              )}
+            </h2>
+            <span style={{ fontSize: '0.82rem', color: '#aaa' }}>
+              Venta de productos de mostrador, recepción de pagos de citas y emisión de boletas térmicas
+            </span>
           </div>
 
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-            {estadoCaja === 'abierta' && (
-              <>
-                <button 
-                  className="btn-primary" 
-                  style={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: '8px', 
-                    padding: '9px 18px', 
-                    fontWeight: 'bold', 
-                    fontSize: '0.9rem',
-                    background: 'linear-gradient(135deg, #d4af37 0%, #aa820a 100%)',
-                    color: '#000',
-                    border: 'none',
-                    boxShadow: '0 4px 15px rgba(212, 175, 55, 0.4)'
-                  }} 
-                  onClick={abrirModalVentaCatalogo}
-                >
-                  <span style={{ fontSize: '1.1rem' }}>🛒</span> Vender Producto (Catálogo)
-                </button>
-
-                <button 
-                  className="btn-outline-gold" 
-                  style={{ borderColor: '#e74c3c', color: '#e74c3c', padding: '9px 16px', fontWeight: 'bold' }} 
-                  onClick={() => setShowCerrarCaja(true)}
-                >
-                  Cerrar Caja
-                </button>
-              </>
+            {estadoCaja === 'abierta' ? (
+              <button 
+                className="btn-outline-gold" 
+                style={{ borderColor: '#e74c3c', color: '#e74c3c', padding: '8px 14px', fontWeight: 'bold', fontSize: '0.82rem' }} 
+                onClick={() => setShowCerrarCaja(true)}
+              >
+                🔒 Cerrar Jornada
+              </button>
+            ) : (
+              <button 
+                className="btn-primary" 
+                style={{ padding: '8px 16px', fontWeight: 'bold', fontSize: '0.85rem' }} 
+                onClick={() => setShowAbrirCaja(true)}
+              >
+                🔓 Abrir Caja del Día
+              </button>
             )}
 
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', background: 'rgba(26, 26, 26, 0.8)', padding: '8px 16px', borderRadius: '10px', border: '1px solid #333' }}>
-              <span style={{ color: '#aaa', fontSize: '0.82rem' }}>Comisiones:</span>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', background: 'rgba(26, 26, 26, 0.8)', padding: '6px 14px', borderRadius: '10px', border: '1px solid #333' }}>
+              <span style={{ color: '#aaa', fontSize: '0.78rem' }}>Comisiones:</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <span style={{ fontSize: '0.75rem', color: '#ccc' }}>Barbero %</span>
-                <input type="number" className="input-field" style={{ margin: 0, padding: '4px 6px', width: '55px', fontSize: '0.85rem' }} value={comisionesConfig.porcentaje_barbero} onChange={e => setComisionesConfig({...comisionesConfig, porcentaje_barbero: e.target.value})} />
+                <span style={{ fontSize: '0.72rem', color: '#ccc' }}>Barbero %</span>
+                <input type="number" className="input-field" style={{ margin: 0, padding: '3px 5px', width: '50px', fontSize: '0.8rem' }} value={comisionesConfig.porcentaje_barbero} onChange={e => setComisionesConfig({...comisionesConfig, porcentaje_barbero: e.target.value})} />
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <span style={{ fontSize: '0.75rem', color: '#ccc' }}>Tienda %</span>
-                <input type="number" className="input-field" style={{ margin: 0, padding: '4px 6px', width: '55px', fontSize: '0.85rem' }} value={comisionesConfig.porcentaje_tienda} onChange={e => setComisionesConfig({...comisionesConfig, porcentaje_tienda: e.target.value})} />
+                <span style={{ fontSize: '0.72rem', color: '#ccc' }}>Tienda %</span>
+                <input type="number" className="input-field" style={{ margin: 0, padding: '3px 5px', width: '50px', fontSize: '0.8rem' }} value={comisionesConfig.porcentaje_tienda} onChange={e => setComisionesConfig({...comisionesConfig, porcentaje_tienda: e.target.value})} />
               </div>
-              <button className="btn-outline-gold" style={{ padding: '4px 12px', fontSize: '0.78rem' }} onClick={guardarComisiones}>Guardar</button>
+              <button className="btn-outline-gold" style={{ padding: '3px 10px', fontSize: '0.75rem' }} onClick={guardarComisiones}>Guardar</button>
             </div>
           </div>
         </div>
 
-        {estadoCaja === 'no_iniciada' || estadoCaja === 'cerrada' ? (
-           <div style={{ textAlign: 'center', padding: '50px', background: 'rgba(26, 26, 26, 0.6)', borderRadius: '12px', border: '1px dashed var(--gold-jewel)' }}>
-             <h3 style={{ color: '#fff', marginBottom: '20px' }}>La Caja está {estadoCaja === 'no_iniciada' ? 'Cerrada' : 'Cerrada (Jornada Finalizada)'}</h3>
-             {estadoCaja === 'no_iniciada' ? (
-                <button className="btn-primary" style={{ padding: '15px 30px', fontSize: '1.2rem' }} onClick={() => setShowAbrirCaja(true)}>Abrir Caja del Día</button>
-             ) : (
-                <div>
-                  <p style={{ color: '#888', marginBottom: '15px' }}>La jornada de hoy ya fue cerrada. Vuelve mañana.</p>
-                  <button className="btn-outline-gold" style={{ fontSize: '0.8rem' }} onClick={handleReabrirCaja}>Deshacer Cierre (Reabrir Caja)</button>
-                </div>
-             )}
-           </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        {/* Métricas Rápidas de Caja */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
+          <div style={{ background: 'rgba(212, 175, 55, 0.08)', border: '1px solid rgba(212, 175, 55, 0.3)', borderRadius: '12px', padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <span style={{ fontSize: '0.75rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Ingresos Totales Hoy</span>
+              <div style={{ fontSize: '1.3rem', fontWeight: 'bold', color: 'var(--gold-jewel)', marginTop: '2px' }}>
+                ${Number(datosCaja?.ingresos?.Total || 0).toLocaleString('es-CL')}
+              </div>
+            </div>
+            <span style={{ fontSize: '1.8rem' }}>💰</span>
+          </div>
+
+          <div style={{ background: 'rgba(46, 204, 113, 0.08)', border: '1px solid rgba(46, 204, 113, 0.3)', borderRadius: '12px', padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <span style={{ fontSize: '0.75rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Efectivo en Caja</span>
+              <div style={{ fontSize: '1.3rem', fontWeight: 'bold', color: '#2ecc71', marginTop: '2px' }}>
+                ${Number(datosCaja?.ingresos?.Efectivo || 0).toLocaleString('es-CL')}
+              </div>
+            </div>
+            <span style={{ fontSize: '1.8rem' }}>💵</span>
+          </div>
+
+          <div style={{ background: 'rgba(52, 152, 219, 0.08)', border: '1px solid rgba(52, 152, 219, 0.3)', borderRadius: '12px', padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <span style={{ fontSize: '0.75rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Transf. / Tarjetas</span>
+              <div style={{ fontSize: '1.3rem', fontWeight: 'bold', color: '#3498db', marginTop: '2px' }}>
+                ${Number((datosCaja?.ingresos?.Transferencia || 0) + (datosCaja?.ingresos?.Tarjeta || 0)).toLocaleString('es-CL')}
+              </div>
+            </div>
+            <span style={{ fontSize: '1.8rem' }}>💳</span>
+          </div>
+        </div>
+
+        {/* Pestañas de Sub-Vistas en Caja */}
+        <div style={{ display: 'flex', gap: '10px', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '10px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => setCajaSubTab('vender')}
+            style={{
+              padding: '10px 18px',
+              borderRadius: '8px',
+              border: cajaSubTab === 'vender' ? '1px solid var(--gold-jewel)' : '1px solid rgba(255,255,255,0.1)',
+              background: cajaSubTab === 'vender' ? 'linear-gradient(135deg, #d4af37 0%, #aa820a 100%)' : 'rgba(255,255,255,0.04)',
+              color: cajaSubTab === 'vender' ? '#000' : '#ccc',
+              fontWeight: 'bold',
+              fontSize: '0.9rem',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'all 0.2s ease',
+              boxShadow: cajaSubTab === 'vender' ? '0 4px 15px rgba(212, 175, 55, 0.35)' : 'none'
+            }}
+          >
+            <span>🛒</span> Vender Productos (Catálogo POS)
+            {carritoVenta.length > 0 && (
+              <span style={{ background: cajaSubTab === 'vender' ? '#000' : 'var(--gold-jewel)', color: cajaSubTab === 'vender' ? '#fff' : '#000', padding: '1px 6px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 'bold' }}>
+                {carritoVenta.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setCajaSubTab('cobros')}
+            style={{
+              padding: '10px 18px',
+              borderRadius: '8px',
+              border: cajaSubTab === 'cobros' ? '1px solid var(--gold-jewel)' : '1px solid rgba(255,255,255,0.1)',
+              background: cajaSubTab === 'cobros' ? 'rgba(212, 175, 55, 0.2)' : 'rgba(255,255,255,0.04)',
+              color: cajaSubTab === 'cobros' ? 'var(--gold-jewel)' : '#ccc',
+              fontWeight: 'bold',
+              fontSize: '0.9rem',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'all 0.2s ease'
+            }}
+          >
+            <span>✂️</span> Citas por Cobrar
+            {citasPendientesCount > 0 && (
+              <span style={{ background: '#e74c3c', color: '#fff', padding: '1px 7px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 'bold' }}>
+                {citasPendientesCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setCajaSubTab('boletas')}
+            style={{
+              padding: '10px 18px',
+              borderRadius: '8px',
+              border: cajaSubTab === 'boletas' ? '1px solid var(--gold-jewel)' : '1px solid rgba(255,255,255,0.1)',
+              background: cajaSubTab === 'boletas' ? 'rgba(212, 175, 55, 0.2)' : 'rgba(255,255,255,0.04)',
+              color: cajaSubTab === 'boletas' ? 'var(--gold-jewel)' : '#ccc',
+              fontWeight: 'bold',
+              fontSize: '0.9rem',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'all 0.2s ease'
+            }}
+          >
+            <span>📋</span> Registro de Boletas de Hoy
+            <span style={{ background: 'rgba(255,255,255,0.1)', color: '#fff', padding: '1px 7px', borderRadius: '10px', fontSize: '0.75rem' }}>
+              {ventasCajaHoy.length}
+            </span>
+          </button>
+        </div>
+
+        {/* 🛒 SUB-TAB 1: VENTA DE PRODUCTOS (CATÁLOGO POS) DIRECTO EN CAJA */}
+        {cajaSubTab === 'vender' && (
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.3fr 1fr', gap: '20px', alignItems: 'start' }}>
             
-            {/* Banner de Acciones Rápidas y Métricas de Caja */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '15px' }}>
+            {/* Columna Catálogo de Productos */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', background: 'rgba(26, 26, 26, 0.7)', backdropFilter: 'blur(10px)', padding: '18px', borderRadius: '14px', border: '1px solid rgba(212, 175, 55, 0.3)' }}>
               
-              <div style={{ background: 'rgba(212, 175, 55, 0.08)', border: '1px solid rgba(212, 175, 55, 0.3)', borderRadius: '12px', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
                 <div>
-                  <span style={{ fontSize: '0.78rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '1px' }}>Venta Rápida de Mostrador</span>
-                  <div style={{ fontSize: '1.05rem', fontWeight: 'bold', color: '#fff', marginTop: '3px' }}>Vender Perfume, Gorra o Accesorio</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--gold-jewel)', marginTop: '2px' }}>Emisión directa de boleta térmica</div>
+                  <strong style={{ color: 'var(--gold-jewel)', fontSize: '1.05rem' }}>📦 Artículos y Productos Disponibles</strong>
+                  <div style={{ fontSize: '0.78rem', color: '#888' }}>Selecciona los productos para agregarlos al pedido</div>
                 </div>
-                <button
-                  className="btn-primary"
-                  style={{ padding: '10px 18px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}
-                  onClick={abrirModalVentaCatalogo}
+                <span style={{ fontSize: '0.8rem', background: 'rgba(255,255,255,0.06)', padding: '4px 10px', borderRadius: '10px', color: '#ccc' }}>
+                  {prodsDisponibles.length} productos
+                </span>
+              </div>
+
+              {/* Filtro y Buscador */}
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.2fr 1fr', gap: '10px' }}>
+                <input 
+                  type="text"
+                  className="input-field"
+                  placeholder="🔍 Buscar perfume, gorra, decant..."
+                  value={busquedaProdVenta}
+                  onChange={e => setBusquedaProdVenta(e.target.value)}
+                  style={{ margin: 0, fontSize: '0.85rem' }}
+                />
+
+                <select 
+                  className="input-field" 
+                  value={catVentaFiltro} 
+                  onChange={e => setCatVentaFiltro(e.target.value)}
+                  style={{ margin: 0, fontSize: '0.85rem' }}
                 >
-                  <span>🛒</span> Vender
+                  <option value="todas">Todas las categorías</option>
+                  {(categorias || []).map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.nombre}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Grid de Productos */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: '12px', maxHeight: '520px', overflowY: 'auto', paddingRight: '4px' }}>
+                {prodsDisponibles.length === 0 ? (
+                  <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '40px 10px', color: '#888' }}>
+                    <div style={{ fontSize: '2rem', marginBottom: '8px' }}>📦</div>
+                    <p style={{ margin: 0, color: '#aaa' }}>No se encontraron productos disponibles con estos filtros.</p>
+                  </div>
+                ) : (
+                  prodsDisponibles.map(prod => {
+                    const stockNum = Number(prod.stock) || 0;
+                    const sinStock = stockNum <= 0;
+                    const pNum = parseFloat(String(prod.precio).replace(/[^0-9.-]+/g, '')) || 0;
+                    const enCarrito = carritoVenta.find(it => it.id === prod.id);
+
+                    return (
+                      <div 
+                        key={prod.id}
+                        onClick={() => !sinStock && agregarAlCarritoVenta(prod)}
+                        style={{
+                          background: enCarrito ? 'rgba(212, 175, 55, 0.12)' : 'rgba(0,0,0,0.4)',
+                          border: enCarrito ? '1.5px solid var(--gold-jewel)' : '1px solid rgba(255,255,255,0.08)',
+                          borderRadius: '10px',
+                          padding: '10px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'space-between',
+                          cursor: sinStock ? 'not-allowed' : 'pointer',
+                          opacity: sinStock ? 0.45 : 1,
+                          transition: 'all 0.15s ease',
+                          position: 'relative'
+                        }}
+                      >
+                        {enCarrito && (
+                          <div style={{ position: 'absolute', top: '6px', right: '6px', background: 'var(--gold-jewel)', color: '#000', fontWeight: 'bold', fontSize: '0.72rem', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            {enCarrito.cantidad}
+                          </div>
+                        )}
+
+                        <div style={{ width: '100%', height: '90px', borderRadius: '6px', overflow: 'hidden', background: '#222', marginBottom: '8px' }}>
+                          <img 
+                            src={resolveImageUrl(prod.imagen_url, 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=200')} 
+                            alt={prod.nombre} 
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                            onError={e => { e.target.src = 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=200'; }}
+                          />
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: '0.72rem', color: '#888', textTransform: 'uppercase' }}>{prod.categoria_nombre || 'Producto'}</div>
+                          <div style={{ fontWeight: 'bold', fontSize: '0.85rem', color: '#fff', lineHeight: '1.2', margin: '3px 0' }}>{prod.nombre}</div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
+                            <span style={{ color: 'var(--gold-jewel)', fontWeight: 'bold', fontSize: '0.95rem' }}>${pNum.toLocaleString('es-CL')}</span>
+                            <span style={{ fontSize: '0.72rem', color: sinStock ? '#e74c3c' : (stockNum <= 3 ? '#f39c12' : '#2ecc71'), fontWeight: 'bold' }}>
+                              {sinStock ? 'Agotado' : `${stockNum} unid`}
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={sinStock}
+                          style={{
+                            marginTop: '8px',
+                            padding: '5px',
+                            borderRadius: '6px',
+                            border: 'none',
+                            background: sinStock ? '#444' : (enCarrito ? 'var(--gold-jewel)' : 'rgba(212, 175, 55, 0.2)'),
+                            color: enCarrito ? '#000' : 'var(--gold-jewel)',
+                            fontWeight: 'bold',
+                            fontSize: '0.78rem',
+                            cursor: sinStock ? 'not-allowed' : 'pointer'
+                          }}
+                        >
+                          {sinStock ? 'Sin Stock' : (enCarrito ? '➕ Agregar otro' : '➕ Agregar')}
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* Columna Carrito / Cobro de Mostrador */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', background: 'rgba(26, 26, 26, 0.85)', backdropFilter: 'blur(10px)', padding: '20px', borderRadius: '14px', border: '2px solid var(--gold-jewel)', boxShadow: '0 10px 30px rgba(0,0,0,0.6)' }}>
+              
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '10px' }}>
+                <strong style={{ color: 'var(--gold-jewel)', fontSize: '1.1rem' }}>🛍️ Venta Mostrador</strong>
+                <button 
+                  type="button" 
+                  onClick={setClienteMostradorVenta}
+                  style={{ background: 'rgba(212, 175, 55, 0.15)', color: 'var(--gold-jewel)', border: '1px solid var(--gold-jewel)', borderRadius: '6px', padding: '4px 8px', fontSize: '0.75rem', fontWeight: 'bold', cursor: 'pointer' }}
+                >
+                  ⚡ Cliente Mostrador
                 </button>
               </div>
 
-              <div style={{ background: 'rgba(46, 204, 113, 0.08)', border: '1px solid rgba(46, 204, 113, 0.3)', borderRadius: '12px', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <span style={{ fontSize: '0.78rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '1px' }}>Ingresos Acumulados Hoy</span>
-                  <div style={{ fontSize: '1.35rem', fontWeight: 'bold', color: '#2ecc71', marginTop: '2px' }}>
-                    ${Number(datosCaja?.ingresos?.Total || 0).toLocaleString('es-CL')}
-                  </div>
-                </div>
-                <div style={{ textAlign: 'right', fontSize: '0.78rem', color: '#aaa', lineHeight: '1.5' }}>
-                  <div>Efectivo: <strong style={{ color: '#fff' }}>${Number(datosCaja?.ingresos?.Efectivo || 0).toLocaleString('es-CL')}</strong></div>
-                  <div>Transf / Tarjeta: <strong style={{ color: '#fff' }}>${Number((datosCaja?.ingresos?.Transferencia || 0) + (datosCaja?.ingresos?.Tarjeta || 0)).toLocaleString('es-CL')}</strong></div>
-                </div>
-              </div>
-
-            </div>
-
-            {/* Tabla de Clientes Esperando Cobro */}
-            <div style={{ background: 'rgba(26, 26, 26, 0.6)', backdropFilter: 'blur(10px)', borderRadius: '12px', border: '1px solid #333', overflowX: 'auto' }}>
-              <div style={{ padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <strong style={{ color: 'var(--gold-jewel)', fontSize: '0.95rem' }}>✂️ Clientes / Citas Esperando Cobro</strong>
-                <span style={{ fontSize: '0.8rem', color: '#888' }}>{citasCaja.filter(c => c.estado !== 'Completada').length} pendientes</span>
-              </div>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>
-                    <th style={tableHeaderStyle}>Hora</th>
-                    <th style={tableHeaderStyle}>Cliente</th>
-                    <th style={tableHeaderStyle}>Barbero</th>
-                    <th style={tableHeaderStyle}>Subtotal</th>
-                    <th style={tableHeaderStyle}>Cobrar</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {citasCaja.length === 0 ? (
-                    <tr><td colSpan="5" style={{...tableCellStyle, textAlign: 'center'}}>No hay clientes esperando pago.</td></tr>
-                  ) : (
-                    citasCaja.map((c, i) => (
-                      <tr key={c.id}>
-                        <td style={tableCellStyle}>{c.hora.slice(0,5)}</td>
-                        <td style={tableCellStyle}>{c.cliente}</td>
-                        <td style={tableCellStyle}>{c.barbero}</td>
-                        <td style={{...tableCellStyle, color: 'var(--gold-jewel)'}}>${Number(c.subtotal).toLocaleString('es-CL')}</td>
-                        <td style={tableCellStyle}>
-                          {c.estado === 'Completada' ? (
-                              <span style={{ color: 'var(--green-emerald-light)', fontWeight: 'bold' }}>Cobrado (${Number(c.total_pagado).toLocaleString('es-CL')})</span>
-                          ) : (
-                              <button className="btn-primary" onClick={() => {
-                                const subVal = Number(c.subtotal) > 0 ? Number(c.subtotal) : (Number(c.total_pagado) > 0 ? Number(c.total_pagado) : 14000);
-                                setCobroActivo({
-                                  ...c,
-                                  subtotal: subVal,
-                                  descuento: Number(c.descuento) || 0,
-                                  metodo: c.metodo_pago || 'Efectivo',
-                                  decant_producto_id: ''
-                                });
-                              }}>Cobrar</button>
-                          )}
-                        </td>
-                      </tr>
-                    ))
+              {/* Ficha Rápida de Cliente */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ position: 'relative' }}>
+                  <label style={{ fontSize: '0.78rem', color: '#aaa', display: 'block', marginBottom: '3px' }}>RUT del Cliente:</label>
+                  <input 
+                    type="text" 
+                    className="input-field" 
+                    placeholder="Ej: 12345678-9 (o busca por RUT)" 
+                    value={ventaCatalogoForm.rut} 
+                    onChange={e => handleRutChangeVenta(e.target.value)}
+                    style={{ margin: 0, fontSize: '0.85rem' }} 
+                  />
+                  {showDropdownVentaRut && sugerenciasVentaRut.length > 0 && (
+                    <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#181818', border: '2px solid var(--gold-jewel)', borderRadius: '8px', zIndex: 100, maxHeight: '180px', overflowY: 'auto', marginTop: '3px' }}>
+                      {sugerenciasVentaRut.map(cli => (
+                        <div 
+                          key={cli.id} 
+                          onClick={() => seleccionarSugerenciaVenta(cli)} 
+                          style={{ padding: '8px 10px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.06)', fontSize: '0.82rem' }}
+                        >
+                          <strong style={{ color: '#fff' }}>{cli.nombre}</strong>
+                          <div style={{ color: '#888', fontSize: '0.74rem' }}>{cli.rut} • {cli.telefono}</div>
+                        </div>
+                      ))}
+                    </div>
                   )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* 📋 Registro de Ventas y Boletas Emitidas Hoy */}
-            <div style={{ background: 'rgba(26, 26, 26, 0.7)', backdropFilter: 'blur(10px)', borderRadius: '12px', border: '1px solid rgba(212, 175, 55, 0.3)', overflow: 'hidden', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
-              
-              {/* Encabezado y Filtros */}
-              <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      📋 Registro de Ventas & Boletas de Hoy
-                    </h3>
-                    <span style={{ fontSize: '0.78rem', background: 'rgba(212, 175, 55, 0.15)', color: 'var(--gold-jewel)', border: '1px solid rgba(212, 175, 55, 0.4)', padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }}>
-                      {ventasCajaHoy.length} {ventasCajaHoy.length === 1 ? 'venta' : 'ventas'}
-                    </span>
-                  </div>
-                  <span style={{ fontSize: '0.78rem', color: '#aaa' }}>
-                    Visualiza todo lo vendido en el día (servicios y productos de catálogo), consulta detalles y reimprime boletas térmicas.
-                  </span>
                 </div>
 
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                  {/* Buscador en ventas de caja */}
-                  <div style={{ position: 'relative', minWidth: '220px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '8px' }}>
+                  <div>
+                    <label style={{ fontSize: '0.78rem', color: '#aaa', display: 'block', marginBottom: '3px' }}>Nombre:</label>
                     <input 
-                      type="text"
-                      className="input-field"
-                      placeholder="🔍 Folio, cliente, producto..."
-                      value={busquedaVentaCaja}
-                      onChange={e => setBusquedaVentaCaja(e.target.value)}
-                      style={{ margin: 0, padding: '7px 12px', fontSize: '0.82rem' }}
+                      type="text" 
+                      className="input-field" 
+                      placeholder="Nombre del cliente" 
+                      value={ventaCatalogoForm.nombre} 
+                      onChange={e => setVentaCatalogoForm({...ventaCatalogoForm, nombre: e.target.value})}
+                      style={{ margin: 0, fontSize: '0.85rem' }} 
                     />
-                    {busquedaVentaCaja && (
-                      <button 
-                        onClick={() => setBusquedaVentaCaja('')} 
-                        style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: '#888', cursor: 'pointer', fontSize: '0.85rem' }}
-                      >
-                        ✕
-                      </button>
-                    )}
                   </div>
+                  <div>
+                    <label style={{ fontSize: '0.78rem', color: '#aaa', display: 'block', marginBottom: '3px' }}>Teléfono:</label>
+                    <input 
+                      type="text" 
+                      className="input-field" 
+                      placeholder="+569..." 
+                      value={ventaCatalogoForm.telefono} 
+                      onChange={e => setVentaCatalogoForm({...ventaCatalogoForm, telefono: e.target.value})}
+                      style={{ margin: 0, fontSize: '0.85rem' }} 
+                    />
+                  </div>
+                </div>
+              </div>
 
-                  {/* Filtro por tipo */}
-                  <div style={{ display: 'flex', gap: '4px', background: 'rgba(0,0,0,0.4)', padding: '3px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.08)' }}>
-                    {[
-                      { id: 'todas', label: 'Todas' },
-                      { id: 'corte', label: '✂️ Cortes' },
-                      { id: 'producto', label: '🛒 Productos' }
-                    ].map(f => (
-                      <button
-                        key={f.id}
-                        type="button"
-                        onClick={() => setFiltroTipoVentaCaja(f.id)}
-                        style={{
-                          background: filtroTipoVentaCaja === f.id ? 'var(--gold-jewel)' : 'transparent',
-                          color: filtroTipoVentaCaja === f.id ? '#000' : '#aaa',
-                          border: 'none',
-                          padding: '5px 10px',
-                          borderRadius: '6px',
-                          fontSize: '0.75rem',
-                          fontWeight: 'bold',
-                          cursor: 'pointer',
-                          transition: 'all 0.15s ease'
-                        }}
-                      >
-                        {f.label}
-                      </button>
+              {/* Lista de Ítems en Carrito */}
+              <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '10px' }}>
+                <span style={{ fontSize: '0.82rem', color: '#aaa', fontWeight: 'bold' }}>Ítems en el Carrito ({carritoVenta.length}):</span>
+                {carritoVenta.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '25px 10px', color: '#666', fontSize: '0.85rem' }}>
+                    🛒 Selecciona productos del catálogo a la izquierda para agregarlos aquí.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto', marginTop: '8px' }}>
+                    {carritoVenta.map(item => (
+                      <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.3)', padding: '8px 10px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                        <div style={{ flex: 1, minWidth: 0, marginRight: '10px' }}>
+                          <div style={{ color: '#fff', fontSize: '0.82rem', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.nombre}</div>
+                          <div style={{ color: 'var(--gold-jewel)', fontSize: '0.78rem' }}>${Number(item.precio).toLocaleString('es-CL')} c/u</div>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <button type="button" onClick={() => modificarCantidadCarritoVenta(item.id, -1)} style={{ width: '24px', height: '24px', borderRadius: '4px', background: '#333', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>-</button>
+                          <span style={{ fontSize: '0.85rem', fontWeight: 'bold', minWidth: '18px', textAlign: 'center' }}>{item.cantidad}</span>
+                          <button type="button" onClick={() => modificarCantidadCarritoVenta(item.id, 1)} style={{ width: '24px', height: '24px', borderRadius: '4px', background: '#333', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>+</button>
+                          <button type="button" onClick={() => eliminarDelCarritoVenta(item.id)} style={{ background: 'transparent', border: 'none', color: '#e74c3c', cursor: 'pointer', fontSize: '0.9rem', marginLeft: '4px' }}>🗑️</button>
+                        </div>
+                      </div>
                     ))}
                   </div>
+                )}
+              </div>
 
-                  <button 
-                    className="btn-outline-gold"
-                    onClick={cargarCaja}
-                    style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '5px' }}
-                    title="Actualizar registro de ventas"
+              {/* Totales y Método de Pago */}
+              <div style={{ background: 'rgba(0,0,0,0.4)', padding: '12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#aaa' }}>
+                  <span>Subtotal:</span>
+                  <strong style={{ color: '#fff' }}>${subtotalVenta.toLocaleString('es-CL')}</strong>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem', color: '#aaa' }}>
+                  <span>Descuento ($):</span>
+                  <input 
+                    type="number" 
+                    min="0" 
+                    step="500" 
+                    value={ventaCatalogoForm.descuento || 0} 
+                    onChange={e => setVentaCatalogoForm({...ventaCatalogoForm, descuento: e.target.value})} 
+                    style={{ width: '90px', padding: '3px 6px', margin: 0, fontSize: '0.82rem', textAlign: 'right' }} 
+                    className="input-field" 
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.1)', fontSize: '1.2rem', fontWeight: 'bold' }}>
+                  <span style={{ color: '#fff' }}>TOTAL:</span>
+                  <span style={{ color: 'var(--gold-jewel)', fontSize: '1.4rem' }}>${totalVenta.toLocaleString('es-CL')}</span>
+                </div>
+
+                <div style={{ marginTop: '4px' }}>
+                  <label style={{ fontSize: '0.78rem', color: '#aaa', display: 'block', marginBottom: '3px' }}>Método de Pago:</label>
+                  <select 
+                    className="input-field" 
+                    value={ventaCatalogoForm.metodo_pago} 
+                    onChange={e => setVentaCatalogoForm({...ventaCatalogoForm, metodo_pago: e.target.value})}
+                    style={{ margin: 0, fontSize: '0.85rem' }}
                   >
-                    🔄 Refrescar
-                  </button>
+                    <option value="Efectivo" style={{color: '#000'}}>💵 Efectivo</option>
+                    <option value="Transferencia" style={{color: '#000'}}>📱 Transferencia</option>
+                    <option value="Tarjeta" style={{color: '#000'}}>💳 Tarjeta (Débito / Crédito)</option>
+                  </select>
                 </div>
               </div>
 
-              {/* Contenido Tabla de Ventas */}
-              {(() => {
-                const termVenta = busquedaVentaCaja.trim().toLowerCase();
-                const ventasFiltradas = ventasCajaHoy.filter(v => {
-                  const matchTipo = filtroTipoVentaCaja === 'todas' || v.tipo === filtroTipoVentaCaja;
-                  if (!matchTipo) return false;
-                  if (!termVenta) return true;
-                  return (
-                    (v.folio && v.folio.toLowerCase().includes(termVenta)) ||
-                    (v.cliente && v.cliente.toLowerCase().includes(termVenta)) ||
-                    (v.cliente_rut && v.cliente_rut.toLowerCase().includes(termVenta)) ||
-                    (v.barbero && v.barbero.toLowerCase().includes(termVenta)) ||
-                    (v.metodo_pago && v.metodo_pago.toLowerCase().includes(termVenta)) ||
-                    (v.items_texto && v.items_texto.toLowerCase().includes(termVenta))
-                  );
-                });
+              {/* Botón de Confirmar Venta */}
+              <button
+                type="button"
+                disabled={guardandoVentaCatalogo || carritoVenta.length === 0}
+                onClick={() => handleConfirmarVentaCatalogo(true)}
+                className="btn-primary"
+                style={{
+                  padding: '14px',
+                  fontWeight: 'bold',
+                  fontSize: '1rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  boxShadow: '0 4px 20px rgba(212, 175, 55, 0.4)',
+                  cursor: (guardandoVentaCatalogo || carritoVenta.length === 0) ? 'not-allowed' : 'pointer'
+                }}
+              >
+                {guardandoVentaCatalogo ? '⏳ Procesando...' : '🖨️ Confirmar Venta e Imprimir Boleta'}
+              </button>
+            </div>
+          </div>
+        )}
 
-                if (ventasFiltradas.length === 0) {
-                  return (
-                    <div style={{ textAlign: 'center', padding: '40px 20px', color: '#888' }}>
-                      <div style={{ fontSize: '2rem', marginBottom: '8px' }}>🎫</div>
-                      <div style={{ fontSize: '0.95rem', color: '#ccc', fontWeight: 'bold' }}>
-                        {ventasCajaHoy.length === 0 
-                          ? 'Aún no se han registrado cobros ni ventas en caja el día de hoy.' 
-                          : 'No se encontraron ventas con los filtros aplicados.'}
-                      </div>
-                      <span style={{ fontSize: '0.8rem', color: '#777' }}>
-                        Al completar cobros de citas o realizar ventas desde "Vender Producto (Catálogo)", aparecerán listadas aquí con su respectiva boleta térmica.
-                      </span>
-                    </div>
-                  );
-                }
+        {/* ✂️ SUB-TAB 2: CITAS POR COBRAR */}
+        {cajaSubTab === 'cobros' && (
+          <div style={{ background: 'rgba(26, 26, 26, 0.6)', backdropFilter: 'blur(10px)', borderRadius: '12px', border: '1px solid #333', overflowX: 'auto' }}>
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <strong style={{ color: 'var(--gold-jewel)', fontSize: '0.95rem' }}>✂️ Clientes / Citas Esperando Cobro</strong>
+              <span style={{ fontSize: '0.8rem', color: '#888' }}>{citasPendientesCount} pendientes</span>
+            </div>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={tableHeaderStyle}>Hora</th>
+                  <th style={tableHeaderStyle}>Cliente</th>
+                  <th style={tableHeaderStyle}>Barbero</th>
+                  <th style={tableHeaderStyle}>Subtotal</th>
+                  <th style={tableHeaderStyle}>Cobrar</th>
+                </tr>
+              </thead>
+              <tbody>
+                {citasCaja.length === 0 ? (
+                  <tr><td colSpan="5" style={{...tableCellStyle, textAlign: 'center', padding: '30px', color: '#888'}}>No hay clientes esperando pago.</td></tr>
+                ) : (
+                  citasCaja.map((c, i) => (
+                    <tr key={c.id}>
+                      <td style={tableCellStyle}>{c.hora.slice(0,5)}</td>
+                      <td style={tableCellStyle}>{c.cliente}</td>
+                      <td style={tableCellStyle}>{c.barbero}</td>
+                      <td style={{...tableCellStyle, color: 'var(--gold-jewel)'}}>${Number(c.subtotal).toLocaleString('es-CL')}</td>
+                      <td style={tableCellStyle}>
+                        {c.estado === 'Completada' ? (
+                            <span style={{ color: 'var(--green-emerald-light)', fontWeight: 'bold' }}>Cobrado (${Number(c.total_pagado).toLocaleString('es-CL')})</span>
+                        ) : (
+                            <button className="btn-primary" onClick={() => {
+                              const subVal = Number(c.subtotal) > 0 ? Number(c.subtotal) : (Number(c.total_pagado) > 0 ? Number(c.total_pagado) : 14000);
+                              setCobroActivo({
+                                ...c,
+                                subtotal: subVal,
+                                descuento: Number(c.descuento) || 0,
+                                metodo: c.metodo_pago || 'Efectivo',
+                                decant_producto_id: ''
+                              });
+                            }}>Cobrar</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
 
+        {/* 📋 SUB-TAB 3: REGISTRO DE BOLETAS DE HOY */}
+        {cajaSubTab === 'boletas' && (
+          <div style={{ background: 'rgba(26, 26, 26, 0.7)', backdropFilter: 'blur(10px)', borderRadius: '12px', border: '1px solid rgba(212, 175, 55, 0.3)', overflow: 'hidden', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
+            
+            {/* Encabezado y Filtros */}
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    📋 Registro de Ventas & Boletas de Hoy
+                  </h3>
+                  <span style={{ fontSize: '0.78rem', background: 'rgba(212, 175, 55, 0.15)', color: 'var(--gold-jewel)', border: '1px solid rgba(212, 175, 55, 0.4)', padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }}>
+                    {ventasCajaHoy.length} {ventasCajaHoy.length === 1 ? 'venta' : 'ventas'}
+                  </span>
+                </div>
+                <span style={{ fontSize: '0.78rem', color: '#aaa' }}>
+                  Visualiza todo lo vendido en el día (servicios y productos), consulta detalles y reimprime boletas térmicas.
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                {/* Buscador en ventas de caja */}
+                <div style={{ position: 'relative', minWidth: '220px' }}>
+                  <input 
+                    type="text"
+                    className="input-field"
+                    placeholder="🔍 Folio, cliente, producto..."
+                    value={busquedaVentaCaja}
+                    onChange={e => setBusquedaVentaCaja(e.target.value)}
+                    style={{ margin: 0, padding: '7px 12px', fontSize: '0.82rem' }}
+                  />
+                  {busquedaVentaCaja && (
+                    <button 
+                      onClick={() => setBusquedaVentaCaja('')} 
+                      style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: '#888', cursor: 'pointer', fontSize: '0.85rem' }}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                {/* Filtro por tipo */}
+                <div style={{ display: 'flex', gap: '4px', background: 'rgba(0,0,0,0.4)', padding: '3px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  {[
+                    { id: 'todas', label: 'Todas' },
+                    { id: 'corte', label: '✂️ Cortes' },
+                    { id: 'producto', label: '🛒 Productos' }
+                  ].map(f => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => setFiltroTipoVentaCaja(f.id)}
+                      style={{
+                        background: filtroTipoVentaCaja === f.id ? 'var(--gold-jewel)' : 'transparent',
+                        color: filtroTipoVentaCaja === f.id ? '#000' : '#aaa',
+                        border: 'none',
+                        padding: '5px 10px',
+                        borderRadius: '6px',
+                        fontSize: '0.75rem',
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+
+                <button 
+                  className="btn-outline-gold"
+                  onClick={cargarCaja}
+                  style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '5px' }}
+                  title="Actualizar registro de ventas"
+                >
+                  🔄 Refrescar
+                </button>
+              </div>
+            </div>
+
+            {/* Contenido Tabla de Ventas */}
+            {(() => {
+              const termVenta = busquedaVentaCaja.trim().toLowerCase();
+              const ventasFiltradas = ventasCajaHoy.filter(v => {
+                const matchTipo = filtroTipoVentaCaja === 'todas' || v.tipo === filtroTipoVentaCaja;
+                if (!matchTipo) return false;
+                if (!termVenta) return true;
                 return (
-                  <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                      <thead>
-                        <tr style={{ background: 'rgba(0,0,0,0.3)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                          <th style={tableHeaderStyle}>Hora / Folio</th>
-                          <th style={tableHeaderStyle}>Tipo</th>
-                          <th style={tableHeaderStyle}>Cliente</th>
-                          <th style={tableHeaderStyle}>Atendido por</th>
-                          <th style={tableHeaderStyle}>Detalle de Artículos / Servicios</th>
-                          <th style={tableHeaderStyle}>Método</th>
-                          <th style={{ ...tableHeaderStyle, textAlign: 'right' }}>Total</th>
-                          <th style={{ ...tableHeaderStyle, textAlign: 'center' }}>Boleta</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {ventasFiltradas.map((v, idx) => (
-                          <tr 
-                            key={`${v.tipo}_${v.id}_${idx}`} 
-                            style={{ 
-                              borderBottom: '1px solid rgba(255,255,255,0.04)',
-                              background: idx % 2 === 0 ? 'rgba(255,255,255,0.015)' : 'transparent',
-                              transition: 'background 0.15s ease'
-                            }}
-                          >
-                            {/* Hora y Folio */}
-                            <td style={tableCellStyle}>
-                              <div style={{ fontWeight: 'bold', color: '#fff' }}>{v.hora ? v.hora.slice(0, 5) : '--:--'}</div>
-                              <span style={{ 
-                                display: 'inline-block', 
-                                marginTop: '3px',
-                                fontSize: '0.72rem', 
-                                padding: '2px 6px', 
-                                borderRadius: '4px', 
-                                background: 'rgba(212, 175, 55, 0.15)', 
-                                color: 'var(--gold-jewel)', 
-                                border: '1px solid rgba(212, 175, 55, 0.3)', 
-                                fontWeight: 'bold' 
-                              }}>
-                                {v.folio || `LR-${String(v.id).padStart(4, '0')}`}
-                              </span>
-                            </td>
+                  (v.folio && v.folio.toLowerCase().includes(termVenta)) ||
+                  (v.cliente && v.cliente.toLowerCase().includes(termVenta)) ||
+                  (v.cliente_rut && v.cliente_rut.toLowerCase().includes(termVenta)) ||
+                  (v.barbero && v.barbero.toLowerCase().includes(termVenta)) ||
+                  (v.metodo_pago && v.metodo_pago.toLowerCase().includes(termVenta)) ||
+                  (v.items_texto && v.items_texto.toLowerCase().includes(termVenta))
+                );
+              });
 
-                            {/* Tipo */}
-                            <td style={tableCellStyle}>
-                              <span style={{
+              if (ventasFiltradas.length === 0) {
+                return (
+                  <div style={{ textAlign: 'center', padding: '40px 20px', color: '#888' }}>
+                    <div style={{ fontSize: '2rem', marginBottom: '8px' }}>🎫</div>
+                    <div style={{ fontSize: '0.95rem', color: '#ccc', fontWeight: 'bold' }}>
+                      {ventasCajaHoy.length === 0 
+                        ? 'Aún no se han registrado cobros ni ventas en caja el día de hoy.' 
+                        : 'No se encontraron ventas con los filtros aplicados.'}
+                    </div>
+                    <span style={{ fontSize: '0.8rem', color: '#777' }}>
+                      Al completar cobros de citas o realizar ventas desde "Vender Productos", aparecerán listadas aquí con su respectiva boleta térmica.
+                    </span>
+                  </div>
+                );
+              }
+
+              return (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                    <thead>
+                      <tr style={{ background: 'rgba(0,0,0,0.3)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                        <th style={tableHeaderStyle}>Hora / Folio</th>
+                        <th style={tableHeaderStyle}>Tipo</th>
+                        <th style={tableHeaderStyle}>Cliente</th>
+                        <th style={tableHeaderStyle}>Atendido por</th>
+                        <th style={tableHeaderStyle}>Detalle de Artículos / Servicios</th>
+                        <th style={tableHeaderStyle}>Método</th>
+                        <th style={{ ...tableHeaderStyle, textAlign: 'right' }}>Total</th>
+                        <th style={{ ...tableHeaderStyle, textAlign: 'center' }}>Boleta</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ventasFiltradas.map((v, idx) => (
+                        <tr 
+                          key={`${v.tipo}_${v.id}_${idx}`} 
+                          style={{ 
+                            borderBottom: '1px solid rgba(255,255,255,0.04)',
+                            background: idx % 2 === 0 ? 'rgba(255,255,255,0.015)' : 'transparent',
+                            transition: 'background 0.15s ease'
+                          }}
+                        >
+                          {/* Hora y Folio */}
+                          <td style={tableCellStyle}>
+                            <div style={{ fontWeight: 'bold', color: '#fff' }}>{v.hora ? v.hora.slice(0, 5) : '--:--'}</div>
+                            <span style={{ 
+                              display: 'inline-block', 
+                              marginTop: '3px',
+                              fontSize: '0.72rem', 
+                              padding: '2px 6px', 
+                              borderRadius: '4px', 
+                              background: 'rgba(212, 175, 55, 0.15)', 
+                              color: 'var(--gold-jewel)', 
+                              border: '1px solid rgba(212, 175, 55, 0.3)', 
+                              fontWeight: 'bold' 
+                            }}>
+                              {v.folio || `LR-${String(v.id).padStart(4, '0')}`}
+                            </span>
+                          </td>
+
+                          {/* Tipo */}
+                          <td style={tableCellStyle}>
+                            <span style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              padding: '3px 8px',
+                              borderRadius: '6px',
+                              fontSize: '0.75rem',
+                              fontWeight: 'bold',
+                              background: v.tipo === 'corte' ? 'rgba(46, 204, 113, 0.15)' : 'rgba(52, 152, 219, 0.15)',
+                              color: v.tipo === 'corte' ? '#2ecc71' : '#3498db',
+                              border: `1px solid ${v.tipo === 'corte' ? 'rgba(46,204,113,0.3)' : 'rgba(52,152,219,0.3)'}`
+                            }}>
+                              {v.tipo === 'corte' ? '✂️ Servicio' : '🛒 Tienda'}
+                            </span>
+                          </td>
+
+                          {/* Cliente */}
+                          <td style={tableCellStyle}>
+                            <div style={{ fontWeight: 'bold', color: '#fff' }}>{v.cliente || 'Cliente Mostrador'}</div>
+                            {v.cliente_rut && (
+                              <div style={{ fontSize: '0.75rem', color: '#888' }}>{formatRut(v.cliente_rut)}</div>
+                            )}
+                          </td>
+
+                          {/* Atendido por */}
+                          <td style={{ ...tableCellStyle, color: '#aaa' }}>
+                            {v.barbero || 'Caja / Local'}
+                          </td>
+
+                          {/* Detalle */}
+                          <td style={{ ...tableCellStyle, maxWidth: '280px' }}>
+                            <div style={{ color: '#eee', whiteSpace: 'normal', lineHeight: '1.4' }}>
+                              {v.items_texto || (v.items || []).map(i => i.nombre).join(', ') || 'Venta de caja'}
+                            </div>
+                          </td>
+
+                          {/* Método de Pago */}
+                          <td style={tableCellStyle}>
+                            <span style={{
+                              display: 'inline-block',
+                              padding: '3px 8px',
+                              borderRadius: '6px',
+                              fontSize: '0.75rem',
+                              fontWeight: '500',
+                              background: 'rgba(255,255,255,0.06)',
+                              color: v.metodo_pago === 'Efectivo' ? '#2ecc71' : (v.metodo_pago === 'Transferencia' ? '#3498db' : 'var(--gold-jewel)'),
+                              border: '1px solid rgba(255,255,255,0.1)'
+                            }}>
+                              💳 {v.metodo_pago || 'Efectivo'}
+                            </span>
+                          </td>
+
+                          {/* Total */}
+                          <td style={{ ...tableCellStyle, textAlign: 'right' }}>
+                            <div style={{ fontSize: '1rem', fontWeight: 'bold', color: 'var(--gold-jewel)' }}>
+                              ${Number(v.total || 0).toLocaleString('es-CL')}
+                            </div>
+                            {Number(v.descuento || 0) > 0 && (
+                              <div style={{ fontSize: '0.72rem', color: '#e74c3c' }}>
+                                Desc. -${Number(v.descuento).toLocaleString('es-CL')}
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Acciones */}
+                          <td style={{ ...tableCellStyle, textAlign: 'center' }}>
+                            <button
+                              type="button"
+                              className="btn-outline-gold"
+                              onClick={() => {
+                                setTicketDetalleModal({
+                                  id: v.id,
+                                  tipo: v.tipo,
+                                  folio: v.folio,
+                                  fecha_creacion: v.hora ? `${formatDateYMD()} ${v.hora}` : formatDateYMD(),
+                                  cliente: v.cliente || 'Cliente Mostrador',
+                                  cliente_rut: v.cliente_rut || '',
+                                  cliente_telefono: v.cliente_telefono || '',
+                                  cliente_email: v.cliente_email || '',
+                                  barbero: v.barbero || '',
+                                  detalles: (v.items || []).map(it => ({
+                                    producto: it.nombre || 'Artículo / Servicio',
+                                    cantidad: Number(it.cantidad) || 1,
+                                    precio_unitario: Number(it.precio_unitario || it.precio || 0)
+                                  })),
+                                  subtotal: Number(v.subtotal || v.total || 0),
+                                  descuento: Number(v.descuento || 0),
+                                  total: Number(v.total || 0),
+                                  metodo_pago: v.metodo_pago || 'Efectivo',
+                                  estado: v.estado || 'Pagado'
+                                });
+                              }}
+                              style={{
+                                padding: '5px 10px',
+                                fontSize: '0.78rem',
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 gap: '4px',
-                                padding: '3px 8px',
-                                borderRadius: '6px',
-                                fontSize: '0.75rem',
                                 fontWeight: 'bold',
-                                background: v.tipo === 'corte' ? 'rgba(46, 204, 113, 0.15)' : 'rgba(52, 152, 219, 0.15)',
-                                color: v.tipo === 'corte' ? '#2ecc71' : '#3498db',
-                                border: `1px solid ${v.tipo === 'corte' ? 'rgba(46,204,113,0.3)' : 'rgba(52,152,219,0.3)'}`
-                              }}>
-                                {v.tipo === 'corte' ? '✂️ Servicio' : '🛒 Tienda'}
-                              </span>
-                            </td>
-
-                            {/* Cliente */}
-                            <td style={tableCellStyle}>
-                              <div style={{ fontWeight: 'bold', color: '#fff' }}>{v.cliente || 'Cliente Mostrador'}</div>
-                              {v.cliente_rut && (
-                                <div style={{ fontSize: '0.75rem', color: '#888' }}>{formatRut(v.cliente_rut)}</div>
-                              )}
-                            </td>
-
-                            {/* Atendido por */}
-                            <td style={{ ...tableCellStyle, color: '#aaa' }}>
-                              {v.barbero || 'Caja / Local'}
-                            </td>
-
-                            {/* Detalle */}
-                            <td style={{ ...tableCellStyle, maxWidth: '280px' }}>
-                              <div style={{ color: '#eee', whiteSpace: 'normal', lineHeight: '1.4' }}>
-                                {v.items_texto || (v.items || []).map(i => i.nombre).join(', ') || 'Venta de caja'}
-                              </div>
-                            </td>
-
-                            {/* Método de Pago */}
-                            <td style={tableCellStyle}>
-                              <span style={{
-                                display: 'inline-block',
-                                padding: '3px 8px',
-                                borderRadius: '6px',
-                                fontSize: '0.75rem',
-                                fontWeight: '500',
-                                background: 'rgba(255,255,255,0.06)',
-                                color: v.metodo_pago === 'Efectivo' ? '#2ecc71' : (v.metodo_pago === 'Transferencia' ? '#3498db' : 'var(--gold-jewel)'),
-                                border: '1px solid rgba(255,255,255,0.1)'
-                              }}>
-                                💳 {v.metodo_pago || 'Efectivo'}
-                              </span>
-                            </td>
-
-                            {/* Total */}
-                            <td style={{ ...tableCellStyle, textAlign: 'right' }}>
-                              <div style={{ fontSize: '1rem', fontWeight: 'bold', color: 'var(--gold-jewel)' }}>
-                                ${Number(v.total || 0).toLocaleString('es-CL')}
-                              </div>
-                              {Number(v.descuento || 0) > 0 && (
-                                <div style={{ fontSize: '0.72rem', color: '#e74c3c' }}>
-                                  Desc. -${Number(v.descuento).toLocaleString('es-CL')}
-                                </div>
-                              )}
-                            </td>
-
-                            {/* Acciones */}
-                            <td style={{ ...tableCellStyle, textAlign: 'center' }}>
-                              <button
-                                type="button"
-                                className="btn-outline-gold"
-                                onClick={() => {
-                                  setTicketDetalleModal({
-                                    id: v.id,
-                                    tipo: v.tipo,
-                                    folio: v.folio,
-                                    fecha_creacion: v.hora ? `${formatDateYMD()} ${v.hora}` : formatDateYMD(),
-                                    cliente: v.cliente || 'Cliente Mostrador',
-                                    cliente_rut: v.cliente_rut || '',
-                                    cliente_telefono: v.cliente_telefono || '',
-                                    cliente_email: v.cliente_email || '',
-                                    barbero: v.barbero || '',
-                                    detalles: (v.items || []).map(it => ({
-                                      producto: it.nombre || 'Artículo / Servicio',
-                                      cantidad: Number(it.cantidad) || 1,
-                                      precio_unitario: Number(it.precio_unitario || it.precio || 0)
-                                    })),
-                                    subtotal: Number(v.subtotal || v.total || 0),
-                                    descuento: Number(v.descuento || 0),
-                                    total: Number(v.total || 0),
-                                    metodo_pago: v.metodo_pago || 'Efectivo',
-                                    estado: v.estado || 'Pagado'
-                                  });
-                                }}
-                                style={{
-                                  padding: '5px 10px',
-                                  fontSize: '0.78rem',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '4px',
-                                  fontWeight: 'bold',
-                                  borderRadius: '6px'
-                                }}
-                              >
-                                <span>👁️</span> Boleta
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                );
-              })()}
-            </div>
-
+                                borderRadius: '6px'
+                              }}
+                            >
+                              <span>👁️</span> Boleta
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
           </div>
         )}
+
       </div>
     );
   };
@@ -5225,17 +5595,23 @@ export default function AdminDashboard({ session, logout }) {
        </div>
 
        {/* Modal Cobro */}
-       {cobroActivo && (
-         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-           <div style={{ background: '#1a1a1a', padding: '30px', borderRadius: '12px', width: '400px', border: '1px solid var(--gold-jewel)' }}>
-             <h3 style={{ margin: '0 0 20px 0', color: 'var(--gold-jewel)' }}>Cobrar Cita</h3>
-             <div style={{ marginBottom: '15px' }}>
-               <label style={{ display: 'block', color: '#aaa', fontSize: '0.85rem' }}>Cliente: {cobroActivo.cliente}</label>
-               <label style={{ display: 'block', color: '#aaa', fontSize: '0.85rem' }}>Barbero: {cobroActivo.barbero}</label>
+       {cobroActivo && (() => {
+         const subVal = Number(cobroActivo.subtotal) || 0;
+         const prodExtraVal = Number(cobroActivo.producto_adicional_precio) || 0;
+         const descVal = Number(cobroActivo.descuento) || 0;
+         const totVal = Math.max(0, (subVal + prodExtraVal) - descVal);
+
+         return (
+         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '15px' }}>
+           <div style={{ background: '#1a1a1a', padding: '25px', borderRadius: '14px', width: '100%', maxWidth: '440px', border: '2px solid var(--gold-jewel)', maxHeight: '90vh', overflowY: 'auto' }}>
+             <h3 style={{ margin: '0 0 15px 0', color: 'var(--gold-jewel)' }}>💰 Cobrar Cita</h3>
+             <div style={{ marginBottom: '12px', background: 'rgba(255,255,255,0.04)', padding: '10px', borderRadius: '8px', fontSize: '0.85rem' }}>
+               <div style={{ color: '#fff', fontWeight: 'bold' }}>👤 {cobroActivo.cliente}</div>
+               <div style={{ color: '#aaa', marginTop: '2px' }}>💈 Barbero: <strong style={{ color: 'var(--gold-jewel)' }}>{cobroActivo.barbero || cobroActivo.trabajador}</strong></div>
              </div>
              
-             <div style={{ marginBottom: '15px' }}>
-                <label style={{ display: 'block', marginBottom: '5px', fontSize: '0.85rem' }}>Monto / Total Original ($)</label>
+             <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', marginBottom: '4px', fontSize: '0.82rem', color: '#aaa' }}>Monto del Servicio / Corte ($):</label>
                 <input 
                   type="number" 
                   className="input-field" 
@@ -5244,31 +5620,92 @@ export default function AdminDashboard({ session, logout }) {
                   placeholder="Ej: 14000" 
                   value={cobroActivo.subtotal !== undefined && cobroActivo.subtotal !== null ? cobroActivo.subtotal : ''} 
                   onChange={e => setCobroActivo({ ...cobroActivo, subtotal: Number(e.target.value) || 0 })} 
+                  style={{ margin: 0 }}
                 />
              </div>
-             <div style={{ marginBottom: '15px' }}>
-               <label style={{ display: 'block', marginBottom: '5px', fontSize: '0.85rem' }}>Descuento (Monto $)</label>
-               <input type="number" className="input-field" value={cobroActivo.descuento || 0} onChange={e => setCobroActivo({...cobroActivo, descuento: Number(e.target.value)})} />
-             </div>
-             <div style={{ marginBottom: '15px', color: 'var(--green-emerald-light)', fontSize: '1.25rem', fontWeight: 'bold' }}>
-               Total a Pagar: ${Math.max(0, (Number(cobroActivo.subtotal) || 0) - (Number(cobroActivo.descuento) || 0)).toLocaleString('es-CL')}
-             </div>
-             <div style={{ marginBottom: '15px' }}>
-               <label style={{ display: 'block', marginBottom: '5px', fontSize: '0.85rem' }}>Método de Pago</label>
-               <select className="input-field" value={cobroActivo.metodo} onChange={e => setCobroActivo({...cobroActivo, metodo: e.target.value})}>
-                 <option value="Efectivo" style={{color: '#000'}}>Efectivo</option>
-                 <option value="Transferencia" style={{color: '#000'}}>Transferencia</option>
-                 <option value="Tarjeta" style={{color: '#000'}}>Tarjeta</option>
+
+             {/* Agregar Producto / Perfume Adicional a la Cita */}
+             <div style={{ marginBottom: '12px' }}>
+               <label style={{ display: 'block', marginBottom: '4px', fontSize: '0.82rem', color: 'var(--gold-jewel)' }}>
+                 🛍️ Agregar Producto / Perfume (Opcional):
+               </label>
+               <select 
+                 className="input-field" 
+                 value={cobroActivo.decant_producto_id || ''} 
+                 onChange={e => {
+                   const prodId = e.target.value;
+                   const prodObj = (productos || []).find(p => String(p.id) === String(prodId));
+                   const pPrecio = prodObj ? (parseFloat(String(prodObj.precio).replace(/[^0-9.-]+/g, '')) || 0) : 0;
+                   setCobroActivo({
+                     ...cobroActivo,
+                     decant_producto_id: prodId,
+                     producto_adicional_precio: pPrecio,
+                     producto_adicional_nombre: prodObj ? prodObj.nombre : ''
+                   });
+                 }}
+                 style={{ margin: 0, fontSize: '0.85rem' }}
+               >
+                 <option value="">-- Sin producto adicional --</option>
+                 {(productos || []).filter(p => Number(p.stock) > 0).map(p => {
+                   const pNum = parseFloat(String(p.precio).replace(/[^0-9.-]+/g, '')) || 0;
+                   return (
+                     <option key={p.id} value={p.id} style={{ color: '#000' }}>
+                       {p.nombre} (+${pNum.toLocaleString('es-CL')}) - {p.stock} unid
+                     </option>
+                   );
+                 })}
                </select>
              </div>
+
+             <div style={{ marginBottom: '12px' }}>
+               <label style={{ display: 'block', marginBottom: '4px', fontSize: '0.82rem', color: '#aaa' }}>Descuento (Monto $):</label>
+               <input 
+                 type="number" 
+                 className="input-field" 
+                 value={cobroActivo.descuento || 0} 
+                 onChange={e => setCobroActivo({...cobroActivo, descuento: Number(e.target.value)})} 
+                 style={{ margin: 0 }}
+               />
+             </div>
+
+             <div style={{ marginBottom: '14px', background: 'rgba(212, 175, 55, 0.12)', border: '1px solid var(--gold-jewel)', padding: '10px 14px', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+               <span style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>TOTAL A COBRAR:</span>
+               <span style={{ color: 'var(--gold-jewel)', fontSize: '1.3rem', fontWeight: 'bold' }}>
+                 ${totVal.toLocaleString('es-CL')}
+               </span>
+             </div>
+
+             <div style={{ marginBottom: '15px' }}>
+               <label style={{ display: 'block', marginBottom: '4px', fontSize: '0.82rem', color: '#aaa' }}>Método de Pago:</label>
+               <select className="input-field" value={cobroActivo.metodo} onChange={e => setCobroActivo({...cobroActivo, metodo: e.target.value})} style={{ margin: 0 }}>
+                 <option value="Efectivo" style={{color: '#000'}}>💵 Efectivo</option>
+                 <option value="Transferencia" style={{color: '#000'}}>📱 Transferencia</option>
+                 <option value="Tarjeta" style={{color: '#000'}}>💳 Tarjeta (Débito/Crédito)</option>
+               </select>
+             </div>
+
              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 <button 
                   className="btn-primary" 
-                  style={{ width: '100%', padding: '12px', fontWeight: 'bold' }} 
+                  style={{ width: '100%', padding: '12px', fontWeight: 'bold', fontSize: '0.95rem' }} 
                   onClick={() => {
-                    const subVal = Number(cobroActivo.subtotal) || 0;
-                    const descVal = Number(cobroActivo.descuento) || 0;
-                    const totVal = Math.max(0, subVal - descVal);
+                    const ticketItems = [
+                      {
+                        nombre: cobroActivo.servicios_nombres || 'Corte de Cabello / Barbería',
+                        cantidad: 1,
+                        precio: subVal,
+                        subtotal: subVal
+                      }
+                    ];
+                    if (cobroActivo.decant_producto_id && cobroActivo.producto_adicional_nombre) {
+                      ticketItems.push({
+                        nombre: cobroActivo.producto_adicional_nombre,
+                        cantidad: 1,
+                        precio: prodExtraVal,
+                        subtotal: prodExtraVal
+                      });
+                    }
+
                     printThermalTicket({
                       tipo: 'corte',
                       folio: `LR-CITA-${String(cobroActivo.id).padStart(4, '0')}`,
@@ -5276,21 +5713,14 @@ export default function AdminDashboard({ session, logout }) {
                       rut: cobroActivo.cliente_rut,
                       telefono: cobroActivo.cliente_telefono,
                       barbero: cobroActivo.barbero || cobroActivo.trabajador,
-                      items: [
-                        {
-                          nombre: cobroActivo.servicios_nombres || 'Corte de Cabello / Barbería',
-                          cantidad: 1,
-                          precio: subVal,
-                          subtotal: subVal
-                        }
-                      ],
-                      subtotal: subVal,
+                      items: ticketItems,
+                      subtotal: subVal + prodExtraVal,
                       descuento: descVal,
                       total: totVal,
                       metodoPago: cobroActivo.metodo,
                       estado: 'PAGADO'
                     });
-                    handleCobrarCaja(cobroActivo.id, cobroActivo.subtotal, cobroActivo.descuento, cobroActivo.metodo, cobroActivo.decant_producto_id);
+                    handleCobrarCaja(cobroActivo.id, subVal + prodExtraVal, descVal, cobroActivo.metodo, cobroActivo.decant_producto_id);
                   }}
                 >
                   🖨️ Confirmar Pago e Imprimir Boleta
@@ -5298,14 +5728,14 @@ export default function AdminDashboard({ session, logout }) {
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <button 
                     className="btn-outline-gold" 
-                    style={{ flex: 1, padding: '10px' }} 
-                    onClick={() => handleCobrarCaja(cobroActivo.id, cobroActivo.subtotal, cobroActivo.descuento, cobroActivo.metodo, cobroActivo.decant_producto_id)}
+                    style={{ flex: 1, padding: '10px', fontSize: '0.85rem' }} 
+                    onClick={() => handleCobrarCaja(cobroActivo.id, subVal + prodExtraVal, descVal, cobroActivo.metodo, cobroActivo.decant_producto_id)}
                   >
                     Solo Cobrar
                   </button>
                   <button 
                     className="btn-outline-gold" 
-                    style={{ flex: 1, padding: '10px', color: '#aaa', borderColor: '#555' }} 
+                    style={{ flex: 1, padding: '10px', color: '#aaa', borderColor: '#555', fontSize: '0.85rem' }} 
                     onClick={() => setCobroActivo(null)}
                   >
                     Cancelar
@@ -5314,7 +5744,8 @@ export default function AdminDashboard({ session, logout }) {
               </div>
            </div>
          </div>
-       )}
+         );
+       })()}
 
         {/* Modal Historial CRM Mejorado */}
         {historialCRMActivo && (
