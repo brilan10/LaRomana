@@ -1050,17 +1050,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 }
             }
 
+            // Asegurar columnas requeridas en pedidos antes de iniciar transaccion
+            try {
+                $pdo->exec("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS metodo_pago VARCHAR(50) DEFAULT 'Efectivo'");
+            } catch (\Exception $e) {}
+
             try {
                 $pdo->beginTransaction();
 
                 // 2. Insertar en pedidos
-                try {
-                    $stmtPed = $pdo->prepare("INSERT INTO pedidos (cliente_id, total, estado, metodo_pago, fecha_creacion) VALUES (?, ?, ?, ?, NOW())");
-                    $stmtPed->execute([$cliente_id, $total, $estado, $metodo_pago]);
-                } catch (\Exception $exPed) {
-                    $stmtPed = $pdo->prepare("INSERT INTO pedidos (cliente_id, total, estado, fecha_creacion) VALUES (?, ?, ?, NOW())");
-                    $stmtPed->execute([$cliente_id, $total, $estado]);
-                }
+                $stmtPed = $pdo->prepare("INSERT INTO pedidos (cliente_id, total, estado, metodo_pago, fecha_creacion) VALUES (?, ?, ?, ?, NOW())");
+                $stmtPed->execute([$cliente_id, $total, $estado, $metodo_pago]);
                 $pedido_id = $pdo->lastInsertId();
 
                 // 3. Insertar detalles y descontar stock en bodega

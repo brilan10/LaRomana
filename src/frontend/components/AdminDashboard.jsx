@@ -907,14 +907,12 @@ export default function AdminDashboard({ session, logout }) {
 
   const handleConfirmarVentaCatalogo = async (imprimirBoleta = true) => {
     if (carritoVenta.length === 0) {
-      showToast('Por favor agrega al menos un producto al carrito', 'error');
+      showToast('Por favor agrega al menos un producto al carrito antes de cobrar', 'error');
       return;
     }
 
-    if (!ventaCatalogoForm.nombre.trim() && !ventaCatalogoForm.rut.trim()) {
-      showToast('Por favor ingresa el RUT o Nombre del cliente', 'error');
-      return;
-    }
+    const rutClienteFinal = ventaCatalogoForm.rut.trim() || '11.111.111-1';
+    const nombreClienteFinal = ventaCatalogoForm.nombre.trim() || (ventaCatalogoForm.rut.trim() ? `Cliente ${ventaCatalogoForm.rut.trim()}` : 'Cliente Mostrador');
 
     const subtotalCalc = carritoVenta.reduce((sum, it) => {
       const p = parseFloat(String(it.precio).replace(/[^0-9.-]+/g, '')) || 0;
@@ -926,8 +924,8 @@ export default function AdminDashboard({ session, logout }) {
 
     const payload = {
       cliente_id: ventaCatalogoForm.cliente_id,
-      rut: ventaCatalogoForm.rut.trim(),
-      nombre: ventaCatalogoForm.nombre.trim() || 'Cliente Mostrador',
+      rut: rutClienteFinal,
+      nombre: nombreClienteFinal,
       telefono: ventaCatalogoForm.telefono.trim(),
       email: ventaCatalogoForm.email.trim(),
       carrito: carritoVenta.map(it => ({
@@ -1998,26 +1996,47 @@ export default function AdminDashboard({ session, logout }) {
                 </div>
               </div>
 
-              {/* Botón de Confirmar Venta */}
-              <button
-                type="button"
-                disabled={guardandoVentaCatalogo || carritoVenta.length === 0}
-                onClick={() => handleConfirmarVentaCatalogo(true)}
-                className="btn-primary"
-                style={{
-                  padding: '14px',
-                  fontWeight: 'bold',
-                  fontSize: '1rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '8px',
-                  boxShadow: '0 4px 20px rgba(212, 175, 55, 0.4)',
-                  cursor: (guardandoVentaCatalogo || carritoVenta.length === 0) ? 'not-allowed' : 'pointer'
-                }}
-              >
-                {guardandoVentaCatalogo ? '⏳ Procesando...' : '🖨️ Confirmar Venta e Imprimir Boleta'}
-              </button>
+              {/* Botones de Confirmar Venta */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <button
+                  type="button"
+                  disabled={guardandoVentaCatalogo || carritoVenta.length === 0}
+                  onClick={() => handleConfirmarVentaCatalogo(true)}
+                  className="btn-primary"
+                  style={{
+                    padding: '13px',
+                    fontWeight: 'bold',
+                    fontSize: '0.95rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    boxShadow: '0 4px 20px rgba(212, 175, 55, 0.4)',
+                    cursor: (guardandoVentaCatalogo || carritoVenta.length === 0) ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  {guardandoVentaCatalogo ? '⏳ Procesando...' : '🖨️ Cobrar e Imprimir Boleta'}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={guardandoVentaCatalogo || carritoVenta.length === 0}
+                  onClick={() => handleConfirmarVentaCatalogo(false)}
+                  className="btn-outline-gold"
+                  style={{
+                    padding: '10px',
+                    fontWeight: 'bold',
+                    fontSize: '0.85rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    cursor: (guardandoVentaCatalogo || carritoVenta.length === 0) ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  {guardandoVentaCatalogo ? '⏳ Procesando...' : '💾 Solo Cobrar (Sin Imprimir)'}
+                </button>
+              </div>
             </div>
           </div>
         )}
