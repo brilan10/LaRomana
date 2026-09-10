@@ -236,6 +236,149 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             }
             break;
 
+        case 'get_ventas_caja_hoy':
+            $fecha = $pdo->query("SELECT CURDATE()")->fetchColumn();
+            $ventas = [];
+
+            // 1. Citas completadas / cobradas hoy
+            $stmtCitas = $pdo->prepare("
+                SELECT c.id, c.fecha, c.hora, c.estado, c.descuento, c.total_pagado,
+                       IFNULL(c.metodo_pago, 'Efectivo') as metodo_pago,
+                       cl.id as cliente_id, cl.nombre as cliente, cl.rut as cliente_rut, cl.telefono as cliente_telefono,
+                       t.id as trabajador_id, t.nombre as barbero,
+                       (SELECT GROUP_CONCAT(s.nombre SEPARATOR ', ') FROM cita_detalle cd JOIN servicios s ON cd.servicio_id = s.id WHERE cd.cita_id = c.id) as servicios_nombres,
+                       COALESCE((SELECT SUM(precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id), c.total_pagado, 0) as subtotal
+                FROM citas c
+                LEFT JOIN clientes cl ON c.cliente_id = cl.id
+                LEFT JOIN trabajadores t ON c.trabajador_id = t.id
+                WHERE c.fecha = ? AND c.estado = 'Completada'
+                ORDER BY c.hora DESC
+            ");
+            $stmtCitas->execute([$fecha]);
+            $citasList = $stmtCitas->fetchAll(PDO::FETCH_ASSOC);
+
+            // Obtener detalles de servicios de cada cita para la boleta
+            $stmtCitaDet = $pdo->prepare("
+                SELECT cd.precio_cobrado as precio, s.nombre, 1 as cantidad 
+                FROM cita_detalle cd 
+                JOIN servicios s ON cd.servicio_id = s.id 
+                WHERE cd.cita_id = ?
+            ");
+
+            foreach ($citasList as $c) {
+                $stmtCitaDet->execute([$c['id']]);
+                $itemsDet = $stmtCitaDet->fetchAll(PDO::FETCH_ASSOC);
+                if (empty($itemsDet)) {
+                    $sub = floatval($c['subtotal'] ?: $c['total_pagado']);
+                    $itemsDet = [[
+                        'nombre' => $c['servicios_nombres'] ?: 'Corte / Servicio de Barbería',
+                        'cantidad' => 1,
+                        'precio' => $sub,
+                        'subtotal' => $sub
+                    ]];
+                } else {
+                    foreach ($itemsDet as &$it) {
+                        $it['subtotal'] = floatval($it['precio']);
+                    }
+                }
+
+                $ventas[] = [
+                    'tipo' => 'corte',
+                    'id' => $c['id'],
+                    'folio' => 'LR-CITA-' . str_pad($c['id'], 4, '0', STR_PAD_LEFT),
+                    'fecha' => $c['fecha'],
+                    'hora' => substr($c['hora'], 0, 5),
+                    'cliente' => $c['cliente'] ?: 'Cliente General',
+                    'cliente_rut' => $c['cliente_rut'] ?: '',
+                    'cliente_telefono' => $c['cliente_telefono'] ?: '',
+                    'barbero' => $c['barbero'] ?: 'Barbero Staff',
+                    'descripcion' => $c['servicios_nombres'] ?: 'Servicio de Barbería',
+                    'items' => $itemsDet,
+                    'subtotal' => floatval($c['subtotal']),
+                    'descuento' => floatval($c['descuento'] ?: 0),
+                    'total' => floatval($c['total_pagado']),
+                    'metodo_pago' => $c['metodo_pago'],
+                    'estado' => $c['estado'],
+                    'timestamp' => strtotime($c['fecha'] . ' ' . $c['hora'])
+                ];
+            }
+
+            // 2. Pedidos / Ventas directas de productos de mostrador hoy
+            $stmtPed = $pdo->prepare("
+                SELECT p.id, p.total, p.estado, IFNULL(p.metodo_pago, 'Efectivo') as metodo_pago, 
+                       p.fecha_creacion, DATE(p.fecha_creacion) as fecha, TIME(p.fecha_creacion) as hora,
+                       COALESCE(cl.nombre, 'Cliente Mostrador') as cliente, 
+                       cl.rut as cliente_rut, cl.telefono as cliente_telefono,
+                       'Caja Principal' as barbero
+                FROM pedidos p
+                LEFT JOIN clientes cl ON p.cliente_id = cl.id
+                WHERE DATE(p.fecha_creacion) = ? AND p.estado IN ('Pagado', 'Entregado')
+                ORDER BY p.fecha_creacion DESC
+            ");
+            $stmtPed->execute([$fecha]);
+            $pedidosList = $stmtPed->fetchAll(PDO::FETCH_ASSOC);
+
+            $stmtDet = $pdo->prepare("
+                SELECT pd.cantidad, pr.nombre, pd.precio_unitario as precio, (pd.cantidad * pd.precio_unitario) as subtotal
+                FROM pedido_detalle pd 
+                JOIN productos pr ON pd.producto_id = pr.id 
+                WHERE pd.pedido_id = ?
+            ");
+
+            foreach ($pedidosList as $p) {
+                $stmtDet->execute([$p['id']]);
+                $itemsDet = $stmtDet->fetchAll(PDO::FETCH_ASSOC);
+
+                $nombresItems = [];
+                $subtotalCalc = 0;
+                foreach ($itemsDet as $it) {
+                    $nombresItems[] = $it['cantidad'] . 'x ' . $it['nombre'];
+                    $subtotalCalc += floatval($it['subtotal']);
+                }
+
+                $totalP = floatval($p['total']);
+                if ($totalP <= 0 && $subtotalCalc > 0) {
+                    $totalP = $subtotalCalc;
+                }
+
+                $ventas[] = [
+                    'tipo' => 'producto',
+                    'id' => $p['id'],
+                    'folio' => 'LR-VTA-' . str_pad($p['id'], 4, '0', STR_PAD_LEFT),
+                    'fecha' => $p['fecha'],
+                    'hora' => substr($p['hora'], 0, 5),
+                    'cliente' => $p['cliente'],
+                    'cliente_rut' => $p['cliente_rut'] ?: '',
+                    'cliente_telefono' => $p['cliente_telefono'] ?: '',
+                    'barbero' => 'Caja Mostrador',
+                    'descripcion' => !empty($nombresItems) ? implode(', ', $nombresItems) : 'Venta de Productos',
+                    'items' => $itemsDet,
+                    'subtotal' => $subtotalCalc > 0 ? $subtotalCalc : $totalP,
+                    'descuento' => max(0, $subtotalCalc - $totalP),
+                    'total' => $totalP,
+                    'metodo_pago' => $p['metodo_pago'],
+                    'estado' => $p['estado'],
+                    'timestamp' => strtotime($p['fecha_creacion'])
+                ];
+            }
+
+            // Ordenar de más reciente a más antiguo
+            usort($ventas, function($a, $b) {
+                return ($b['timestamp'] <=> $a['timestamp']);
+            });
+
+            echo json_encode($ventas);
+            break;
+
+        case 'get_pago_config':
+            $stmt = $pdo->prepare("SELECT valor FROM configuraciones WHERE clave = 'frecuencia_pago_barberos'");
+            $stmt->execute();
+            $freq = $stmt->fetchColumn();
+            echo json_encode([
+                'frecuencia_pago_barberos' => $freq ?: 'quincenal'
+            ]);
+            break;
+
         // --- BODEGA Y TIENDA ---
         case 'get_productos':
             $stmt = $pdo->query("
@@ -254,9 +397,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             
         case 'get_pedidos_admin':
             $stmt = $pdo->query("
-                SELECT p.id, p.total, p.estado, IFNULL(p.metodo_pago, 'Efectivo') as metodo_pago, p.fecha_creacion, cl.nombre as cliente, cl.rut as cliente_rut, cl.telefono as cliente_telefono, cl.email as cliente_email
+                SELECT p.id, p.total, p.estado, IFNULL(p.metodo_pago, 'Efectivo') as metodo_pago, p.fecha_creacion, 
+                       COALESCE(cl.nombre, 'Cliente Mostrador') as cliente, 
+                       cl.rut as cliente_rut, cl.telefono as cliente_telefono, cl.email as cliente_email
                 FROM pedidos p
-                JOIN clientes cl ON p.cliente_id = cl.id
+                LEFT JOIN clientes cl ON p.cliente_id = cl.id
                 ORDER BY p.fecha_creacion DESC
             ");
             $pedidos = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -271,6 +416,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             foreach ($pedidos as &$ped) {
                 $stmtDet->execute([$ped['id']]);
                 $ped['detalles'] = $stmtDet->fetchAll(PDO::FETCH_ASSOC);
+                // Si el total estaba en 0, calcularlo de los detalles
+                if (floatval($ped['total'] ?? 0) <= 0 && !empty($ped['detalles'])) {
+                    $totCalc = 0;
+                    foreach ($ped['detalles'] as $d) {
+                        $totCalc += floatval($d['precio_unitario']) * intval($d['cantidad']);
+                    }
+                    if ($totCalc > 0) {
+                        $ped['total'] = $totCalc;
+                    }
+                }
             }
             
             echo json_encode($pedidos);
@@ -280,6 +435,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         case 'get_trabajadores':
             $stmt = $pdo->query("
                 SELECT t.id, t.nombre, t.email, t.foto_perfil, t.activo,
+                IFNULL(t.frecuencia_pago, 'quincenal') as frecuencia_pago,
                 (SELECT COUNT(*) FROM citas c WHERE c.trabajador_id = t.id AND c.fecha = CURDATE() AND c.estado = 'Completada') as cortes_hoy,
                 (SELECT COUNT(*) FROM citas c WHERE c.trabajador_id = t.id AND c.estado = 'Completada') as cortes_totales
                 FROM trabajadores t
@@ -818,6 +974,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             echo json_encode(['status' => 'success']);
             break;
 
+        case 'set_pago_config':
+            $freq = in_array($data['frecuencia_pago_barberos'] ?? '', ['semanal', 'quincenal', 'mensual']) ? $data['frecuencia_pago_barberos'] : 'quincenal';
+            $stmt = $pdo->prepare("
+                INSERT INTO configuraciones (clave, valor, descripcion) 
+                VALUES ('frecuencia_pago_barberos', ?, 'Frecuencia de pago predeterminada para barberos')
+                ON DUPLICATE KEY UPDATE valor = ?
+            ");
+            $stmt->execute([$freq, $freq]);
+            echo json_encode(["status" => "success", "frecuencia_pago_barberos" => $freq]);
+            break;
+
         case 'venta_directa_caja':
             $cliente_id = !empty($data['cliente_id']) ? intval($data['cliente_id']) : null;
             $rut = isset($data['rut']) ? trim($data['rut']) : null;
@@ -833,6 +1000,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             if (empty($carrito) || !is_array($carrito)) {
                 echo json_encode(["status" => "error", "message" => "El carrito de venta no contiene productos."]);
                 break;
+            }
+
+            // Calcular subtotal y total robustamente en backend
+            $subtotalCalc = 0;
+            foreach ($carrito as $item) {
+                $cant = max(1, intval($item['cantidad'] ?? 1));
+                $pr = floatval($item['precio'] ?? 0);
+                $subtotalCalc += ($pr * $cant);
+            }
+            if ($total <= 0 && $subtotalCalc > 0) {
+                $total = max(0, $subtotalCalc - $descuento);
             }
 
             // 1. Identificar o Crear Cliente si no existe
@@ -965,7 +1143,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 $stmt->execute([$nuevoEstado, $pedidoId]);
                 echo json_encode(["status" => "success", "id" => $pedidoId, "estado" => $nuevoEstado]);
             } catch (\PDOException $e) {
-                // Si la columna estado era ENUM restringido, auto-migramos a VARCHAR(50) y reintentamos
                 try {
                     $pdo->exec("ALTER TABLE pedidos MODIFY COLUMN estado VARCHAR(50) DEFAULT 'Pendiente'");
                     $stmt = $pdo->prepare("UPDATE pedidos SET estado=? WHERE id=?");
@@ -982,15 +1159,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         case 'add_trabajador':
             $pass = !empty($data['password']) ? trim($data['password']) : '123456';
             $hash = password_hash($pass, PASSWORD_DEFAULT);
+            $frecuencia = in_array($data['frecuencia_pago'] ?? '', ['semanal', 'quincenal', 'mensual']) ? $data['frecuencia_pago'] : 'quincenal';
             try {
-                $stmt = $pdo->prepare("INSERT INTO trabajadores (nombre, email, foto_perfil, password_hash) VALUES (?,?,?,?)");
-                $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $hash]);
+                $stmt = $pdo->prepare("INSERT INTO trabajadores (nombre, email, foto_perfil, password_hash, frecuencia_pago) VALUES (?,?,?,?,?)");
+                $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $hash, $frecuencia]);
             } catch (\PDOException $e) {
-                // Fallback si la columna password_hash no existiera
                 try {
+                    $pdo->exec("ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS frecuencia_pago VARCHAR(20) DEFAULT 'quincenal'");
                     $pdo->exec("ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255) NULL");
-                    $stmt = $pdo->prepare("INSERT INTO trabajadores (nombre, email, foto_perfil, password_hash) VALUES (?,?,?,?)");
-                    $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $hash]);
+                    $stmt = $pdo->prepare("INSERT INTO trabajadores (nombre, email, foto_perfil, password_hash, frecuencia_pago) VALUES (?,?,?,?,?)");
+                    $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $hash, $frecuencia]);
                 } catch (\Exception $ex) {
                     $stmt = $pdo->prepare("INSERT INTO trabajadores (nombre, email, foto_perfil) VALUES (?,?,?)");
                     $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'']);
@@ -999,18 +1177,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             echo json_encode(["status" => "success"]);
             break;
         case 'update_trabajador':
+            $frecuencia = in_array($data['frecuencia_pago'] ?? '', ['semanal', 'quincenal', 'mensual']) ? $data['frecuencia_pago'] : 'quincenal';
             if (!empty($data['password'])) {
                 $hash = password_hash(trim($data['password']), PASSWORD_DEFAULT);
                 try {
-                    $stmt = $pdo->prepare("UPDATE trabajadores SET nombre=?, email=?, foto_perfil=?, password_hash=? WHERE id=?");
-                    $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $hash, $data['id']]);
+                    $stmt = $pdo->prepare("UPDATE trabajadores SET nombre=?, email=?, foto_perfil=?, password_hash=?, frecuencia_pago=? WHERE id=?");
+                    $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $hash, $frecuencia, $data['id']]);
                 } catch (\Exception $ex) {
                     $stmt = $pdo->prepare("UPDATE trabajadores SET nombre=?, email=?, foto_perfil=? WHERE id=?");
                     $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $data['id']]);
                 }
             } else {
-                $stmt = $pdo->prepare("UPDATE trabajadores SET nombre=?, email=?, foto_perfil=? WHERE id=?");
-                $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $data['id']]);
+                try {
+                    $stmt = $pdo->prepare("UPDATE trabajadores SET nombre=?, email=?, foto_perfil=?, frecuencia_pago=? WHERE id=?");
+                    $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $frecuencia, $data['id']]);
+                } catch (\Exception $ex) {
+                    $stmt = $pdo->prepare("UPDATE trabajadores SET nombre=?, email=?, foto_perfil=? WHERE id=?");
+                    $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $data['id']]);
+                }
             }
             echo json_encode(["status" => "success"]);
             break;

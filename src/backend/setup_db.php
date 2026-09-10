@@ -73,6 +73,10 @@ try {
     $stmtConf = $pdo->prepare("INSERT INTO configuraciones (clave, valor, descripcion) VALUES ('meta_cortes_premio', '3', 'Cantidad de cortes requeridos para ganar premio') ON DUPLICATE KEY UPDATE clave=clave");
     $stmtConf->execute();
 
+    // Insertar configuración por defecto de frecuencia de pago a barberos (quincenal)
+    $stmtConfPago = $pdo->prepare("INSERT INTO configuraciones (clave, valor, descripcion) VALUES ('frecuencia_pago_barberos', 'quincenal', 'Frecuencia de pago predeterminada para barberos (semanal, quincenal, mensual)') ON DUPLICATE KEY UPDATE clave=clave");
+    $stmtConfPago->execute();
+
     // Actualizar columnas de estado y metodo_pago en pedidos para permitir 'Pagado', 'Entregado', etc.
     try {
         $pdo->exec("ALTER TABLE pedidos MODIFY COLUMN estado VARCHAR(50) DEFAULT 'Pendiente'");
@@ -98,6 +102,14 @@ try {
     try {
         $pdo->exec("ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255) NULL");
     } catch (Exception $e) {}
+
+    try {
+        $pdo->exec("ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS frecuencia_pago VARCHAR(20) DEFAULT 'quincenal'");
+    } catch (Exception $e) {
+        try {
+            $pdo->exec("ALTER TABLE trabajadores ADD COLUMN frecuencia_pago VARCHAR(20) DEFAULT 'quincenal'");
+        } catch (Exception $ex) {}
+    }
 
     echo "Base de datos actualizada con exito.\n";
 

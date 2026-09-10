@@ -265,6 +265,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 break;
             }
 
+            // Calcular subtotal y total robustamente en backend
+            $subtotalCalc = 0;
+            foreach ($carrito as $item) {
+                $cant = max(1, intval($item['cantidad'] ?? 1));
+                $pr = floatval($item['precio'] ?? 0);
+                $subtotalCalc += ($pr * $cant);
+            }
+            if ($total <= 0 && $subtotalCalc > 0) {
+                $total = max(0, $subtotalCalc - $descuento);
+            }
+
             if (!$cliente_id && !empty($rut)) {
                 $rutClean = strtoupper(preg_replace('/[^0-9K]/i', '', $rut));
                 $stmtCli = $pdo->prepare("SELECT id, nombre, telefono, email FROM clientes WHERE REPLACE(REPLACE(UPPER(rut), '.', ''), '-', '') = ? OR UPPER(rut) = ? LIMIT 1");

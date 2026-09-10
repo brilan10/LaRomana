@@ -165,6 +165,13 @@ export default function AdminDashboard({ session, logout }) {
   const [guardandoVentaCatalogo, setGuardandoVentaCatalogo] = useState(false);
   const [imprimirBoletaVenta, setImprimirBoletaVenta] = useState(true);
 
+  // Estados para Registro e Historial de Ventas y Boletas en Caja
+  const [ventasCajaHoy, setVentasCajaHoy] = useState([]);
+  const [filtroTipoVentaCaja, setFiltroTipoVentaCaja] = useState('todas'); // 'todas', 'corte', 'producto'
+  const [busquedaVentaCaja, setBusquedaVentaCaja] = useState('');
+  const [frecuenciaPagoConfig, setFrecuenciaPagoConfig] = useState('quincenal');
+  const [guardandoFrecuenciaPago, setGuardandoFrecuenciaPago] = useState(false);
+
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
@@ -345,7 +352,36 @@ export default function AdminDashboard({ session, logout }) {
     let inicio = '';
     let fin = formatDateYMD(hoy);
 
-    if (tipo === 'esta_semana') {
+    if (tipo === 'esta_quincena') {
+      const dia = hoy.getDate();
+      const mesStr = String(hoy.getMonth() + 1).padStart(2, '0');
+      const anio = hoy.getFullYear();
+      if (dia <= 15) {
+        inicio = `${anio}-${mesStr}-01`;
+        fin = `${anio}-${mesStr}-15`;
+      } else {
+        inicio = `${anio}-${mesStr}-16`;
+        const endOfMonth = new Date(anio, hoy.getMonth() + 1, 0);
+        fin = formatDateYMD(endOfMonth);
+      }
+    } else if (tipo === 'quincena_anterior') {
+      const dia = hoy.getDate();
+      if (dia <= 15) {
+        // 2da quincena del mes anterior
+        const prevMonthDate = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1);
+        const anioPrev = prevMonthDate.getFullYear();
+        const mesPrevStr = String(prevMonthDate.getMonth() + 1).padStart(2, '0');
+        inicio = `${anioPrev}-${mesPrevStr}-16`;
+        const endOfPrevMonth = new Date(anioPrev, prevMonthDate.getMonth() + 1, 0);
+        fin = formatDateYMD(endOfPrevMonth);
+      } else {
+        // 1ra quincena del mes actual
+        const mesStr = String(hoy.getMonth() + 1).padStart(2, '0');
+        const anio = hoy.getFullYear();
+        inicio = `${anio}-${mesStr}-01`;
+        fin = `${anio}-${mesStr}-15`;
+      }
+    } else if (tipo === 'esta_semana') {
       const d = new Date();
       const day = d.getDay();
       const diff = d.getDate() - day + (day === 0 ? -6 : 1);
@@ -383,6 +419,27 @@ export default function AdminDashboard({ session, logout }) {
       setLiqFechaInicio(inicio);
       setLiqFechaFin(fin);
       cargarLiquidaciones(inicio, fin, liqBarberoId);
+    }
+  };
+
+  const guardarFrecuenciaPago = async (nuevaFreq) => {
+    const freq = nuevaFreq || frecuenciaPagoConfig;
+    setGuardandoFrecuenciaPago(true);
+    try {
+      const res = await fetch(`${API_URL}/admin_api.php?action=set_pago_config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ frecuencia_pago_barberos: freq })
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        setFrecuenciaPagoConfig(data.frecuencia_pago_barberos || freq);
+        showToast(`Frecuencia de pago establecida a: ${freq.toUpperCase()}`, 'success');
+      }
+    } catch (err) {
+      showToast('Error al guardar frecuencia de pago', 'error');
+    } finally {
+      setGuardandoFrecuenciaPago(false);
     }
   };
 
@@ -548,18 +605,32 @@ export default function AdminDashboard({ session, logout }) {
   };
 
   const cargarCaja = async () => {
-    const res = await fetch(`${API_URL}/admin_api.php?action=get_citas_por_cobrar`);
-    setCitasCaja(await res.json());
-    
-    const resEstado = await fetch(`${API_URL}/admin_api.php?action=get_estado_caja`);
-    const dataEstado = await resEstado.json();
-    setEstadoCaja(dataEstado.estado);
-    setDatosCaja(dataEstado);
-    if (dataEstado.porcentaje_barbero !== undefined && dataEstado.porcentaje_tienda !== undefined) {
-      setComisionesConfig({
-        porcentaje_barbero: Number(dataEstado.porcentaje_barbero),
-        porcentaje_tienda: Number(dataEstado.porcentaje_tienda)
-      });
+    try {
+      const res = await fetch(`${API_URL}/admin_api.php?action=get_citas_por_cobrar`);
+      setCitasCaja(await res.json());
+      
+      const resEstado = await fetch(`${API_URL}/admin_api.php?action=get_estado_caja`);
+      const dataEstado = await resEstado.json();
+      setEstadoCaja(dataEstado.estado);
+      setDatosCaja(dataEstado);
+      if (dataEstado.porcentaje_barbero !== undefined && dataEstado.porcentaje_tienda !== undefined) {
+        setComisionesConfig({
+          porcentaje_barbero: Number(dataEstado.porcentaje_barbero),
+          porcentaje_tienda: Number(dataEstado.porcentaje_tienda)
+        });
+      }
+
+      const resVentas = await fetch(`${API_URL}/admin_api.php?action=get_ventas_caja_hoy`);
+      const dataVentas = await resVentas.json();
+      setVentasCajaHoy(Array.isArray(dataVentas) ? dataVentas : []);
+
+      const resFreq = await fetch(`${API_URL}/admin_api.php?action=get_pago_config`);
+      const dataFreq = await resFreq.json();
+      if (dataFreq.frecuencia_pago_barberos) {
+        setFrecuenciaPagoConfig(dataFreq.frecuencia_pago_barberos);
+      }
+    } catch (e) {
+      console.error("Error cargando caja:", e);
     }
   };
 
@@ -784,6 +855,8 @@ export default function AdminDashboard({ session, logout }) {
       return;
     }
 
+    const precioNum = parseFloat(String(prod.precio).replace(/[^0-9.-]+/g, '')) || 0;
+
     setCarritoVenta(prev => {
       const idx = prev.findIndex(item => item.id === prod.id);
       if (idx !== -1) {
@@ -793,13 +866,13 @@ export default function AdminDashboard({ session, logout }) {
           return prev;
         }
         const updated = [...prev];
-        updated[idx] = { ...actual, cantidad: actual.cantidad + 1 };
+        updated[idx] = { ...actual, cantidad: actual.cantidad + 1, precio: precioNum || actual.precio };
         return updated;
       } else {
         return [...prev, {
           id: prod.id,
           nombre: prod.nombre,
-          precio: Number(prod.precio),
+          precio: precioNum,
           stock: stockDisp,
           imagen_url: prod.imagen_url,
           categoria_nombre: prod.categoria_nombre,
@@ -841,8 +914,12 @@ export default function AdminDashboard({ session, logout }) {
       return;
     }
 
-    const subtotalCalc = carritoVenta.reduce((sum, it) => sum + (it.precio * it.cantidad), 0);
-    const descCalc = Math.min(subtotalCalc, Math.max(0, Number(ventaCatalogoForm.descuento) || 0));
+    const subtotalCalc = carritoVenta.reduce((sum, it) => {
+      const p = parseFloat(String(it.precio).replace(/[^0-9.-]+/g, '')) || 0;
+      const c = parseInt(it.cantidad, 10) || 1;
+      return sum + (p * c);
+    }, 0);
+    const descCalc = Math.min(subtotalCalc, Math.max(0, parseFloat(String(ventaCatalogoForm.descuento).replace(/[^0-9.-]+/g, '')) || 0));
     const totalCalc = Math.max(0, subtotalCalc - descCalc);
 
     const payload = {
@@ -854,8 +931,8 @@ export default function AdminDashboard({ session, logout }) {
       carrito: carritoVenta.map(it => ({
         id: it.id,
         nombre: it.nombre,
-        precio: it.precio,
-        cantidad: it.cantidad
+        precio: parseFloat(String(it.precio).replace(/[^0-9.-]+/g, '')) || 0,
+        cantidad: parseInt(it.cantidad, 10) || 1
       })),
       subtotal: subtotalCalc,
       descuento: descCalc,
@@ -884,12 +961,12 @@ export default function AdminDashboard({ session, logout }) {
             cliente: data.cliente_nombre || payload.nombre,
             rut: data.cliente_rut || payload.rut,
             telefono: data.cliente_telefono || payload.telefono,
-            barbero: 'Caja Principal / Administrador',
+            barbero: 'Caja Principal / Mostrador',
             items: carritoVenta.map(it => ({
               nombre: it.nombre,
-              cantidad: it.cantidad,
-              precio: it.precio,
-              subtotal: it.precio * it.cantidad
+              cantidad: parseInt(it.cantidad, 10) || 1,
+              precio: parseFloat(String(it.precio).replace(/[^0-9.-]+/g, '')) || 0,
+              subtotal: (parseFloat(String(it.precio).replace(/[^0-9.-]+/g, '')) || 0) * (parseInt(it.cantidad, 10) || 1)
             })),
             subtotal: subtotalCalc,
             descuento: descCalc,
@@ -920,9 +997,8 @@ export default function AdminDashboard({ session, logout }) {
       } else {
         showToast(data.message || 'Error al procesar la venta', 'error');
       }
-    } catch (err) {
-      console.error("Error en venta de catálogo:", err);
-      showToast('Error de conexión al procesar la venta', 'error');
+    } catch (e) {
+      showToast('Error de red al procesar venta', 'error');
     } finally {
       setGuardandoVentaCatalogo(false);
     }
@@ -1626,6 +1702,278 @@ export default function AdminDashboard({ session, logout }) {
                 </tbody>
               </table>
             </div>
+
+            {/* 📋 Registro de Ventas y Boletas Emitidas Hoy */}
+            <div style={{ background: 'rgba(26, 26, 26, 0.7)', backdropFilter: 'blur(10px)', borderRadius: '12px', border: '1px solid rgba(212, 175, 55, 0.3)', overflow: 'hidden', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
+              
+              {/* Encabezado y Filtros */}
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      📋 Registro de Ventas & Boletas de Hoy
+                    </h3>
+                    <span style={{ fontSize: '0.78rem', background: 'rgba(212, 175, 55, 0.15)', color: 'var(--gold-jewel)', border: '1px solid rgba(212, 175, 55, 0.4)', padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }}>
+                      {ventasCajaHoy.length} {ventasCajaHoy.length === 1 ? 'venta' : 'ventas'}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '0.78rem', color: '#aaa' }}>
+                    Visualiza todo lo vendido en el día (servicios y productos de catálogo), consulta detalles y reimprime boletas térmicas.
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  {/* Buscador en ventas de caja */}
+                  <div style={{ position: 'relative', minWidth: '220px' }}>
+                    <input 
+                      type="text"
+                      className="input-field"
+                      placeholder="🔍 Folio, cliente, producto..."
+                      value={busquedaVentaCaja}
+                      onChange={e => setBusquedaVentaCaja(e.target.value)}
+                      style={{ margin: 0, padding: '7px 12px', fontSize: '0.82rem' }}
+                    />
+                    {busquedaVentaCaja && (
+                      <button 
+                        onClick={() => setBusquedaVentaCaja('')} 
+                        style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: '#888', cursor: 'pointer', fontSize: '0.85rem' }}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Filtro por tipo */}
+                  <div style={{ display: 'flex', gap: '4px', background: 'rgba(0,0,0,0.4)', padding: '3px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    {[
+                      { id: 'todas', label: 'Todas' },
+                      { id: 'corte', label: '✂️ Cortes' },
+                      { id: 'producto', label: '🛒 Productos' }
+                    ].map(f => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        onClick={() => setFiltroTipoVentaCaja(f.id)}
+                        style={{
+                          background: filtroTipoVentaCaja === f.id ? 'var(--gold-jewel)' : 'transparent',
+                          color: filtroTipoVentaCaja === f.id ? '#000' : '#aaa',
+                          border: 'none',
+                          padding: '5px 10px',
+                          borderRadius: '6px',
+                          fontSize: '0.75rem',
+                          fontWeight: 'bold',
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button 
+                    className="btn-outline-gold"
+                    onClick={cargarCaja}
+                    style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '5px' }}
+                    title="Actualizar registro de ventas"
+                  >
+                    🔄 Refrescar
+                  </button>
+                </div>
+              </div>
+
+              {/* Contenido Tabla de Ventas */}
+              {(() => {
+                const termVenta = busquedaVentaCaja.trim().toLowerCase();
+                const ventasFiltradas = ventasCajaHoy.filter(v => {
+                  const matchTipo = filtroTipoVentaCaja === 'todas' || v.tipo === filtroTipoVentaCaja;
+                  if (!matchTipo) return false;
+                  if (!termVenta) return true;
+                  return (
+                    (v.folio && v.folio.toLowerCase().includes(termVenta)) ||
+                    (v.cliente && v.cliente.toLowerCase().includes(termVenta)) ||
+                    (v.cliente_rut && v.cliente_rut.toLowerCase().includes(termVenta)) ||
+                    (v.barbero && v.barbero.toLowerCase().includes(termVenta)) ||
+                    (v.metodo_pago && v.metodo_pago.toLowerCase().includes(termVenta)) ||
+                    (v.items_texto && v.items_texto.toLowerCase().includes(termVenta))
+                  );
+                });
+
+                if (ventasFiltradas.length === 0) {
+                  return (
+                    <div style={{ textAlign: 'center', padding: '40px 20px', color: '#888' }}>
+                      <div style={{ fontSize: '2rem', marginBottom: '8px' }}>🎫</div>
+                      <div style={{ fontSize: '0.95rem', color: '#ccc', fontWeight: 'bold' }}>
+                        {ventasCajaHoy.length === 0 
+                          ? 'Aún no se han registrado cobros ni ventas en caja el día de hoy.' 
+                          : 'No se encontraron ventas con los filtros aplicados.'}
+                      </div>
+                      <span style={{ fontSize: '0.8rem', color: '#777' }}>
+                        Al completar cobros de citas o realizar ventas desde "Vender Producto (Catálogo)", aparecerán listadas aquí con su respectiva boleta térmica.
+                      </span>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                      <thead>
+                        <tr style={{ background: 'rgba(0,0,0,0.3)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                          <th style={tableHeaderStyle}>Hora / Folio</th>
+                          <th style={tableHeaderStyle}>Tipo</th>
+                          <th style={tableHeaderStyle}>Cliente</th>
+                          <th style={tableHeaderStyle}>Atendido por</th>
+                          <th style={tableHeaderStyle}>Detalle de Artículos / Servicios</th>
+                          <th style={tableHeaderStyle}>Método</th>
+                          <th style={{ ...tableHeaderStyle, textAlign: 'right' }}>Total</th>
+                          <th style={{ ...tableHeaderStyle, textAlign: 'center' }}>Boleta</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ventasFiltradas.map((v, idx) => (
+                          <tr 
+                            key={`${v.tipo}_${v.id}_${idx}`} 
+                            style={{ 
+                              borderBottom: '1px solid rgba(255,255,255,0.04)',
+                              background: idx % 2 === 0 ? 'rgba(255,255,255,0.015)' : 'transparent',
+                              transition: 'background 0.15s ease'
+                            }}
+                          >
+                            {/* Hora y Folio */}
+                            <td style={tableCellStyle}>
+                              <div style={{ fontWeight: 'bold', color: '#fff' }}>{v.hora ? v.hora.slice(0, 5) : '--:--'}</div>
+                              <span style={{ 
+                                display: 'inline-block', 
+                                marginTop: '3px',
+                                fontSize: '0.72rem', 
+                                padding: '2px 6px', 
+                                borderRadius: '4px', 
+                                background: 'rgba(212, 175, 55, 0.15)', 
+                                color: 'var(--gold-jewel)', 
+                                border: '1px solid rgba(212, 175, 55, 0.3)', 
+                                fontWeight: 'bold' 
+                              }}>
+                                {v.folio || `LR-${String(v.id).padStart(4, '0')}`}
+                              </span>
+                            </td>
+
+                            {/* Tipo */}
+                            <td style={tableCellStyle}>
+                              <span style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                padding: '3px 8px',
+                                borderRadius: '6px',
+                                fontSize: '0.75rem',
+                                fontWeight: 'bold',
+                                background: v.tipo === 'corte' ? 'rgba(46, 204, 113, 0.15)' : 'rgba(52, 152, 219, 0.15)',
+                                color: v.tipo === 'corte' ? '#2ecc71' : '#3498db',
+                                border: `1px solid ${v.tipo === 'corte' ? 'rgba(46,204,113,0.3)' : 'rgba(52,152,219,0.3)'}`
+                              }}>
+                                {v.tipo === 'corte' ? '✂️ Servicio' : '🛒 Tienda'}
+                              </span>
+                            </td>
+
+                            {/* Cliente */}
+                            <td style={tableCellStyle}>
+                              <div style={{ fontWeight: 'bold', color: '#fff' }}>{v.cliente || 'Cliente Mostrador'}</div>
+                              {v.cliente_rut && (
+                                <div style={{ fontSize: '0.75rem', color: '#888' }}>{formatRut(v.cliente_rut)}</div>
+                              )}
+                            </td>
+
+                            {/* Atendido por */}
+                            <td style={{ ...tableCellStyle, color: '#aaa' }}>
+                              {v.barbero || 'Caja / Local'}
+                            </td>
+
+                            {/* Detalle */}
+                            <td style={{ ...tableCellStyle, maxWidth: '280px' }}>
+                              <div style={{ color: '#eee', whiteSpace: 'normal', lineHeight: '1.4' }}>
+                                {v.items_texto || (v.items || []).map(i => i.nombre).join(', ') || 'Venta de caja'}
+                              </div>
+                            </td>
+
+                            {/* Método de Pago */}
+                            <td style={tableCellStyle}>
+                              <span style={{
+                                display: 'inline-block',
+                                padding: '3px 8px',
+                                borderRadius: '6px',
+                                fontSize: '0.75rem',
+                                fontWeight: '500',
+                                background: 'rgba(255,255,255,0.06)',
+                                color: v.metodo_pago === 'Efectivo' ? '#2ecc71' : (v.metodo_pago === 'Transferencia' ? '#3498db' : 'var(--gold-jewel)'),
+                                border: '1px solid rgba(255,255,255,0.1)'
+                              }}>
+                                💳 {v.metodo_pago || 'Efectivo'}
+                              </span>
+                            </td>
+
+                            {/* Total */}
+                            <td style={{ ...tableCellStyle, textAlign: 'right' }}>
+                              <div style={{ fontSize: '1rem', fontWeight: 'bold', color: 'var(--gold-jewel)' }}>
+                                ${Number(v.total || 0).toLocaleString('es-CL')}
+                              </div>
+                              {Number(v.descuento || 0) > 0 && (
+                                <div style={{ fontSize: '0.72rem', color: '#e74c3c' }}>
+                                  Desc. -${Number(v.descuento).toLocaleString('es-CL')}
+                                </div>
+                              )}
+                            </td>
+
+                            {/* Acciones */}
+                            <td style={{ ...tableCellStyle, textAlign: 'center' }}>
+                              <button
+                                type="button"
+                                className="btn-outline-gold"
+                                onClick={() => {
+                                  setTicketDetalleModal({
+                                    id: v.id,
+                                    tipo: v.tipo,
+                                    folio: v.folio,
+                                    fecha_creacion: v.hora ? `${formatDateYMD()} ${v.hora}` : formatDateYMD(),
+                                    cliente: v.cliente || 'Cliente Mostrador',
+                                    cliente_rut: v.cliente_rut || '',
+                                    cliente_telefono: v.cliente_telefono || '',
+                                    cliente_email: v.cliente_email || '',
+                                    barbero: v.barbero || '',
+                                    detalles: (v.items || []).map(it => ({
+                                      producto: it.nombre || 'Artículo / Servicio',
+                                      cantidad: Number(it.cantidad) || 1,
+                                      precio_unitario: Number(it.precio_unitario || it.precio || 0)
+                                    })),
+                                    subtotal: Number(v.subtotal || v.total || 0),
+                                    descuento: Number(v.descuento || 0),
+                                    total: Number(v.total || 0),
+                                    metodo_pago: v.metodo_pago || 'Efectivo',
+                                    estado: v.estado || 'Pagado'
+                                  });
+                                }}
+                                style={{
+                                  padding: '5px 10px',
+                                  fontSize: '0.78rem',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  fontWeight: 'bold',
+                                  borderRadius: '6px'
+                                }}
+                              >
+                                <span>👁️</span> Boleta
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            </div>
+
           </div>
         )}
       </div>
@@ -3303,7 +3651,20 @@ export default function AdminDashboard({ session, logout }) {
              <input className="input-field" placeholder="Nombre completo" value={editingTrabajador.nombre} onChange={e=>setEditingTrabajador({...editingTrabajador, nombre: e.target.value})} required style={{ margin: 0 }} />
              <input type="email" className="input-field" placeholder="Correo electrónico" value={editingTrabajador.email} onChange={e=>setEditingTrabajador({...editingTrabajador, email: e.target.value})} required style={{ margin: 0 }} />
              <input type="text" className="input-field" placeholder={editingTrabajador.id ? "Nueva contraseña (dejar vacío si no cambia)" : "Contraseña (Ej: 123456)"} value={editingTrabajador.password || ''} onChange={e=>setEditingTrabajador({...editingTrabajador, password: e.target.value})} required={!editingTrabajador.id} style={{ margin: 0 }} />
-             
+             {/* Selector de Frecuencia de Pago */}
+             <div style={{ margin: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+               <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Frecuencia de Pago / Liquidación:</label>
+               <select 
+                 className="input-field" 
+                 value={editingTrabajador.frecuencia_pago || 'quincenal'} 
+                 onChange={e => setEditingTrabajador({ ...editingTrabajador, frecuencia_pago: e.target.value })}
+                 style={{ margin: 0, height: '42px' }}
+               >
+                 <option value="quincenal">🌓 Quincenal (1 al 15 y 16 al fin)</option>
+                 <option value="semanal">📅 Semanal (Lunes a Domingo)</option>
+                 <option value="mensual">🗓️ Mensual (1 al fin de mes)</option>
+               </select>
+             </div>
              {/* Subida de Foto del Barbero */}
              <div style={{ margin: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
                <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Foto de Perfil / Presentación:</label>
@@ -3345,6 +3706,7 @@ export default function AdminDashboard({ session, logout }) {
               <th style={tableHeaderStyle}>Contacto</th>
               <th style={tableHeaderStyle}>Cortes Hoy</th>
               <th style={tableHeaderStyle}>Cortes Totales</th>
+              <th style={tableHeaderStyle}>Frecuencia Pago</th>
               <th style={tableHeaderStyle}>Estado</th>
               <th style={tableHeaderStyle}>Acciones</th>
             </tr>
@@ -3367,6 +3729,19 @@ export default function AdminDashboard({ session, logout }) {
                 </td>
                 <td style={{...tableCellStyle}}>
                   <span style={{ color: 'var(--green-emerald-light)', fontWeight: 'bold', fontSize: '1.2rem' }}>{t.cortes_totales || 0}</span>
+                </td>
+                <td style={tableCellStyle}>
+                  <span style={{ 
+                    background: t.frecuencia_pago === 'semanal' ? 'rgba(52, 152, 219, 0.15)' : (t.frecuencia_pago === 'mensual' ? 'rgba(155, 89, 182, 0.15)' : 'rgba(212, 175, 55, 0.15)'),
+                    color: t.frecuencia_pago === 'semanal' ? '#3498db' : (t.frecuencia_pago === 'mensual' ? '#bb86fc' : 'var(--gold-jewel)'),
+                    border: '1px solid currentColor',
+                    padding: '3px 8px',
+                    borderRadius: '8px',
+                    fontSize: '0.75rem',
+                    fontWeight: 'bold'
+                  }}>
+                    {t.frecuencia_pago === 'semanal' ? '📅 Semanal' : (t.frecuencia_pago === 'mensual' ? '🗓️ Mensual' : '🌓 Quincenal')}
+                  </span>
                 </td>
                 <td style={tableCellStyle}>
                   <span style={{ background: t.activo ? 'rgba(39, 174, 96, 0.1)' : 'rgba(231, 76, 60, 0.1)', color: t.activo ? 'var(--green-emerald-light)' : '#e74c3c', padding: '5px 10px', borderRadius: '20px', fontSize: '0.8rem', fontWeight: 'bold' }}>
@@ -3725,6 +4100,60 @@ export default function AdminDashboard({ session, logout }) {
           </div>
         </div>
 
+        {/* Configuración de Frecuencia de Pago Predeterminada a Barberos */}
+        <div style={{ 
+          background: 'rgba(26, 26, 26, 0.7)', 
+          backdropFilter: 'blur(10px)', 
+          padding: '16px 20px', 
+          borderRadius: '12px', 
+          border: '1px solid rgba(212, 175, 55, 0.4)', 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center', 
+          flexWrap: 'wrap', 
+          gap: '15px' 
+        }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '1.2rem' }}>⚙️</span>
+              <strong style={{ color: 'var(--gold-jewel)', fontSize: '0.98rem' }}>Frecuencia de Pago a Barberos</strong>
+            </div>
+            <span style={{ fontSize: '0.82rem', color: '#aaa' }}>
+              Configura cómo liquidas habitualmente a los barberos: Quincenal (1-15 y 16-Fin), Semanal (L-D) o Mensual (1-Fin).
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {[
+              { id: 'quincenal', label: '🌓 Quincenal (1-15 / 16-Fin)' },
+              { id: 'semanal', label: '📅 Semanal (L-D)' },
+              { id: 'mensual', label: '🗓️ Mensual (1-Fin)' }
+            ].map(f => (
+              <button
+                key={f.id}
+                type="button"
+                disabled={guardandoFrecuenciaPago}
+                onClick={() => guardarFrecuenciaPago(f.id)}
+                style={{
+                  background: frecuenciaPagoConfig === f.id ? 'linear-gradient(135deg, #d4af37 0%, #aa820a 100%)' : 'rgba(0,0,0,0.5)',
+                  color: frecuenciaPagoConfig === f.id ? '#000' : '#ccc',
+                  border: frecuenciaPagoConfig === f.id ? '1px solid var(--gold-jewel)' : '1px solid #444',
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  fontWeight: 'bold',
+                  fontSize: '0.82rem',
+                  cursor: 'pointer',
+                  boxShadow: frecuenciaPagoConfig === f.id ? '0 2px 10px rgba(212, 175, 55, 0.3)' : 'none',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                {frecuenciaPagoConfig === f.id ? '✓ ' : ''}{f.label}
+              </button>
+            ))}
+            {guardandoFrecuenciaPago && <span style={{ color: 'var(--gold-jewel)', fontSize: '0.8rem' }}>Guardando...</span>}
+          </div>
+        </div>
+
         {/* Panel de Filtro de Período */}
         <div style={{ background: 'rgba(26, 26, 26, 0.7)', backdropFilter: 'blur(10px)', padding: '20px', borderRadius: '12px', border: '1px solid var(--gold-jewel)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', flexWrap: 'wrap', gap: '10px' }}>
@@ -3734,9 +4163,11 @@ export default function AdminDashboard({ session, logout }) {
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               {[
                 { id: 'esta_semana', label: '📅 Esta Semana' },
-                { id: 'semana_anterior', label: '📅 Semana Anterior' },
+                { id: 'semana_anterior', label: '📅 Semana Ant.' },
+                { id: 'esta_quincena', label: '🌓 Esta Quincena' },
+                { id: 'quincena_anterior', label: '🌓 Quincena Ant.' },
                 { id: 'este_mes', label: '🗓️ Este Mes' },
-                { id: 'mes_anterior', label: '🗓️ Mes Anterior' },
+                { id: 'mes_anterior', label: '🗓️ Mes Ant.' },
                 { id: 'ultimos_30', label: '⏱️ Últimos 30 Días' },
                 { id: 'custom', label: '⚙️ Personalizado' }
               ].map(p => (
@@ -5388,7 +5819,7 @@ export default function AdminDashboard({ session, logout }) {
                  <img src="/Logo_romana_dorado.png" alt="La Romana" style={{ height: '36px', objectFit: 'contain' }} />
                  <div>
                    <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.15rem' }}>
-                     Comprobante Ticket LR-{String(ticketDetalleModal.id).padStart(4, '0')}
+                     Comprobante / Boleta {ticketDetalleModal.folio || `LR-${String(ticketDetalleModal.id).padStart(4, '0')}`}
                    </h3>
                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>La Romana Barber Shop y Accesorios / Perfumería</span>
                  </div>
@@ -5425,6 +5856,12 @@ export default function AdminDashboard({ session, logout }) {
                  <span style={{ color: 'var(--text-secondary)' }}>Cliente:</span>
                  <strong style={{ color: '#fff' }}>{ticketDetalleModal.cliente}</strong>
                </div>
+               {ticketDetalleModal.barbero && (
+                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                   <span style={{ color: 'var(--text-secondary)' }}>Atendido por:</span>
+                   <strong style={{ color: 'var(--gold-jewel)' }}>{ticketDetalleModal.barbero}</strong>
+                 </div>
+               )}
                {ticketDetalleModal.cliente_rut && (
                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                    <span style={{ color: 'var(--text-secondary)' }}>RUT:</span>

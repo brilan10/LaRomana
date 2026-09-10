@@ -73,6 +73,8 @@ if ($is_local) {
     ];
 }
 
+date_default_timezone_set('America/Santiago');
+
 $pdo = null;
 $last_error = null;
 
@@ -81,6 +83,9 @@ foreach ($connection_configs as $cfg) {
         $dsn = "mysql:host={$cfg['host']};dbname={$cfg['db']};charset=utf8mb4";
         $pdo = new PDO($dsn, $cfg['user'], $cfg['pass'], $options);
         if ($pdo) {
+            try {
+                $pdo->exec("SET time_zone = '-03:00'");
+            } catch (\Exception $tzEx) {}
             break; // ¡Conexión exitosa!
         }
     } catch (\PDOException $e) {
