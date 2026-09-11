@@ -1107,17 +1107,25 @@ export default function AdminDashboard({ session, logout }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(nuevoClienteForm)
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data = {};
+      try {
+        data = JSON.parse(text);
+      } catch (parseErr) {
+        showToast('Respuesta del servidor: ' + text.slice(0, 120), 'error');
+        return;
+      }
+
       if (data.status === 'success') {
         showToast(data.message || 'Cliente registrado con éxito', 'success');
         setShowNuevoClienteModal(false);
         setNuevoClienteForm({ rut: '', nombre: '', email: '', telefono: '', cortes_acumulados: 0, notas_crm: '', password: '123456' });
         cargarCRM();
       } else {
-        showToast(data.message || 'Error al crear cliente', 'error');
+        showToast(data.message || data.error || 'Error al crear cliente', 'error');
       }
     } catch (err) {
-      showToast('Error de conexión con el servidor', 'error');
+      showToast('Error de conexión: ' + (err.message || 'No se pudo contactar al servidor'), 'error');
     } finally {
       setGuardandoCliente(false);
     }
@@ -1149,17 +1157,25 @@ export default function AdminDashboard({ session, logout }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(clienteAEditar)
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data = {};
+      try {
+        data = JSON.parse(text);
+      } catch (parseErr) {
+        showToast('Respuesta del servidor: ' + text.slice(0, 120), 'error');
+        return;
+      }
+
       if (data.status === 'success') {
         showToast(data.message || 'Ficha y cortes del cliente actualizados', 'success');
         setShowEditarClienteModal(false);
         setClienteAEditar(null);
         cargarCRM();
       } else {
-        showToast(data.message || 'Error al actualizar cliente', 'error');
+        showToast(data.message || data.error || 'Error al actualizar cliente', 'error');
       }
     } catch (err) {
-      showToast('Error de conexión con el servidor', 'error');
+      showToast('Error de conexión: ' + (err.message || 'No se pudo contactar al servidor'), 'error');
     } finally {
       setGuardandoEditarCliente(false);
     }

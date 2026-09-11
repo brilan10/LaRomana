@@ -111,6 +111,27 @@ try {
         } catch (Exception $ex) {}
     }
 
+    // Asegurar columnas requeridas en clientes
+    try {
+        $pdo->exec("ALTER TABLE clientes ADD COLUMN IF NOT EXISTS cortes_acumulados INT DEFAULT 0");
+    } catch (Exception $e) {}
+
+    try {
+        $pdo->exec("ALTER TABLE clientes ADD COLUMN IF NOT EXISTS decants_disponibles INT DEFAULT 0");
+    } catch (Exception $e) {}
+
+    try {
+        $pdo->exec("ALTER TABLE clientes ADD COLUMN IF NOT EXISTS notas_crm TEXT NULL");
+    } catch (Exception $e) {}
+
+    try {
+        $pdo->exec("ALTER TABLE clientes ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255) NULL");
+    } catch (Exception $e) {}
+
+    try {
+        $pdo->exec("ALTER TABLE clientes MODIFY COLUMN email VARCHAR(150) NULL");
+    } catch (Exception $e) {}
+
     echo "Base de datos actualizada con exito.\n";
 
 } catch (PDOException $e) {

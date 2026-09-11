@@ -831,40 +831,85 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     switch ($action) {
         // --- CRM Y CAJA ---
         case 'crear_cliente':
-            $rut = trim($data['rut'] ?? '');
-            $nombre = trim($data['nombre'] ?? '');
-            $email = trim($data['email'] ?? '');
-            $telefono = trim($data['telefono'] ?? '');
-            $notas_crm = trim($data['notas_crm'] ?? '');
-            $cortes = intval($data['cortes_acumulados'] ?? 0);
-            $password = !empty($data['password']) ? trim($data['password']) : '123456';
+            try {
+                // Asegurar columnas en clientes si la BD no las tenía
+                try {
+                    $pdo->exec("ALTER TABLE clientes ADD COLUMN IF NOT EXISTS cortes_acumulados INT DEFAULT 0");
+                } catch (\Exception $e) {}
+                try {
+                    $pdo->exec("ALTER TABLE clientes ADD COLUMN IF NOT EXISTS notas_crm TEXT NULL");
+                } catch (\Exception $e) {}
+                try {
+                    $pdo->exec("ALTER TABLE clientes ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255) NULL");
+                } catch (\Exception $e) {}
 
-            if (empty($rut) || empty($nombre)) {
-                echo json_encode(["status" => "error", "message" => "RUT y Nombre son campos obligatorios."]);
-                break;
-            }
+                $rut = trim($data['rut'] ?? '');
+                $nombre = trim($data['nombre'] ?? '');
+                $email = !empty($data['email']) ? trim($data['email']) : null;
+                $telefono = !empty($data['telefono']) ? trim($data['telefono']) : null;
+                $notas_crm = !empty($data['notas_crm']) ? trim($data['notas_crm']) : null;
+                $cortes = max(0, intval($data['cortes_acumulados'] ?? 0));
+                $password = !empty($data['password']) ? trim($data['password']) : '123456';
 
-            $rutClean = strtoupper(preg_replace('/[^0-9K]/i', '', $rut));
+                if (empty($rut) || empty($nombre)) {
+                    echo json_encode(["status" => "error", "message" => "RUT y Nombre son campos obligatorios."]);
+                    break;
+                }
 
-            // Validar si el RUT ya existe
-            $stmtCheck = $pdo->prepare("SELECT id, nombre, cortes_acumulados FROM clientes WHERE REPLACE(REPLACE(UPPER(rut), '.', ''), '-', '') = ? OR UPPER(rut) = ?");
-            $stmtCheck->execute([$rutClean, strtoupper($rut)]);
-            $existente = $stmtCheck->fetch();
+                $rutClean = strtoupper(preg_replace('/[^0-9K]/i', '', $rut));
 
-            if ($existente) {
-                // Si el cliente ya existe, actualizamos su información y asignamos sus cortes
-                $stmtUpd = $pdo->prepare("
-                    UPDATE clientes 
-                    SET nombre = ?, email = ?, telefono = ?, cortes_acumulados = ?, notas_crm = ? 
-                    WHERE id = ?
+                // Validar si el RUT ya existe
+                $stmtCheck = $pdo->prepare("SELECT id, nombre, cortes_acumulados FROM clientes WHERE REPLACE(REPLACE(UPPER(rut), '.', ''), '-', '') = ? OR UPPER(rut) = ?");
+                $stmtCheck->execute([$rutClean, strtoupper($rut)]);
+                $existente = $stmtCheck->fetch();
+
+                if ($existente) {
+                    // Si el cliente ya existe, actualizamos su información y asignamos sus cortes
+                    $stmtUpd = $pdo->prepare("
+                        UPDATE clientes 
+                        SET nombre = ?, email = COALESCE(?, email), telefono = COALESCE(?, telefono), cortes_acumulados = ?, notas_crm = COALESCE(?, notas_crm) 
+                        WHERE id = ?
+                    ");
+                    $stmtUpd->execute([$nombre, $email, $telefono, $cortes, $notas_crm, $existente['id']]);
+
+                    echo json_encode([
+                        "status" => "success", 
+                        "message" => "Cliente (" . $existente['nombre'] . ") actualizado con éxito con " . $cortes . " cortes.",
+                        "cliente" => [
+                            "id" => $existente['id'],
+                            "rut" => $rut,
+                            "nombre" => $nombre,
+                            "email" => $email,
+                            "telefono" => $telefono,
+                            "cortes_acumulados" => $cortes,
+                            "notas_crm" => $notas_crm
+                        ]
+                    ]);
+                    break;
+                }
+
+                // Si el email ya está en uso por otro cliente, evitar colisión UNIQUE
+                if ($email !== null) {
+                    $stmtMail = $pdo->prepare("SELECT id FROM clientes WHERE email = ?");
+                    $stmtMail->execute([$email]);
+                    if ($stmtMail->fetch()) {
+                        $email = "cliente_" . $rutClean . "@laromana.cl";
+                    }
+                }
+
+                $hash = password_hash($password, PASSWORD_DEFAULT);
+                $stmt = $pdo->prepare("
+                    INSERT INTO clientes (rut, nombre, email, telefono, cortes_acumulados, notas_crm, password_hash) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 ");
-                $stmtUpd->execute([$nombre, $email, $telefono, $cortes, $notas_crm, $existente['id']]);
+                $stmt->execute([$rut, $nombre, $email, $telefono, $cortes, $notas_crm, $hash]);
+                $newId = $pdo->lastInsertId();
 
                 echo json_encode([
                     "status" => "success", 
-                    "message" => "Cliente existente (" . $existente['nombre'] . ") actualizado con éxito con " . $cortes . " cortes.",
+                    "message" => "Cliente creado exitosamente con " . $cortes . " cortes en el CRM.",
                     "cliente" => [
-                        "id" => $existente['id'],
+                        "id" => $newId,
                         "rut" => $rut,
                         "nombre" => $nombre,
                         "email" => $email,
@@ -873,88 +918,78 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                         "notas_crm" => $notas_crm
                     ]
                 ]);
-                break;
+            } catch (\Exception $e) {
+                http_response_code(200);
+                echo json_encode(["status" => "error", "message" => "Error guardando cliente: " . $e->getMessage()]);
             }
-
-            $hash = password_hash($password, PASSWORD_DEFAULT);
-            $stmt = $pdo->prepare("
-                INSERT INTO clientes (rut, nombre, email, telefono, cortes_acumulados, notas_crm, password_hash) 
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ");
-            $stmt->execute([$rut, $nombre, $email, $telefono, $cortes, $notas_crm, $hash]);
-            $newId = $pdo->lastInsertId();
-
-            echo json_encode([
-                "status" => "success", 
-                "message" => "Cliente creado exitosamente con " . $cortes . " cortes en el CRM.",
-                "cliente" => [
-                    "id" => $newId,
-                    "rut" => $rut,
-                    "nombre" => $nombre,
-                    "email" => $email,
-                    "telefono" => $telefono,
-                    "cortes_acumulados" => $cortes,
-                    "notas_crm" => $notas_crm
-                ]
-            ]);
             break;
 
         case 'actualizar_cliente':
-            $cliente_id = intval($data['id'] ?? $data['cliente_id'] ?? 0);
-            $rut = trim($data['rut'] ?? '');
-            $nombre = trim($data['nombre'] ?? '');
-            $email = trim($data['email'] ?? '');
-            $telefono = trim($data['telefono'] ?? '');
-            $notas_crm = trim($data['notas_crm'] ?? '');
-            $cortes = intval($data['cortes_acumulados'] ?? 0);
+            try {
+                $cliente_id = intval($data['id'] ?? $data['cliente_id'] ?? 0);
+                $rut = trim($data['rut'] ?? '');
+                $nombre = trim($data['nombre'] ?? '');
+                $email = !empty($data['email']) ? trim($data['email']) : null;
+                $telefono = !empty($data['telefono']) ? trim($data['telefono']) : null;
+                $notas_crm = !empty($data['notas_crm']) ? trim($data['notas_crm']) : null;
+                $cortes = max(0, intval($data['cortes_acumulados'] ?? 0));
 
-            if (!$cliente_id || empty($nombre)) {
-                echo json_encode(["status" => "error", "message" => "ID y Nombre son obligatorios."]);
-                break;
+                if (!$cliente_id || empty($nombre)) {
+                    echo json_encode(["status" => "error", "message" => "ID y Nombre son obligatorios."]);
+                    break;
+                }
+
+                $stmt = $pdo->prepare("
+                    UPDATE clientes 
+                    SET rut = COALESCE(NULLIF(?, ''), rut),
+                        nombre = ?,
+                        email = ?,
+                        telefono = ?,
+                        cortes_acumulados = ?,
+                        notas_crm = ?
+                    WHERE id = ?
+                ");
+                $stmt->execute([$rut, $nombre, $email, $telefono, $cortes, $notas_crm, $cliente_id]);
+
+                echo json_encode(["status" => "success", "message" => "Ficha y cortes del cliente actualizados con éxito."]);
+            } catch (\Exception $e) {
+                http_response_code(200);
+                echo json_encode(["status" => "error", "message" => "Error actualizando cliente: " . $e->getMessage()]);
             }
-
-            $stmt = $pdo->prepare("
-                UPDATE clientes 
-                SET rut = COALESCE(NULLIF(?, ''), rut),
-                    nombre = ?,
-                    email = ?,
-                    telefono = ?,
-                    cortes_acumulados = ?,
-                    notas_crm = ?
-                WHERE id = ?
-            ");
-            $stmt->execute([$rut, $nombre, $email, $telefono, $cortes, $notas_crm, $cliente_id]);
-
-            echo json_encode(["status" => "success", "message" => "Ficha y cortes del cliente actualizados con éxito."]);
             break;
 
         case 'ajustar_cortes_cliente':
-            $cliente_id = intval($data['cliente_id'] ?? 0);
-            $delta = intval($data['delta'] ?? 0);
-            $cortes_exacto = isset($data['cortes_acumulados']) ? intval($data['cortes_acumulados']) : null;
+            try {
+                $cliente_id = intval($data['cliente_id'] ?? 0);
+                $delta = intval($data['delta'] ?? 0);
+                $cortes_exacto = isset($data['cortes_acumulados']) ? intval($data['cortes_acumulados']) : null;
 
-            if (!$cliente_id) {
-                echo json_encode(["status" => "error", "message" => "Cliente no especificado."]);
-                break;
+                if (!$cliente_id) {
+                    echo json_encode(["status" => "error", "message" => "Cliente no especificado."]);
+                    break;
+                }
+
+                if ($cortes_exacto !== null) {
+                    $stmt = $pdo->prepare("UPDATE clientes SET cortes_acumulados = ? WHERE id = ?");
+                    $stmt->execute([max(0, $cortes_exacto), $cliente_id]);
+                } else {
+                    $stmt = $pdo->prepare("UPDATE clientes SET cortes_acumulados = GREATEST(0, cortes_acumulados + ?) WHERE id = ?");
+                    $stmt->execute([$delta, $cliente_id]);
+                }
+
+                $sCli = $pdo->prepare("SELECT cortes_acumulados FROM clientes WHERE id = ?");
+                $sCli->execute([$cliente_id]);
+                $nuevosCortes = $sCli->fetchColumn();
+
+                echo json_encode([
+                    "status" => "success", 
+                    "message" => "Cortes actualizados: " . $nuevosCortes, 
+                    "cortes_acumulados" => intval($nuevosCortes)
+                ]);
+            } catch (\Exception $e) {
+                http_response_code(200);
+                echo json_encode(["status" => "error", "message" => "Error ajustando cortes: " . $e->getMessage()]);
             }
-
-            if ($cortes_exacto !== null) {
-                $stmt = $pdo->prepare("UPDATE clientes SET cortes_acumulados = ? WHERE id = ?");
-                $stmt->execute([max(0, $cortes_exacto), $cliente_id]);
-            } else {
-                $stmt = $pdo->prepare("UPDATE clientes SET cortes_acumulados = GREATEST(0, cortes_acumulados + ?) WHERE id = ?");
-                $stmt->execute([$delta, $cliente_id]);
-            }
-
-            $sCli = $pdo->prepare("SELECT cortes_acumulados FROM clientes WHERE id = ?");
-            $sCli->execute([$cliente_id]);
-            $nuevosCortes = $sCli->fetchColumn();
-
-            echo json_encode([
-                "status" => "success", 
-                "message" => "Cortes actualizados: " . $nuevosCortes, 
-                "cortes_acumulados" => intval($nuevosCortes)
-            ]);
             break;
 
         case 'guardar_notas_crm':
