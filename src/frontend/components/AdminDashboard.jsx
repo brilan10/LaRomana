@@ -7180,33 +7180,25 @@ export default function AdminDashboard({ session, logout }) {
                   />
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
-                      Cortes Acumulados
-                    </label>
-                    <input 
-                      type="number" 
-                      min="0"
-                      className="input-field" 
-                      style={{ margin: 0 }}
-                      value={nuevoClienteForm.cortes_acumulados} 
-                      onChange={e => setNuevoClienteForm({ ...nuevoClienteForm, cortes_acumulados: parseInt(e.target.value) || 0 })} 
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
-                      Clave de Acceso Portal
-                    </label>
-                    <input 
-                      type="text" 
-                      className="input-field" 
-                      style={{ margin: 0 }}
-                      value={nuevoClienteForm.password} 
-                      onChange={e => setNuevoClienteForm({ ...nuevoClienteForm, password: e.target.value })} 
-                    />
-                  </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
+                    Cortes que lleva (Cortes Acumulados) ⭐
+                  </label>
+                  <input 
+                    type="number" 
+                    min="0"
+                    placeholder="0"
+                    className="input-field" 
+                    style={{ margin: 0, fontWeight: 'bold', fontSize: '1rem', color: 'var(--gold-jewel)' }}
+                    value={nuevoClienteForm.cortes_acumulados === 0 ? '' : nuevoClienteForm.cortes_acumulados} 
+                    onChange={e => {
+                      const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+                      setNuevoClienteForm({ ...nuevoClienteForm, cortes_acumulados: isNaN(val) ? 0 : Math.max(0, val) });
+                    }} 
+                  />
+                  <small style={{ color: '#aaa', fontSize: '0.75rem', marginTop: '3px', display: 'block' }}>
+                    Cortes que ya tiene el cliente acumulados para su próximo regalo / decant de fidelización.
+                  </small>
                 </div>
 
                 <div>
@@ -7331,15 +7323,19 @@ export default function AdminDashboard({ session, logout }) {
 
                 <div>
                   <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
-                    Cortes Acumulados (Fidelización) ⭐
+                    Cortes que lleva (Cortes Acumulados) ⭐
                   </label>
                   <input 
                     type="number" 
                     min="0"
+                    placeholder="0"
                     className="input-field" 
                     style={{ margin: 0, fontWeight: 'bold', fontSize: '1.05rem', color: 'var(--gold-jewel)' }}
-                    value={clienteAEditar.cortes_acumulados} 
-                    onChange={e => setClienteAEditar({ ...clienteAEditar, cortes_acumulados: parseInt(e.target.value) || 0 })} 
+                    value={clienteAEditar.cortes_acumulados === 0 ? '' : clienteAEditar.cortes_acumulados} 
+                    onChange={e => {
+                      const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+                      setClienteAEditar({ ...clienteAEditar, cortes_acumulados: isNaN(val) ? 0 : Math.max(0, val) });
+                    }} 
                   />
                   <small style={{ color: '#aaa', fontSize: '0.75rem', marginTop: '3px', display: 'block' }}>
                     Modifica directamente cuántos cortes lleva acumulados para su próximo premio.
