@@ -38,7 +38,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             // Traer citas del trabajador de hoy, con nombre del cliente y foto, y calcular cortes del cliente (COUNT en BD).
             $stmt = $pdo->prepare("
                 SELECT c.id, c.hora, c.estado, cl.nombre, cl.foto_perfil as foto, cl.id as cliente_id,
-                (SELECT COUNT(*) FROM citas c2 WHERE c2.cliente_id = cl.id AND c2.estado = 'Completada') + 1 as cortes
+                COALESCE(cl.cortes_acumulados, 0) + 1 as cortes, cl.cortes_acumulados
                 FROM citas c
                 JOIN clientes cl ON c.cliente_id = cl.id
                 WHERE c.trabajador_id = ? AND c.fecha = ? AND c.estado IN ('Pendiente', 'Terminado_Esperando_Pago')

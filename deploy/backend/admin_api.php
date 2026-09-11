@@ -844,13 +844,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 break;
             }
 
+            $rutClean = strtoupper(preg_replace('/[^0-9K]/i', '', $rut));
+
             // Validar si el RUT ya existe
-            $stmtCheck = $pdo->prepare("SELECT id, nombre FROM clientes WHERE rut = ?");
-            $stmtCheck->execute([$rut]);
+            $stmtCheck = $pdo->prepare("SELECT id, nombre, cortes_acumulados FROM clientes WHERE REPLACE(REPLACE(UPPER(rut), '.', ''), '-', '') = ? OR UPPER(rut) = ?");
+            $stmtCheck->execute([$rutClean, strtoupper($rut)]);
             $existente = $stmtCheck->fetch();
 
             if ($existente) {
-                echo json_encode(["status" => "error", "message" => "Ya existe un cliente con el RUT " . $rut . " (" . $existente['nombre'] . ")."]);
+                // Si el cliente ya existe, actualizamos su información y asignamos sus cortes
+                $stmtUpd = $pdo->prepare("
+                    UPDATE clientes 
+                    SET nombre = ?, email = ?, telefono = ?, cortes_acumulados = ?, notas_crm = ? 
+                    WHERE id = ?
+                ");
+                $stmtUpd->execute([$nombre, $email, $telefono, $cortes, $notas_crm, $existente['id']]);
+
+                echo json_encode([
+                    "status" => "success", 
+                    "message" => "Cliente existente (" . $existente['nombre'] . ") actualizado con éxito con " . $cortes . " cortes.",
+                    "cliente" => [
+                        "id" => $existente['id'],
+                        "rut" => $rut,
+                        "nombre" => $nombre,
+                        "email" => $email,
+                        "telefono" => $telefono,
+                        "cortes_acumulados" => $cortes,
+                        "notas_crm" => $notas_crm
+                    ]
+                ]);
                 break;
             }
 
@@ -864,7 +886,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
             echo json_encode([
                 "status" => "success", 
-                "message" => "Cliente creado exitosamente en el CRM.",
+                "message" => "Cliente creado exitosamente con " . $cortes . " cortes en el CRM.",
                 "cliente" => [
                     "id" => $newId,
                     "rut" => $rut,
@@ -874,6 +896,64 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                     "cortes_acumulados" => $cortes,
                     "notas_crm" => $notas_crm
                 ]
+            ]);
+            break;
+
+        case 'actualizar_cliente':
+            $cliente_id = intval($data['id'] ?? $data['cliente_id'] ?? 0);
+            $rut = trim($data['rut'] ?? '');
+            $nombre = trim($data['nombre'] ?? '');
+            $email = trim($data['email'] ?? '');
+            $telefono = trim($data['telefono'] ?? '');
+            $notas_crm = trim($data['notas_crm'] ?? '');
+            $cortes = intval($data['cortes_acumulados'] ?? 0);
+
+            if (!$cliente_id || empty($nombre)) {
+                echo json_encode(["status" => "error", "message" => "ID y Nombre son obligatorios."]);
+                break;
+            }
+
+            $stmt = $pdo->prepare("
+                UPDATE clientes 
+                SET rut = COALESCE(NULLIF(?, ''), rut),
+                    nombre = ?,
+                    email = ?,
+                    telefono = ?,
+                    cortes_acumulados = ?,
+                    notas_crm = ?
+                WHERE id = ?
+            ");
+            $stmt->execute([$rut, $nombre, $email, $telefono, $cortes, $notas_crm, $cliente_id]);
+
+            echo json_encode(["status" => "success", "message" => "Ficha y cortes del cliente actualizados con éxito."]);
+            break;
+
+        case 'ajustar_cortes_cliente':
+            $cliente_id = intval($data['cliente_id'] ?? 0);
+            $delta = intval($data['delta'] ?? 0);
+            $cortes_exacto = isset($data['cortes_acumulados']) ? intval($data['cortes_acumulados']) : null;
+
+            if (!$cliente_id) {
+                echo json_encode(["status" => "error", "message" => "Cliente no especificado."]);
+                break;
+            }
+
+            if ($cortes_exacto !== null) {
+                $stmt = $pdo->prepare("UPDATE clientes SET cortes_acumulados = ? WHERE id = ?");
+                $stmt->execute([max(0, $cortes_exacto), $cliente_id]);
+            } else {
+                $stmt = $pdo->prepare("UPDATE clientes SET cortes_acumulados = GREATEST(0, cortes_acumulados + ?) WHERE id = ?");
+                $stmt->execute([$delta, $cliente_id]);
+            }
+
+            $sCli = $pdo->prepare("SELECT cortes_acumulados FROM clientes WHERE id = ?");
+            $sCli->execute([$cliente_id]);
+            $nuevosCortes = $sCli->fetchColumn();
+
+            echo json_encode([
+                "status" => "success", 
+                "message" => "Cortes actualizados: " . $nuevosCortes, 
+                "cortes_acumulados" => intval($nuevosCortes)
             ]);
             break;
 
@@ -923,6 +1003,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 // Registrar en historial_recompensas
                 $pdo->prepare("INSERT INTO historial_recompensas (cliente_id, cita_id, aroma_decant, fecha_entrega) VALUES (?, NULL, ?, NOW())")
                     ->execute([$cliente_id, $prodNombre]);
+
+                // Descontar meta de cortes acumulados del cliente
+                $stmtMeta = $pdo->query("SELECT valor FROM configuraciones WHERE clave = 'meta_cortes_premio'");
+                $meta = intval($stmtMeta->fetchColumn() ?: 3);
+                $pdo->prepare("UPDATE clientes SET cortes_acumulados = GREATEST(0, cortes_acumulados - ?) WHERE id = ?")->execute([$meta, $cliente_id]);
+
                 echo json_encode(["status" => "success", "message" => "Regalo entregado con éxito: " . $prodNombre]);
             } else {
                 echo json_encode(["status" => "error", "message" => "Debes seleccionar un producto del inventario o escribir el nombre del regalo/decant."]);

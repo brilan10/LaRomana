@@ -142,6 +142,9 @@ export default function AdminDashboard({ session, logout }) {
   const [showNuevoClienteModal, setShowNuevoClienteModal] = useState(false);
   const [nuevoClienteForm, setNuevoClienteForm] = useState({ rut: '', nombre: '', email: '', telefono: '', cortes_acumulados: 0, notas_crm: '', password: '123456' });
   const [guardandoCliente, setGuardandoCliente] = useState(false);
+  const [showEditarClienteModal, setShowEditarClienteModal] = useState(false);
+  const [clienteAEditar, setClienteAEditar] = useState(null);
+  const [guardandoEditarCliente, setGuardandoEditarCliente] = useState(false);
   const [crmSearch, setCrmSearch] = useState('');
 
   // Estados para Venta Directa de Catálogo en Caja (POS)
@@ -1106,7 +1109,7 @@ export default function AdminDashboard({ session, logout }) {
       });
       const data = await res.json();
       if (data.status === 'success') {
-        showToast(data.message || 'Cliente creado con éxito', 'success');
+        showToast(data.message || 'Cliente registrado con éxito', 'success');
         setShowNuevoClienteModal(false);
         setNuevoClienteForm({ rut: '', nombre: '', email: '', telefono: '', cortes_acumulados: 0, notas_crm: '', password: '123456' });
         cargarCRM();
@@ -1117,6 +1120,70 @@ export default function AdminDashboard({ session, logout }) {
       showToast('Error de conexión con el servidor', 'error');
     } finally {
       setGuardandoCliente(false);
+    }
+  };
+
+  const abrirEditarCliente = (cli) => {
+    setClienteAEditar({
+      id: cli.id,
+      rut: cli.rut || '',
+      nombre: cli.nombre || '',
+      email: cli.email || '',
+      telefono: cli.telefono || '',
+      cortes_acumulados: parseInt(cli.cortes_acumulados) || 0,
+      notas_crm: cli.notas_crm || ''
+    });
+    setShowEditarClienteModal(true);
+  };
+
+  const handleGuardarEditarCliente = async (e) => {
+    e.preventDefault();
+    if (!clienteAEditar || !clienteAEditar.id || !clienteAEditar.nombre) {
+      showToast('El Nombre del cliente es obligatorio', 'error');
+      return;
+    }
+    setGuardandoEditarCliente(true);
+    try {
+      const res = await fetch(`${API_URL}/admin_api.php?action=actualizar_cliente`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(clienteAEditar)
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        showToast(data.message || 'Ficha y cortes del cliente actualizados', 'success');
+        setShowEditarClienteModal(false);
+        setClienteAEditar(null);
+        cargarCRM();
+      } else {
+        showToast(data.message || 'Error al actualizar cliente', 'error');
+      }
+    } catch (err) {
+      showToast('Error de conexión con el servidor', 'error');
+    } finally {
+      setGuardandoEditarCliente(false);
+    }
+  };
+
+  const handleAjustarCortesRapido = async (clienteId, delta) => {
+    try {
+      setCrmClientes(prev => prev.map(c => c.id === clienteId ? { ...c, cortes_acumulados: Math.max(0, (Number(c.cortes_acumulados) || 0) + delta) } : c));
+      const res = await fetch(`${API_URL}/admin_api.php?action=ajustar_cortes_cliente`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cliente_id: clienteId, delta: delta })
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        showToast(data.message || 'Cortes actualizados', 'success');
+        cargarCRM();
+      } else {
+        showToast(data.message || 'Error al ajustar cortes', 'error');
+        cargarCRM();
+      }
+    } catch (err) {
+      showToast('Error de conexión', 'error');
+      cargarCRM();
     }
   };
 
@@ -2495,10 +2562,10 @@ export default function AdminDashboard({ session, logout }) {
             </thead>
             <tbody>
               {clientesFiltrados.map((c, i) => {
+                const cortesAcum = Number(c.cortes_acumulados || 0);
                 const cortesMes = Number(c.cortes_mes || 0);
-                const premiosEntregados = Number(c.premios_mes || 0);
-                const metaActual = (premiosEntregados + 1) * metaCortesPremio;
-                const calificaPremio = cortesMes >= metaActual;
+                const meta = metaCortesPremio || 3;
+                const calificaPremio = cortesAcum >= meta;
 
                 return (
                   <tr key={c.id} style={{ background: i % 2 === 0 ? 'rgba(20, 20, 20, 0.7)' : 'transparent', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
@@ -2516,30 +2583,52 @@ export default function AdminDashboard({ session, logout }) {
                       <small style={{ color: '#aaa' }}>{c.telefono || 'Sin teléfono'}</small>
                     </td>
                     <td style={{ ...tableCellStyle, textAlign: 'center' }}>
-                      {calificaPremio ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-                          <span style={{ fontWeight: 'bold', color: '#2ecc71', fontSize: '0.9rem' }}>
-                            🟢 {cortesMes}/{metaActual}
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                          <button 
+                            type="button"
+                            onClick={() => handleAjustarCortesRapido(c.id, -1)}
+                            title="Restar 1 corte acumulado"
+                            style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', borderRadius: '4px', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+                          >
+                            -
+                          </button>
+                          
+                          <span style={{ 
+                            fontWeight: 'bold', 
+                            color: calificaPremio ? '#2ecc71' : 'var(--gold-jewel)', 
+                            fontSize: '1rem',
+                            minWidth: '55px',
+                            textAlign: 'center'
+                          }}>
+                            {calificaPremio ? '🟢' : '💈'} {cortesAcum}/{meta}
                           </span>
+
+                          <button 
+                            type="button"
+                            onClick={() => handleAjustarCortesRapido(c.id, 1)}
+                            title="Sumar 1 corte acumulado"
+                            style={{ background: 'rgba(212,175,55,0.15)', border: '1px solid var(--gold-jewel)', color: 'var(--gold-jewel)', borderRadius: '4px', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+                          >
+                            +
+                          </button>
+                        </div>
+
+                        {calificaPremio ? (
                           <button 
                             className="btn-primary" 
-                            style={{ padding: '4px 10px', fontSize: '0.75rem', background: 'var(--gold-jewel)', color: '#000', fontWeight: 'bold', borderRadius: '15px' }} 
+                            style={{ padding: '3px 8px', fontSize: '0.72rem', background: 'var(--gold-jewel)', color: '#000', fontWeight: 'bold', borderRadius: '12px', marginTop: '2px' }} 
                             onClick={() => { setClientePremio(c); setPremioModalTipo('producto'); setShowPremioModal(true); }}
-                            title="El cliente cumplió la meta del mes. Entregar premio ganado."
+                            title="El cliente cumplió la meta de cortes. Entregar premio ganado."
                           >
                             🎁 Entregar Premio
                           </button>
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-                          <span style={{ fontWeight: 'bold', color: 'var(--gold-jewel)' }}>
-                            💈 {cortesMes}/{metaActual}
-                          </span>
+                        ) : (
                           <span style={{ fontSize: '0.72rem', color: '#888' }}>
-                            Faltan {Math.max(0, metaActual - cortesMes)} para regalo
+                            Faltan {Math.max(0, meta - cortesAcum)} para regalo {cortesMes > 0 ? `(${cortesMes} este mes)` : ''}
                           </span>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </td>
                     <td style={tableCellStyle}>
                       <textarea 
@@ -2553,13 +2642,30 @@ export default function AdminDashboard({ session, logout }) {
                     <td style={{ ...tableCellStyle, textAlign: 'center' }}>
                       <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'nowrap' }}>
                         <button 
+                          onClick={() => abrirEditarCliente(c)}
+                          style={{
+                            background: 'rgba(52, 152, 219, 0.15)',
+                            color: '#3498db',
+                            border: '1px solid rgba(52, 152, 219, 0.4)',
+                            borderRadius: '6px',
+                            padding: '5px 8px',
+                            fontSize: '0.75rem',
+                            cursor: 'pointer',
+                            fontWeight: 'bold',
+                            whiteSpace: 'nowrap'
+                          }}
+                          title="Editar ficha completa y cortes del cliente"
+                        >
+                          ✏️ Editar
+                        </button>
+                        <button 
                           onClick={() => { setClientePremio(c); setPremioModalTipo('producto'); setShowPremioModal(true); }}
                           style={{
                             background: 'rgba(155, 89, 182, 0.2)',
                             color: '#bb86fc',
                             border: '1px solid #bb86fc',
                             borderRadius: '6px',
-                            padding: '5px 10px',
+                            padding: '5px 8px',
                             fontSize: '0.75rem',
                             cursor: 'pointer',
                             fontWeight: 'bold',
@@ -2570,11 +2676,11 @@ export default function AdminDashboard({ session, logout }) {
                           }}
                           title="Dar un regalo rápido o atención VIP a este cliente"
                         >
-                          🎁 Regalo Rápido
+                          🎁 Regalo
                         </button>
                         <button 
                           className="btn-outline-gold" 
-                          style={{ fontSize: '0.75rem', padding: '5px 10px', whiteSpace: 'nowrap' }} 
+                          style={{ fontSize: '0.75rem', padding: '5px 8px', whiteSpace: 'nowrap' }} 
                           onClick={() => abrirHistorialCRM(c)}
                           title="Ver historial de visitas y premios recibidos"
                         >
@@ -7142,7 +7248,139 @@ export default function AdminDashboard({ session, logout }) {
         )}
 
 
-        {/* Modal de Venta Directa de Catálogo en Caja (POS) */}
+        {/* Modal Editar Cliente en CRM */}
+        {showEditarClienteModal && clienteAEditar && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1350, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '15px' }}>
+            <div style={{ background: '#181818', borderRadius: '14px', width: '100%', maxWidth: '520px', maxHeight: '90vh', overflowY: 'auto', border: '2px solid var(--gold-jewel)', padding: '28px', boxShadow: '0 15px 40px rgba(0,0,0,0.9)' }}>
+              
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '14px', marginBottom: '18px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '1.8rem' }}>✏️</span>
+                  <div>
+                    <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.2rem' }}>Editar Ficha de Cliente</h3>
+                    <span style={{ fontSize: '0.8rem', color: '#aaa' }}>Actualizar datos y cortes acumulados</span>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setShowEditarClienteModal(false)} 
+                  style={{ background: 'transparent', border: 'none', color: '#fff', fontSize: '1.5rem', cursor: 'pointer' }}
+                >
+                  ×
+                </button>
+              </div>
+
+              <form onSubmit={handleGuardarEditarCliente} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
+                      RUT
+                    </label>
+                    <input 
+                      type="text" 
+                      required 
+                      className="input-field" 
+                      style={{ margin: 0 }}
+                      value={clienteAEditar.rut} 
+                      onChange={e => setClienteAEditar({ ...clienteAEditar, rut: e.target.value })} 
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
+                      Teléfono / WhatsApp
+                    </label>
+                    <input 
+                      type="text" 
+                      placeholder="+56912345678" 
+                      className="input-field" 
+                      style={{ margin: 0 }}
+                      value={clienteAEditar.telefono} 
+                      onChange={e => setClienteAEditar({ ...clienteAEditar, telefono: e.target.value })} 
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
+                    Nombre Completo *
+                  </label>
+                  <input 
+                    type="text" 
+                    required 
+                    className="input-field" 
+                    style={{ margin: 0 }}
+                    value={clienteAEditar.nombre} 
+                    onChange={e => setClienteAEditar({ ...clienteAEditar, nombre: e.target.value })} 
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
+                    Correo Electrónico
+                  </label>
+                  <input 
+                    type="email" 
+                    placeholder="cliente@email.com" 
+                    className="input-field" 
+                    style={{ margin: 0 }}
+                    value={clienteAEditar.email} 
+                    onChange={e => setClienteAEditar({ ...clienteAEditar, email: e.target.value })} 
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
+                    Cortes Acumulados (Fidelización) ⭐
+                  </label>
+                  <input 
+                    type="number" 
+                    min="0"
+                    className="input-field" 
+                    style={{ margin: 0, fontWeight: 'bold', fontSize: '1.05rem', color: 'var(--gold-jewel)' }}
+                    value={clienteAEditar.cortes_acumulados} 
+                    onChange={e => setClienteAEditar({ ...clienteAEditar, cortes_acumulados: parseInt(e.target.value) || 0 })} 
+                  />
+                  <small style={{ color: '#aaa', fontSize: '0.75rem', marginTop: '3px', display: 'block' }}>
+                    Modifica directamente cuántos cortes lleva acumulados para su próximo premio.
+                  </small>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
+                    Notas CRM (Preferencias, estilo de corte...)
+                  </label>
+                  <textarea 
+                    rows="2"
+                    placeholder="Ej: Prefiere corte degradado bajo a navaja..."
+                    className="input-field" 
+                    style={{ margin: 0, resize: 'vertical' }}
+                    value={clienteAEditar.notas_crm} 
+                    onChange={e => setClienteAEditar({ ...clienteAEditar, notas_crm: e.target.value })} 
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                  <button 
+                    type="submit" 
+                    disabled={guardandoEditarCliente}
+                    className="btn-primary" 
+                    style={{ flex: 2, padding: '12px', fontWeight: 'bold' }}
+                  >
+                    {guardandoEditarCliente ? '💾 Guardando...' : '💾 Guardar Cambios'}
+                  </button>
+                  <button 
+                    type="button" 
+                    onClick={() => setShowEditarClienteModal(false)} 
+                    style={{ flex: 1, padding: '12px', background: 'transparent', border: '1px solid #555', color: '#ccc', borderRadius: '8px', cursor: 'pointer' }}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
         {showVentaCatalogoModal && (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.88)', zIndex: 1300, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: isMobile ? '10px' : '20px' }}>
             <div style={{ 
