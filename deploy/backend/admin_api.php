@@ -958,11 +958,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             }
             break;
 
+        case 'eliminar_cliente':
+            try {
+                $cliente_id = intval($data['cliente_id'] ?? ($_POST['cliente_id'] ?? ($_GET['cliente_id'] ?? 0)));
+                if (!$cliente_id) {
+                    echo json_encode(["status" => "error", "message" => "ID de cliente no especificado."]);
+                    break;
+                }
+
+                // Obtener nombre del cliente antes de eliminar
+                $stCli = $pdo->prepare("SELECT nombre FROM clientes WHERE id = ?");
+                $stCli->execute([$cliente_id]);
+                $clienteNombre = $stCli->fetchColumn() ?: "Cliente #$cliente_id";
+
+                $pdo->beginTransaction();
+
+                // 1. Eliminar o desvincular detalles de pedidos si existen
+                try {
+                    $pdo->prepare("DELETE FROM pedido_detalle WHERE pedido_id IN (SELECT id FROM pedidos WHERE cliente_id = ?)")->execute([$cliente_id]);
+                } catch (\Exception $e) {}
+
+                // 2. Eliminar pedidos asociados al cliente
+                try {
+                    $pdo->prepare("DELETE FROM pedidos WHERE cliente_id = ?")->execute([$cliente_id]);
+                } catch (\Exception $e) {}
+
+                // 3. Eliminar detalles de citas asociados
+                try {
+                    $pdo->prepare("DELETE FROM cita_detalle WHERE cita_id IN (SELECT id FROM citas WHERE cliente_id = ?)")->execute([$cliente_id]);
+                } catch (\Exception $e) {}
+
+                // 4. Eliminar citas asociadas
+                try {
+                    $pdo->prepare("DELETE FROM citas WHERE cliente_id = ?")->execute([$cliente_id]);
+                } catch (\Exception $e) {}
+
+                // 5. Eliminar historial de recompensas
+                try {
+                    $pdo->prepare("DELETE FROM historial_recompensas WHERE cliente_id = ?")->execute([$cliente_id]);
+                } catch (\Exception $e) {}
+
+                // 6. Eliminar el cliente
+                $stmt = $pdo->prepare("DELETE FROM clientes WHERE id = ?");
+                $stmt->execute([$cliente_id]);
+
+                $pdo->commit();
+
+                echo json_encode([
+                    "status" => "success", 
+                    "message" => "Cliente \"$clienteNombre\" eliminado correctamente del sistema.",
+                    "cliente_id" => $cliente_id
+                ]);
+            } catch (\Exception $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                http_response_code(200);
+                echo json_encode(["status" => "error", "message" => "Error al eliminar cliente: " . $e->getMessage()]);
+            }
+            break;
+
         case 'ajustar_cortes_cliente':
             try {
-                $cliente_id = intval($data['cliente_id'] ?? 0);
-                $delta = intval($data['delta'] ?? 0);
-                $cortes_exacto = isset($data['cortes_acumulados']) ? intval($data['cortes_acumulados']) : null;
+                $cliente_id = intval($data['cliente_id'] ?? ($_POST['cliente_id'] ?? ($_GET['cliente_id'] ?? 0)));
+                $delta = intval($data['delta'] ?? ($_POST['delta'] ?? 0));
+                $cortes_exacto = isset($data['cortes_acumulados']) ? intval($data['cortes_acumulados']) : (isset($_POST['cortes_acumulados']) ? intval($_POST['cortes_acumulados']) : null);
 
                 if (!$cliente_id) {
                     echo json_encode(["status" => "error", "message" => "Cliente no especificado."]);
@@ -977,14 +1037,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                     $stmt->execute([$delta, $cliente_id]);
                 }
 
-                $sCli = $pdo->prepare("SELECT cortes_acumulados FROM clientes WHERE id = ?");
+                $sCli = $pdo->prepare("SELECT nombre, cortes_acumulados FROM clientes WHERE id = ?");
                 $sCli->execute([$cliente_id]);
-                $nuevosCortes = $sCli->fetchColumn();
+                $cliRow = $sCli->fetch(PDO::FETCH_ASSOC);
+                $nuevosCortes = intval($cliRow['cortes_acumulados'] ?? 0);
+                $cliNombre = $cliRow['nombre'] ?? 'Cliente';
+
+                $msg = $delta > 0 ? "+1 corte sumado a $cliNombre (Total: $nuevosCortes)" : ($delta < 0 ? "-1 corte restado a $cliNombre (Total: $nuevosCortes)" : "Cortes actualizados: $nuevosCortes");
 
                 echo json_encode([
                     "status" => "success", 
-                    "message" => "Cortes actualizados: " . $nuevosCortes, 
-                    "cortes_acumulados" => intval($nuevosCortes)
+                    "message" => $msg, 
+                    "cortes_acumulados" => $nuevosCortes,
+                    "cliente_id" => $cliente_id,
+                    "nombre" => $cliNombre
                 ]);
             } catch (\Exception $e) {
                 http_response_code(200);

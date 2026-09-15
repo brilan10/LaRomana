@@ -145,6 +145,8 @@ export default function AdminDashboard({ session, logout }) {
   const [showEditarClienteModal, setShowEditarClienteModal] = useState(false);
   const [clienteAEditar, setClienteAEditar] = useState(null);
   const [guardandoEditarCliente, setGuardandoEditarCliente] = useState(false);
+  const [clienteAEliminar, setClienteAEliminar] = useState(null);
+  const [eliminandoCliente, setEliminandoCliente] = useState(false);
   const [crmSearch, setCrmSearch] = useState('');
 
   // Estados para Venta Directa de Catálogo en Caja (POS)
@@ -1168,9 +1170,9 @@ export default function AdminDashboard({ session, logout }) {
 
       if (data.status === 'success') {
         showToast(data.message || 'Ficha y cortes del cliente actualizados', 'success');
+        setCrmClientes(prev => prev.map(c => c.id === clienteAEditar.id ? { ...c, ...clienteAEditar } : c));
         setShowEditarClienteModal(false);
         setClienteAEditar(null);
-        cargarCRM();
       } else {
         showToast(data.message || data.error || 'Error al actualizar cliente', 'error');
       }
@@ -1181,25 +1183,70 @@ export default function AdminDashboard({ session, logout }) {
     }
   };
 
-  const handleAjustarCortesRapido = async (clienteId, delta) => {
+  const handleEliminarCliente = async (cliente) => {
+    if (!cliente || !cliente.id) return;
+    setEliminandoCliente(true);
     try {
-      setCrmClientes(prev => prev.map(c => c.id === clienteId ? { ...c, cortes_acumulados: Math.max(0, (Number(c.cortes_acumulados) || 0) + delta) } : c));
+      const res = await fetch(`${API_URL}/admin_api.php?action=eliminar_cliente`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cliente_id: cliente.id })
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        showToast(data.message || `Cliente "${cliente.nombre}" eliminado correctamente`, 'success');
+        setCrmClientes(prev => prev.filter(c => c.id !== cliente.id));
+        setClienteAEliminar(null);
+        setShowEditarClienteModal(false);
+        setClienteAEditar(null);
+      } else {
+        showToast(data.message || data.error || 'Error al eliminar cliente', 'error');
+      }
+    } catch (err) {
+      showToast('Error de conexión al eliminar cliente', 'error');
+    } finally {
+      setEliminandoCliente(false);
+    }
+  };
+
+  const handleAjustarCortesRapido = async (e, cliente, delta) => {
+    if (e) {
+      if (typeof e.stopPropagation === 'function') e.stopPropagation();
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+    }
+    const clienteId = typeof cliente === 'object' ? cliente.id : cliente;
+    const clienteActual = crmClientes.find(c => c.id === clienteId);
+    const clienteNombre = typeof cliente === 'object' ? cliente.nombre : (clienteActual?.nombre || 'Cliente');
+    const cortesPrevios = Number(clienteActual?.cortes_acumulados || 0);
+    const nuevoValor = Math.max(0, cortesPrevios + delta);
+
+    // Actualización inmediata del estado local para no recargar ni mover la pantalla
+    setCrmClientes(prev => prev.map(c => c.id === clienteId ? { ...c, cortes_acumulados: nuevoValor } : c));
+
+    // Toast de confirmación claro y en tiempo real
+    const meta = metaCortesPremio || 3;
+    if (delta > 0) {
+      showToast(`⭐ +1 corte sumado a ${clienteNombre} (${nuevoValor}/${meta})`, 'success');
+    } else {
+      showToast(`✂️ -1 corte restado a ${clienteNombre} (${nuevoValor}/${meta})`, 'info');
+    }
+
+    try {
       const res = await fetch(`${API_URL}/admin_api.php?action=ajustar_cortes_cliente`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cliente_id: clienteId, delta: delta })
       });
       const data = await res.json();
-      if (data.status === 'success') {
-        showToast(data.message || 'Cortes actualizados', 'success');
-        cargarCRM();
-      } else {
-        showToast(data.message || 'Error al ajustar cortes', 'error');
-        cargarCRM();
+      if (data.status === 'success' && data.cortes_acumulados !== undefined) {
+        setCrmClientes(prev => prev.map(c => c.id === clienteId ? { ...c, cortes_acumulados: Number(data.cortes_acumulados) } : c));
+      } else if (data.status !== 'success') {
+        setCrmClientes(prev => prev.map(c => c.id === clienteId ? { ...c, cortes_acumulados: cortesPrevios } : c));
+        showToast(data.message || 'Error al ajustar cortes en el servidor', 'error');
       }
     } catch (err) {
-      showToast('Error de conexión', 'error');
-      cargarCRM();
+      setCrmClientes(prev => prev.map(c => c.id === clienteId ? { ...c, cortes_acumulados: cortesPrevios } : c));
+      showToast('Error de conexión al ajustar cortes', 'error');
     }
   };
 
@@ -2603,9 +2650,9 @@ export default function AdminDashboard({ session, logout }) {
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                           <button 
                             type="button"
-                            onClick={() => handleAjustarCortesRapido(c.id, -1)}
-                            title="Restar 1 corte acumulado"
-                            style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', borderRadius: '4px', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+                            onClick={(e) => handleAjustarCortesRapido(e, c, -1)}
+                            title="Restar 1 corte acumulado (-1)"
+                            style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', borderRadius: '4px', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}
                           >
                             -
                           </button>
@@ -2622,9 +2669,9 @@ export default function AdminDashboard({ session, logout }) {
 
                           <button 
                             type="button"
-                            onClick={() => handleAjustarCortesRapido(c.id, 1)}
-                            title="Sumar 1 corte acumulado"
-                            style={{ background: 'rgba(212,175,55,0.15)', border: '1px solid var(--gold-jewel)', color: 'var(--gold-jewel)', borderRadius: '4px', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+                            onClick={(e) => handleAjustarCortesRapido(e, c, 1)}
+                            title="Sumar 1 corte acumulado (+1)"
+                            style={{ background: 'rgba(212,175,55,0.2)', border: '1px solid var(--gold-jewel)', color: 'var(--gold-jewel)', borderRadius: '4px', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}
                           >
                             +
                           </button>
@@ -2701,6 +2748,26 @@ export default function AdminDashboard({ session, logout }) {
                           title="Ver historial de visitas y premios recibidos"
                         >
                           👁️ Historial
+                        </button>
+                        <button 
+                          onClick={() => setClienteAEliminar(c)}
+                          style={{
+                            background: 'rgba(231, 76, 60, 0.15)',
+                            color: '#e74c3c',
+                            border: '1px solid rgba(231, 76, 60, 0.4)',
+                            borderRadius: '6px',
+                            padding: '5px 8px',
+                            fontSize: '0.75rem',
+                            cursor: 'pointer',
+                            fontWeight: 'bold',
+                            whiteSpace: 'nowrap',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '3px'
+                          }}
+                          title="Eliminar cliente del CRM"
+                        >
+                          🗑️ Eliminar
                         </button>
                       </div>
                     </td>
@@ -7372,24 +7439,124 @@ export default function AdminDashboard({ session, logout }) {
                   />
                 </div>
 
-                <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-                  <button 
-                    type="submit" 
-                    disabled={guardandoEditarCliente}
-                    className="btn-primary" 
-                    style={{ flex: 2, padding: '12px', fontWeight: 'bold' }}
-                  >
-                    {guardandoEditarCliente ? '💾 Guardando...' : '💾 Guardar Cambios'}
-                  </button>
+                <div style={{ display: 'flex', gap: '10px', marginTop: '10px', justifyContent: 'space-between', alignItems: 'center' }}>
                   <button 
                     type="button" 
-                    onClick={() => setShowEditarClienteModal(false)} 
-                    style={{ flex: 1, padding: '12px', background: 'transparent', border: '1px solid #555', color: '#ccc', borderRadius: '8px', cursor: 'pointer' }}
+                    onClick={() => {
+                      const cli = clienteAEditar;
+                      setClienteAEliminar(cli);
+                    }}
+                    style={{
+                      padding: '12px 16px',
+                      background: 'rgba(231, 76, 60, 0.15)',
+                      border: '1px solid #e74c3c',
+                      color: '#e74c3c',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontWeight: 'bold',
+                      fontSize: '0.85rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}
                   >
-                    Cancelar
+                    🗑️ Eliminar Cliente
                   </button>
+                  <div style={{ display: 'flex', gap: '10px', flex: 1, justifyContent: 'flex-end' }}>
+                    <button 
+                      type="button" 
+                      onClick={() => setShowEditarClienteModal(false)} 
+                      style={{ padding: '12px 18px', background: 'transparent', border: '1px solid #555', color: '#ccc', borderRadius: '8px', cursor: 'pointer' }}
+                    >
+                      Cancelar
+                    </button>
+                    <button 
+                      type="submit" 
+                      disabled={guardandoEditarCliente}
+                      className="btn-primary" 
+                      style={{ padding: '12px 22px', fontWeight: 'bold' }}
+                    >
+                      {guardandoEditarCliente ? '💾 Guardando...' : '💾 Guardar Cambios'}
+                    </button>
+                  </div>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal Confirmar Eliminación de Cliente */}
+        {clienteAEliminar && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1450, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '15px' }}>
+            <div style={{ background: '#1a1a1a', borderRadius: '14px', width: '100%', maxWidth: '440px', border: '2px solid #e74c3c', padding: '24px', boxShadow: '0 15px 40px rgba(231,76,60,0.3)', animation: 'fadeIn 0.2s ease-in' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                <span style={{ fontSize: '2rem' }}>⚠️</span>
+                <div>
+                  <h3 style={{ margin: 0, color: '#e74c3c', fontSize: '1.2rem' }}>¿Eliminar Cliente del CRM?</h3>
+                  <span style={{ fontSize: '0.8rem', color: '#aaa' }}>Esta acción no se puede deshacer</span>
+                </div>
+              </div>
+
+              <div style={{ background: 'rgba(231,76,60,0.08)', border: '1px solid rgba(231,76,60,0.25)', borderRadius: '8px', padding: '14px', marginBottom: '20px' }}>
+                <p style={{ margin: '0 0 8px 0', color: '#fff', fontSize: '0.92rem' }}>
+                  Estás a punto de eliminar permanentemente al cliente:
+                </p>
+                <div style={{ fontWeight: 'bold', color: 'var(--gold-jewel)', fontSize: '1.05rem', marginBottom: '4px' }}>
+                  👤 {clienteAEliminar.nombre}
+                </div>
+                {clienteAEliminar.rut && (
+                  <div style={{ fontSize: '0.82rem', color: '#ccc' }}>
+                    RUT: <strong>{clienteAEliminar.rut}</strong>
+                  </div>
+                )}
+                {clienteAEliminar.telefono && (
+                  <div style={{ fontSize: '0.82rem', color: '#aaa' }}>
+                    Tel: {clienteAEliminar.telefono}
+                  </div>
+                )}
+                <div style={{ marginTop: '8px', fontSize: '0.78rem', color: '#e74c3c' }}>
+                  ⚠️ Se borrará su ficha, historial de citas y cortes acumulados asociados.
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  disabled={eliminandoCliente}
+                  onClick={() => setClienteAEliminar(null)}
+                  style={{
+                    padding: '10px 18px',
+                    background: 'transparent',
+                    border: '1px solid #555',
+                    color: '#ccc',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '0.88rem'
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={eliminandoCliente}
+                  onClick={() => handleEliminarCliente(clienteAEliminar)}
+                  style={{
+                    padding: '10px 20px',
+                    background: '#e74c3c',
+                    border: 'none',
+                    color: '#fff',
+                    borderRadius: '8px',
+                    cursor: eliminandoCliente ? 'not-allowed' : 'pointer',
+                    fontWeight: 'bold',
+                    fontSize: '0.88rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  {eliminandoCliente ? '⏳ Eliminando...' : '🗑️ Sí, Eliminar'}
+                </button>
+              </div>
             </div>
           </div>
         )}
