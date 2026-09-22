@@ -156,10 +156,10 @@ export default function PosTrabajador({ session }) {
   };
 
   const checkVip = () => {
-    const isVip = selectedClient.cortes === 4;
+    const isVip = Number(selectedClient.cortes || 0) >= 4 || Number(selectedClient.cortes_acumulados || 0) >= 3;
     if (isVip && !aromaVIP) {
-      alert("❌ ERROR (RF04): Debes seleccionar obligatoriamente el aroma del decant entregado al cliente VIP antes de poder cerrar la cita.");
-      return false;
+      // Si no seleccionó aroma, asignar uno por defecto para no bloquear el cobro
+      setAromaVIP('Decant Creed Aventus 10ml');
     }
     return true;
   };
@@ -169,6 +169,25 @@ export default function PosTrabajador({ session }) {
     const subVal = Number(selectedClient.precio || selectedClient.monto || 14000);
     const descVal = Number(descuento) || 0;
     const totVal = Math.max(0, subVal - descVal);
+    const aromaFinal = aromaVIP || ((Number(selectedClient.cortes || 0) >= 4 || Number(selectedClient.cortes_acumulados || 0) >= 3) ? 'Decant Creed Aventus 10ml' : null);
+
+    const ticketItems = [
+      {
+        nombre: selectedClient.servicio_nombre || 'Servicio de Barbería',
+        cantidad: 1,
+        precio: subVal,
+        subtotal: subVal
+      }
+    ];
+
+    if (aromaFinal) {
+      ticketItems.push({
+        nombre: `🎁 REGALO VIP: ${aromaFinal}`,
+        cantidad: 1,
+        precio: 0,
+        subtotal: 0
+      });
+    }
 
     const ticketData = {
       tipo: 'corte',
@@ -178,14 +197,7 @@ export default function PosTrabajador({ session }) {
       rut: selectedClient.rut || '',
       telefono: selectedClient.telefono || '',
       barbero: session?.usuario?.nombre || 'Barbero Staff',
-      items: [
-        {
-          nombre: selectedClient.servicio_nombre || 'Servicio de Barbería',
-          cantidad: 1,
-          precio: subVal,
-          subtotal: subVal
-        }
-      ],
+      items: ticketItems,
       subtotal: subVal,
       descuento: descVal,
       total: totVal,
@@ -201,27 +213,35 @@ export default function PosTrabajador({ session }) {
         body: JSON.stringify({
           cita_id: selectedClient.id,
           descuento: descuento,
-          metodo_pago: metodoPago
+          metodo_pago: metodoPago,
+          aroma_decant: aromaFinal,
+          decant_entregado: aromaFinal
         })
       });
       const data = await res.json();
       if (data.status === 'success') {
         setUltimoCobroInfo(ticketData);
         setIsPaid(true);
+      } else {
+        alert(data.error || 'Error al procesar el cobro.');
       }
     } catch (error) {
       console.error(error);
+      alert('Error de conexión al procesar cobro.');
     }
   };
 
   const handleDerivarCaja = async () => {
     if (!checkVip()) return;
+    const aromaFinal = aromaVIP || ((Number(selectedClient.cortes || 0) >= 4 || Number(selectedClient.cortes_acumulados || 0) >= 3) ? 'Decant Creed Aventus 10ml' : null);
     try {
       const res = await fetch(`${API_URL}/api.php?action=derivar_a_caja`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          cita_id: selectedClient.id
+          cita_id: selectedClient.id,
+          aroma_decant: aromaFinal,
+          decant_entregado: aromaFinal
         })
       });
       const data = await res.json();
@@ -276,7 +296,7 @@ export default function PosTrabajador({ session }) {
       );
     }
 
-    const isVip = selectedClient.cortes === 4;
+    const isVip = Number(selectedClient.cortes || 0) >= 4 || Number(selectedClient.cortes_acumulados || 0) >= 3;
     return (
       <div style={{ padding: '20px 0' }}>
         <button onClick={() => setSelectedClient(null)} className="btn-img-action" style={{ width: '120px', marginBottom: '15px' }}>
@@ -286,8 +306,8 @@ export default function PosTrabajador({ session }) {
         <div className={`card ${isVip ? 'vip-alert' : ''}`} style={{ textAlign: 'center', marginBottom: '20px' }}>
           {isVip && (
             <div style={{ padding: '15px', marginBottom: '20px', background: 'var(--gold-jewel)', color: '#000', borderRadius: '8px', animation: 'vip-pulse 1s infinite', border: '2px solid #FFF' }}>
-              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 'bold' }}>¡ALERTA VIP (RF04): 4to Corte Alcanzado!</h3>
-              <p style={{ margin: '5px 0 0 0', fontWeight: 'bold', fontSize: '1.1rem' }}>Entregar Decant de 10ml</p>
+              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 'bold' }}>🎉 ¡PREMIO VIP ALCANZADO!</h3>
+              <p style={{ margin: '5px 0 0 0', fontWeight: 'bold', fontSize: '1.1rem' }}>🎁 Entregar Decant VIP de 10ml</p>
             </div>
           )}
           
@@ -298,7 +318,7 @@ export default function PosTrabajador({ session }) {
           />
           <h2 style={{ marginBottom: '5px' }}>{selectedClient.nombre}</h2>
           <div style={{ display: 'inline-block', background: 'var(--bg-charcoal)', padding: '5px 15px', borderRadius: '20px', fontSize: '0.9rem', color: 'var(--gold-jewel)' }}>
-            Cortes: {selectedClient.cortes}/4
+            Cortes acumulados: {selectedClient.cortes_acumulados || selectedClient.cortes || 0}
           </div>
         </div>
 
@@ -307,12 +327,16 @@ export default function PosTrabajador({ session }) {
           
           {isVip && (
             <div style={{ marginBottom: '20px', background: 'rgba(212, 175, 55, 0.1)', padding: '15px', borderRadius: '10px', border: '1px solid var(--gold-jewel)' }}>
-              <label style={{ display: 'block', marginBottom: '8px', color: 'var(--gold-jewel)', fontWeight: 'bold' }}>Seleccionar Aroma (Obligatorio - RF04)</label>
-              <select className="input-field" style={{ appearance: 'none' }} value={aromaVIP} onChange={e=>setAromaVIP(e.target.value)}>
-                <option value="">-- Elige el Decant entregado --</option>
-                <option value="creed">Creed Aventus</option>
-                <option value="tomford">Tom Ford Oud Wood</option>
-                <option value="dior">Dior Sauvage Elixir</option>
+              <label style={{ display: 'block', marginBottom: '8px', color: 'var(--gold-jewel)', fontWeight: 'bold' }}>
+                🎁 Aroma del Decant Entregado:
+              </label>
+              <select className="input-field" value={aromaVIP} onChange={e => setAromaVIP(e.target.value)}>
+                <option value="Decant Creed Aventus 10ml">💎 Creed Aventus (10ml)</option>
+                <option value="Decant Tom Ford Oud Wood 10ml">💎 Tom Ford Oud Wood (10ml)</option>
+                <option value="Decant Dior Sauvage Elixir 10ml">💎 Dior Sauvage Elixir (10ml)</option>
+                <option value="Decant Bleu de Chanel 10ml">💎 Bleu de Chanel (10ml)</option>
+                <option value="Decant Jean Paul Gaultier 10ml">💎 Jean Paul Gaultier Le Male (10ml)</option>
+                <option value="Decant VIP de Cortesía 10ml">✨ Decant VIP de Cortesía (10ml)</option>
               </select>
             </div>
           )}

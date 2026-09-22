@@ -435,88 +435,121 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
             break;
         case 'finalizar_cita':
-            $cita_id = $data['cita_id'] ?? 0;
-            $descuento = isset($data['descuento']) ? (float)$data['descuento'] : 0;
-            $metodo_pago = $data['metodo_pago'] ?? 'Efectivo';
-            $decant_producto_id = $data['decant_producto_id'] ?? null;
-            $subtotalInput = isset($data['subtotal']) ? (float)$data['subtotal'] : (isset($data['monto']) ? (float)$data['monto'] : null);
-            
-            // Si el usuario especificó o modificó el subtotal en el modal de cobro:
-            if ($subtotalInput !== null) {
-                $subtotal = max(0, $subtotalInput);
-                
-                // Verificar si existen registros en cita_detalle
-                $checkDet = $pdo->prepare("SELECT id FROM cita_detalle WHERE cita_id = ?");
-                $checkDet->execute([$cita_id]);
-                $detalles = $checkDet->fetchAll(PDO::FETCH_COLUMN);
-                
-                if (empty($detalles)) {
-                    // Si no había cita_detalle, insertar con el servicio por defecto y el subtotal ingresado
-                    $sDefault = $pdo->query("SELECT id FROM servicios ORDER BY es_corte DESC, id ASC LIMIT 1")->fetchColumn();
-                    $servId = $sDefault ?: 1;
-                    $pdo->prepare("INSERT INTO cita_detalle (cita_id, servicio_id, precio_cobrado) VALUES (?, ?, ?)")
-                        ->execute([$cita_id, $servId, $subtotal]);
-                } else {
-                    // Si hay registros, actualizar el primero con el monto total para que SUM(precio_cobrado) sea exacto
-                    $pdo->prepare("UPDATE cita_detalle SET precio_cobrado = ? WHERE id = ?")
-                        ->execute([$subtotal, $detalles[0]]);
-                    for ($i = 1; $i < count($detalles); $i++) {
-                        $pdo->prepare("UPDATE cita_detalle SET precio_cobrado = 0 WHERE id = ?")->execute([$detalles[$i]]);
-                    }
-                }
-            } else {
-                // Calcular total_pagado = subtotal - descuento desde BD
-                $subQ = $pdo->prepare("SELECT SUM(precio_cobrado) FROM cita_detalle WHERE cita_id = ?");
-                $subQ->execute([$cita_id]);
-                $subtotal = (float)$subQ->fetchColumn();
-            }
+            try {
+                // Asegurar tabla historial_recompensas
+                try {
+                    $pdo->exec("CREATE TABLE IF NOT EXISTS historial_recompensas (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        cliente_id INT NOT NULL,
+                        cita_id INT DEFAULT NULL,
+                        aroma_decant VARCHAR(255) NOT NULL,
+                        fecha_entrega TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        INDEX idx_cliente (cliente_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+                } catch (\Exception $eTable) {}
 
-            $total_pagado = max(0, $subtotal - $descuento);
-            
-            // Si hay decant regalado, lo procesamos
-            if ($decant_producto_id) {
-                // Obtener nombre del decant
-                $sProd = $pdo->prepare("SELECT nombre FROM productos WHERE id = ?");
-                $sProd->execute([$decant_producto_id]);
-                $decantNombre = $sProd->fetchColumn();
-
-                if ($decantNombre) {
-                    // Restar stock
-                    $pdo->prepare("UPDATE productos SET stock = stock - 1 WHERE id = ?")->execute([$decant_producto_id]);
+                $cita_id = intval($data['cita_id'] ?? 0);
+                $descuento = isset($data['descuento']) ? (float)$data['descuento'] : 0;
+                $metodo_pago = $data['metodo_pago'] ?? 'Efectivo';
+                $decant_producto_id = $data['decant_producto_id'] ?? null;
+                $aroma_decant = trim($data['aroma_decant'] ?? ($data['decant_entregado'] ?? ($data['aromaVIP'] ?? '')));
+                $subtotalInput = isset($data['subtotal']) ? (float)$data['subtotal'] : (isset($data['monto']) ? (float)$data['monto'] : null);
+                
+                // Si el usuario especificó o modificó el subtotal en el modal de cobro:
+                if ($subtotalInput !== null) {
+                    $subtotal = max(0, $subtotalInput);
                     
-                    // Obtener cliente_id
-                    $sCli = $pdo->prepare("SELECT cliente_id FROM citas WHERE id = ?");
-                    $sCli->execute([$cita_id]);
-                    $cliente_id = $sCli->fetchColumn();
+                    // Verificar si existen registros en cita_detalle
+                    $checkDet = $pdo->prepare("SELECT id FROM cita_detalle WHERE cita_id = ?");
+                    $checkDet->execute([$cita_id]);
+                    $detalles = $checkDet->fetchAll(PDO::FETCH_COLUMN);
+                    
+                    if (empty($detalles)) {
+                        // Si no había cita_detalle, insertar con el servicio por defecto y el subtotal ingresado
+                        $sDefault = $pdo->query("SELECT id FROM servicios ORDER BY es_corte DESC, id ASC LIMIT 1")->fetchColumn();
+                        $servId = $sDefault ?: 1;
+                        $pdo->prepare("INSERT INTO cita_detalle (cita_id, servicio_id, precio_cobrado) VALUES (?, ?, ?)")
+                            ->execute([$cita_id, $servId, $subtotal]);
+                    } else {
+                        // Si hay registros, actualizar el primero con el monto total para que SUM(precio_cobrado) sea exacto
+                        $pdo->prepare("UPDATE cita_detalle SET precio_cobrado = ? WHERE id = ?")
+                            ->execute([$subtotal, $detalles[0]]);
+                        for ($i = 1; $i < count($detalles); $i++) {
+                            $pdo->prepare("UPDATE cita_detalle SET precio_cobrado = 0 WHERE id = ?")->execute([$detalles[$i]]);
+                        }
+                    }
+                } else {
+                    // Calcular total_pagado = subtotal - descuento desde BD
+                    $subQ = $pdo->prepare("SELECT SUM(precio_cobrado) FROM cita_detalle WHERE cita_id = ?");
+                    $subQ->execute([$cita_id]);
+                    $subtotal = (float)$subQ->fetchColumn();
+                }
 
-                    // Guardar historial recompensas
-                    $pdo->prepare("INSERT INTO historial_recompensas (cliente_id, cita_id, aroma_decant) VALUES (?, ?, ?)")
+                $total_pagado = max(0, $subtotal - $descuento);
+                
+                // Determinar si se entregó un decant / regalo
+                $decantNombre = null;
+                if ($decant_producto_id) {
+                    $sProd = $pdo->prepare("SELECT nombre, stock FROM productos WHERE id = ?");
+                    $sProd->execute([$decant_producto_id]);
+                    $prod = $sProd->fetch();
+                    if ($prod) {
+                        $decantNombre = $prod['nombre'];
+                        if (intval($prod['stock']) > 0) {
+                            $pdo->prepare("UPDATE productos SET stock = GREATEST(0, stock - 1) WHERE id = ?")->execute([$decant_producto_id]);
+                        }
+                    }
+                } elseif (!empty($aroma_decant)) {
+                    $decantNombre = $aroma_decant;
+                    // Intentar descontar stock si coincide con bodega
+                    try {
+                        $sMatch = $pdo->prepare("SELECT id, stock FROM productos WHERE LOWER(nombre) = LOWER(?) OR nombre LIKE ? LIMIT 1");
+                        $sMatch->execute([$decantNombre, "%$decantNombre%"]);
+                        $prodMatch = $sMatch->fetch();
+                        if ($prodMatch && intval($prodMatch['stock']) > 0) {
+                            $pdo->prepare("UPDATE productos SET stock = GREATEST(0, stock - 1) WHERE id = ?")->execute([$prodMatch['id']]);
+                        }
+                    } catch (\Exception $eStk) {}
+                }
+
+                // Obtener cliente_id de la cita
+                $sCli = $pdo->prepare("SELECT cliente_id FROM citas WHERE id = ?");
+                $sCli->execute([$cita_id]);
+                $cliente_id = $sCli->fetchColumn();
+
+                if ($decantNombre && $cliente_id) {
+                    // Guardar en historial_recompensas
+                    $pdo->prepare("INSERT INTO historial_recompensas (cliente_id, cita_id, aroma_decant, fecha_entrega) VALUES (?, ?, ?, NOW())")
                         ->execute([$cliente_id, $cita_id, $decantNombre]);
                     
-                    // Actualizar cliente (reset cortes)
-                    $pdo->prepare("UPDATE clientes SET cortes_acumulados = 0 WHERE id = ?")->execute([$cliente_id]);
+                    // Resetear o descontar cortes acumulados
+                    $meta = 3;
+                    try {
+                        $stmtMeta = $pdo->query("SELECT valor FROM configuraciones WHERE clave = 'meta_cortes_premio'");
+                        $metaVal = $stmtMeta ? $stmtMeta->fetchColumn() : 3;
+                        if ($metaVal) $meta = intval($metaVal);
+                    } catch (\Exception $eM) {}
+
+                    $pdo->prepare("UPDATE clientes SET cortes_acumulados = GREATEST(0, COALESCE(cortes_acumulados, 0) - ?) WHERE id = ?")->execute([$meta, $cliente_id]);
 
                     // Completar cita con decant
                     $stmt = $pdo->prepare("UPDATE citas SET estado = 'Completada', descuento = ?, metodo_pago = ?, decant_entregado = ?, total_pagado = ? WHERE id = ?");
                     $stmt->execute([$descuento, $metodo_pago, $decantNombre, $total_pagado, $cita_id]);
-                    echo json_encode(["status" => "success"]);
-                    break;
+                } else {
+                    // Normal finalizar (sin regalo decant)
+                    $stmt = $pdo->prepare("UPDATE citas SET estado = 'Completada', descuento = ?, metodo_pago = ?, total_pagado = ? WHERE id = ?");
+                    $stmt->execute([$descuento, $metodo_pago, $total_pagado, $cita_id]);
+                    
+                    // Incrementar corte al cliente
+                    if ($cliente_id) {
+                        $pdo->prepare("UPDATE clientes SET cortes_acumulados = COALESCE(cortes_acumulados, 0) + 1 WHERE id = ?")->execute([$cliente_id]);
+                    }
                 }
-            }
 
-            // Normal finalizar (no VIP o ya procesado sin premio)
-            $stmt = $pdo->prepare("UPDATE citas SET estado = 'Completada', descuento = ?, metodo_pago = ?, total_pagado = ? WHERE id = ?");
-            $stmt->execute([$descuento, $metodo_pago, $total_pagado, $cita_id]);
-            
-            // Incrementar corte al cliente normal
-            $sCli = $pdo->prepare("SELECT cliente_id FROM citas WHERE id = ?");
-            $sCli->execute([$cita_id]);
-            $cliente_id = $sCli->fetchColumn();
-            if ($cliente_id) {
-                $pdo->prepare("UPDATE clientes SET cortes_acumulados = cortes_acumulados + 1 WHERE id = ?")->execute([$cliente_id]);
+                echo json_encode(["status" => "success", "decant_entregado" => $decantNombre]);
+            } catch (\Exception $e) {
+                echo json_encode(["status" => "error", "error" => "Error al finalizar cita: " . $e->getMessage()]);
             }
-
-            echo json_encode(["status" => "success"]);
             break;
         case 'derivar_a_caja':
             $cita_id = $data['cita_id'] ?? 0;

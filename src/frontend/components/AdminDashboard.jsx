@@ -130,9 +130,11 @@ export default function AdminDashboard({ session, logout }) {
   const [filtroBarberoDashboard, setFiltroBarberoDashboard] = useState('');
   const [showPremioModal, setShowPremioModal] = useState(false);
   const [clientePremio, setClientePremio] = useState(null);
-  const [premioModalTipo, setPremioModalTipo] = useState('producto'); // 'producto' o 'personalizado'
+  const [premioModalTipo, setPremioModalTipo] = useState('decant'); // 'decant', 'producto' o 'personalizado'
+  const [premioDecantRapido, setPremioDecantRapido] = useState('Decant Creed Aventus 10ml');
   const [premioPersonalizadoTexto, setPremioPersonalizadoTexto] = useState('');
   const [premioProductoId, setPremioProductoId] = useState('');
+  const [isSubmittingPremio, setIsSubmittingPremio] = useState(false);
   const [metaCortesPremio, setMetaCortesPremio] = useState(3);
   const [guardandoMeta, setGuardandoMeta] = useState(false);
   const [historialCRMTab, setHistorialCRMTab] = useState('visitas'); // 'visitas' o 'regalos'
@@ -1017,41 +1019,68 @@ export default function AdminDashboard({ session, logout }) {
   };
 
   const handleEntregarPremio = async (e) => {
-    e.preventDefault();
-    if (!clientePremio?.id) return;
-
-    if (premioModalTipo === 'producto' && !premioProductoId) {
-      showToast('Por favor selecciona un producto del inventario', 'error');
-      return;
-    }
-    if (premioModalTipo === 'personalizado' && !premioPersonalizadoTexto.trim()) {
-      showToast('Por favor escribe el detalle del regalo', 'error');
+    if (e) e.preventDefault();
+    const targetClienteId = clientePremio?.id || clientePremio?.cliente_id;
+    if (!targetClienteId) {
+      showToast('Cliente no especificado', 'error');
       return;
     }
 
-    const payload = {
-      cliente_id: clientePremio.id,
-      producto_id: premioModalTipo === 'producto' ? premioProductoId : null,
-      premio_personalizado: premioModalTipo === 'personalizado' ? premioPersonalizadoTexto.trim() : null
-    };
+    let nombreRegalo = '';
+    let prodId = null;
 
-    const res = await fetch(`${API_URL}/admin_api.php?action=entregar_premio_crm`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    
-    if (data.status === 'success') {
-      showToast(data.message || 'Regalo entregado y registrado exitosamente', 'success');
-      setShowPremioModal(false);
-      setClientePremio(null);
-      setPremioProductoId('');
-      setPremioPersonalizadoTexto('');
-      cargarCRM();
-      cargarBodega();
+    if (premioModalTipo === 'decant') {
+      nombreRegalo = premioDecantRapido || 'Decant Creed Aventus 10ml';
+    } else if (premioModalTipo === 'producto') {
+      if (!premioProductoId) {
+        showToast('Por favor selecciona un producto del inventario', 'error');
+        return;
+      }
+      prodId = premioProductoId;
+      const foundProd = (productos || []).find(p => String(p.id) === String(premioProductoId));
+      if (foundProd) nombreRegalo = foundProd.nombre;
+      else nombreRegalo = 'Producto de Inventario';
     } else {
-      showToast(data.message || 'Error al entregar premio', 'error');
+      if (!premioPersonalizadoTexto.trim()) {
+        showToast('Por favor escribe el detalle del regalo', 'error');
+        return;
+      }
+      nombreRegalo = premioPersonalizadoTexto.trim();
+    }
+
+    setIsSubmittingPremio(true);
+    try {
+      const payload = {
+        cliente_id: targetClienteId,
+        producto_id: prodId,
+        premio_personalizado: nombreRegalo,
+        aroma_decant: nombreRegalo
+      };
+
+      const res = await fetch(`${API_URL}/admin_api.php?action=entregar_premio_crm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      
+      if (data.status === 'success') {
+        showToast(data.message || `🎁 Regalo "${nombreRegalo}" entregado exitosamente`, 'success');
+        setShowPremioModal(false);
+        setClientePremio(null);
+        setPremioProductoId('');
+        setPremioPersonalizadoTexto('');
+        setPremioDecantRapido('Decant Creed Aventus 10ml');
+        cargarCRM();
+        cargarBodega();
+      } else {
+        showToast(data.message || data.error || 'Error al entregar premio', 'error');
+      }
+    } catch (err) {
+      console.error('Error al entregar premio:', err);
+      showToast('Error de conexión al entregar regalo', 'error');
+    } finally {
+      setIsSubmittingPremio(false);
     }
   };
 
@@ -1476,27 +1505,82 @@ export default function AdminDashboard({ session, logout }) {
   };
 
   const handleImageUpload = async (e) => {
-    const file = e.target.files[0];
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    setSubiendoImagenProd(true);
+    const uploadedUrls = [];
+    let errores = 0;
+
+    for (const file of files) {
+      const formData = new FormData();
+      formData.append('image', file);
+      formData.append('type', 'producto');
+      
+      try {
+        const res = await fetch(`${API_URL}/admin_api.php?action=upload_image&type=producto`, {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (data.status === 'success' && data.url) {
+          uploadedUrls.push(data.url);
+        } else {
+          errores++;
+        }
+      } catch (err) {
+        errores++;
+      }
+    }
+
+    if (uploadedUrls.length > 0) {
+      setEditingProd(prev => {
+        const prevUrls = prev?.imagen_url ? prev.imagen_url.split(',').map(s => s.trim()).filter(Boolean) : [];
+        const combined = [...prevUrls, ...uploadedUrls];
+        return {
+          ...prev,
+          imagen_url: combined.join(', ')
+        };
+      });
+      showToast(`¡${uploadedUrls.length} ${uploadedUrls.length === 1 ? 'imagen subida' : 'imágenes subidas'} con éxito!`, 'success');
+    }
+
+    if (errores > 0) {
+      alert(`Hubo un problema subiendo ${errores} archivo(s). Asegúrate de que sean imágenes válidas (JPG, PNG, WEBP).`);
+    }
+
+    setSubiendoImagenProd(false);
+    e.target.value = '';
+  };
+
+  const handleSlotImageUpload = async (slotIndex, file) => {
     if (!file) return;
 
-    // Vista previa instantánea
-    const localPreview = URL.createObjectURL(file);
-    setEditingProd(prev => ({ ...prev, imagen_url: localPreview }));
     setSubiendoImagenProd(true);
-
     const formData = new FormData();
     formData.append('image', file);
     formData.append('type', 'producto');
-    
+
     try {
       const res = await fetch(`${API_URL}/admin_api.php?action=upload_image&type=producto`, {
         method: 'POST',
         body: formData
       });
       const data = await res.json();
-      if (data.status === 'success') {
-        setEditingProd(prev => ({ ...prev, imagen_url: data.url }));
-        showToast('Imagen del producto subida con éxito', 'success');
+      if (data.status === 'success' && data.url) {
+        setEditingProd(prev => {
+          const urls = prev?.imagen_url ? prev.imagen_url.split(',').map(s => s.trim()).filter(Boolean) : [];
+          if (slotIndex < urls.length) {
+            urls[slotIndex] = data.url;
+          } else {
+            urls.push(data.url);
+          }
+          return {
+            ...prev,
+            imagen_url: urls.join(', ')
+          };
+        });
+        showToast(slotIndex === 0 ? '⭐ ¡Foto de portada actualizada!' : `¡Foto #${slotIndex + 1} actualizada con éxito!`, 'success');
       } else {
         alert(data.error || 'Error al subir la imagen');
       }
@@ -1505,6 +1589,45 @@ export default function AdminDashboard({ session, logout }) {
     } finally {
       setSubiendoImagenProd(false);
     }
+  };
+
+  const handleMoveProductImage = (fromIndex, toIndex) => {
+    setEditingProd(prev => {
+      const urls = prev?.imagen_url ? prev.imagen_url.split(',').map(s => s.trim()).filter(Boolean) : [];
+      if (fromIndex < 0 || fromIndex >= urls.length || toIndex < 0 || toIndex >= urls.length) return prev;
+      const target = urls[fromIndex];
+      urls.splice(fromIndex, 1);
+      urls.splice(toIndex, 0, target);
+      return {
+        ...prev,
+        imagen_url: urls.join(', ')
+      };
+    });
+  };
+
+  const handleRemoveProductImage = (indexToRemove) => {
+    setEditingProd(prev => {
+      const urls = prev?.imagen_url ? prev.imagen_url.split(',').map(s => s.trim()).filter(Boolean) : [];
+      const filtered = urls.filter((_, idx) => idx !== indexToRemove);
+      return {
+        ...prev,
+        imagen_url: filtered.join(', ')
+      };
+    });
+  };
+
+  const handleSetMainProductImage = (indexToMain) => {
+    setEditingProd(prev => {
+      const urls = prev?.imagen_url ? prev.imagen_url.split(',').map(s => s.trim()).filter(Boolean) : [];
+      if (indexToMain <= 0 || indexToMain >= urls.length) return prev;
+      const target = urls[indexToMain];
+      const rest = urls.filter((_, idx) => idx !== indexToMain);
+      return {
+        ...prev,
+        imagen_url: [target, ...rest].join(', ')
+      };
+    });
+    showToast('⭐ ¡Nueva foto de portada establecida!', 'success');
   };
 
   const handleBarberoPhotoUpload = async (e) => {
@@ -2681,7 +2804,7 @@ export default function AdminDashboard({ session, logout }) {
                           <button 
                             className="btn-primary" 
                             style={{ padding: '3px 8px', fontSize: '0.72rem', background: 'var(--gold-jewel)', color: '#000', fontWeight: 'bold', borderRadius: '12px', marginTop: '2px' }} 
-                            onClick={() => { setClientePremio(c); setPremioModalTipo('producto'); setShowPremioModal(true); }}
+                            onClick={() => { setClientePremio(c); setPremioModalTipo('decant'); setShowPremioModal(true); }}
                             title="El cliente cumplió la meta de cortes. Entregar premio ganado."
                           >
                             🎁 Entregar Premio
@@ -2722,7 +2845,7 @@ export default function AdminDashboard({ session, logout }) {
                           ✏️ Editar
                         </button>
                         <button 
-                          onClick={() => { setClientePremio(c); setPremioModalTipo('producto'); setShowPremioModal(true); }}
+                          onClick={() => { setClientePremio(c); setPremioModalTipo('decant'); setShowPremioModal(true); }}
                           style={{
                             background: 'rgba(155, 89, 182, 0.2)',
                             color: '#bb86fc',
@@ -4130,37 +4253,354 @@ export default function AdminDashboard({ session, logout }) {
         <button className="btn-primary" onClick={() => setEditingProd({ categoria_id: categorias[0]?.id, nombre: '', descripcion: '', precio: '', stock: 0, imagen_url: '' })}>+ Nuevo Producto</button>
       </div>
 
-      {editingProd && (
-        <div style={{ background: 'rgba(26, 26, 26, 0.6)', backdropFilter: 'blur(10px)', padding: '25px', borderRadius: '12px', border: '1px solid var(--gold-jewel)' }}>
-          <h3 style={{ marginTop: 0, color: '#fff' }}>{editingProd.id ? 'Editar Producto' : 'Crear Producto'}</h3>
-          <form onSubmit={guardarProducto} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '15px' }}>
-            <input className="input-field" placeholder="Nombre" value={editingProd.nombre} onChange={e=>setEditingProd({...editingProd, nombre: e.target.value})} required style={{ margin: 0 }} />
-            <select className="input-field" value={editingProd.categoria_id} onChange={e=>setEditingProd({...editingProd, categoria_id: e.target.value})} required style={{ margin: 0 }}>
-              {categorias.map(c => <option key={c.id} value={c.id} style={{ color: '#000' }}>{c.nombre}</option>)}
-            </select>
-            <input type="number" className="input-field" placeholder="Precio ($)" value={editingProd.precio} onChange={e=>setEditingProd({...editingProd, precio: e.target.value})} required style={{ margin: 0 }} />
-            <input type="number" className="input-field" placeholder="Stock" value={editingProd.stock} onChange={e=>setEditingProd({...editingProd, stock: e.target.value})} required style={{ margin: 0 }} />
-            <div style={{ margin: 0, gridColumn: 'span 2', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Foto del Producto:</label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <input type="file" className="input-field" accept="image/*" onChange={handleImageUpload} style={{ flex: 1, padding: '6px', cursor: 'pointer' }} />
-                {subiendoImagenProd && <span style={{ color: 'var(--gold-jewel)', fontSize: '0.8rem' }}>⏳ Subiendo...</span>}
-                {editingProd.imagen_url && (
-                  <div style={{ width: '45px', height: '45px', borderRadius: '6px', overflow: 'hidden', border: '1px solid var(--gold-jewel)', background: '#222', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <img src={resolveImageUrl(editingProd.imagen_url)} alt="preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
-                  </div>
-                )}
+      {editingProd && (() => {
+        const currentImages = editingProd.imagen_url ? editingProd.imagen_url.split(',').map(s => s.trim()).filter(Boolean) : [];
+        return (
+          <div style={{ background: 'rgba(26, 26, 26, 0.85)', backdropFilter: 'blur(12px)', padding: '25px', borderRadius: '14px', border: '2px solid var(--gold-jewel)', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid rgba(212, 175, 55, 0.2)', paddingBottom: '10px' }}>
+              <h3 style={{ margin: 0, color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>{editingProd.id ? '✏️ Editar Producto' : '✨ Nuevo Producto'}</span>
+              </h3>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                {editingProd.id ? `ID: #${editingProd.id}` : 'Creando nuevo artículo'}
+              </span>
+            </div>
+
+            <form onSubmit={guardarProducto} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '15px' }}>
+              <div>
+                <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Nombre del Producto *</label>
+                <input className="input-field" placeholder="Ej: Pomada Mate Extra Fuerte" value={editingProd.nombre} onChange={e=>setEditingProd({...editingProd, nombre: e.target.value})} required style={{ margin: 0 }} />
               </div>
-            </div>
-            <div style={{ gridColumn: 'span 3', display: 'flex', gap: '15px', marginTop: '10px' }}>
-              <button type="submit" className="btn-primary" style={{ flex: 1 }} disabled={subiendoImagenProd}>
-                {subiendoImagenProd ? 'Subiendo imagen...' : 'Guardar'}
-              </button>
-              <button type="button" className="btn-outline-gold" style={{ flex: 1 }} onClick={() => setEditingProd(null)}>Cancelar</button>
-            </div>
-          </form>
-        </div>
-      )}
+
+              <div>
+                <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Categoría *</label>
+                <select className="input-field" value={editingProd.categoria_id} onChange={e=>setEditingProd({...editingProd, categoria_id: e.target.value})} required style={{ margin: 0 }}>
+                  {categorias.map(c => <option key={c.id} value={c.id} style={{ color: '#000' }}>{c.nombre}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Precio ($ CLP) *</label>
+                <input type="number" className="input-field" placeholder="Ej: 12000" value={editingProd.precio} onChange={e=>setEditingProd({...editingProd, precio: e.target.value})} required style={{ margin: 0 }} />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Stock Disponible *</label>
+                <input type="number" className="input-field" placeholder="Ej: 15" value={editingProd.stock} onChange={e=>setEditingProd({...editingProd, stock: e.target.value})} required style={{ margin: 0 }} />
+              </div>
+
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Descripción del Producto (detalles, aroma, fijación, especificaciones)</label>
+                <textarea 
+                  className="input-field" 
+                  rows="2" 
+                  placeholder="Ej: Gorra trucker ajustable con bordado exclusivo de alta calidad. Talla única para adultos." 
+                  value={editingProd.descripcion || ''} 
+                  onChange={e=>setEditingProd({...editingProd, descripcion: e.target.value})} 
+                  style={{ margin: 0, resize: 'vertical' }} 
+                />
+              </div>
+
+              {/* GESTIÓN DE FOTOS (3 SLOTS PRINCIPALES + PORTADA A ELECCIÓN + EDICIÓN INDIVIDUAL) */}
+              <div style={{ 
+                gridColumn: '1 / -1', 
+                background: 'rgba(0, 0, 0, 0.45)', 
+                padding: '20px', 
+                borderRadius: '14px', 
+                border: '2px solid rgba(212, 175, 55, 0.4)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '16px'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                  <div>
+                    <span style={{ fontWeight: 'bold', color: 'var(--gold-jewel)', fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      📸 Galería de Fotos (3 Imágenes con Portada a Elección)
+                    </span>
+                    <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', display: 'block', marginTop: '3px' }}>
+                      ⭐ <strong>La Foto 1 es la Portada</strong> que se ve en la tienda. Puedes pulsar <strong>"⭐ Elegir como Portada"</strong> en cualquier foto o usar <strong>"✏️ Cambiar Foto"</strong> para editar cualquiera de las 3 imágenes individualmente.
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ 
+                      fontSize: '0.8rem', 
+                      padding: '5px 12px', 
+                      borderRadius: '20px', 
+                      fontWeight: 'bold',
+                      background: currentImages.length >= 3 ? 'rgba(39, 174, 96, 0.25)' : 'rgba(212, 175, 55, 0.18)',
+                      color: currentImages.length >= 3 ? '#2ecc71' : 'var(--gold-jewel)',
+                      border: `1px solid ${currentImages.length >= 3 ? '#27ae60' : 'var(--gold-jewel)'}`
+                    }}>
+                      {currentImages.length} de 3 fotos mínimas {currentImages.length >= 3 ? '✅ (Listo)' : '(Faltan fotos)'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* 3 SLOTS DE FOTOS (FOTO 1 / PORTADA, FOTO 2, FOTO 3, Y FOTOS ADICIONALES SI HUBIESE) */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: '16px' }}>
+                  {[0, 1, 2, ...(currentImages.length > 3 ? Array.from({ length: currentImages.length - 3 }, (_, k) => k + 3) : [])].map((slotIdx) => {
+                    const hasImage = slotIdx < currentImages.length;
+                    const imgUrl = hasImage ? currentImages[slotIdx] : null;
+                    const isPortada = slotIdx === 0;
+
+                    const slotTitle = isPortada 
+                      ? '⭐ Foto 1: PORTADA PRINCIPAL' 
+                      : (slotIdx === 1 ? '🖼️ Foto 2: Secundaria' : (slotIdx === 2 ? '🔍 Foto 3: Detalle / Ángulo' : `📷 Foto ${slotIdx + 1}: Adicional`));
+
+                    if (hasImage) {
+                      return (
+                        <div 
+                          key={slotIdx}
+                          style={{
+                            background: isPortada ? 'rgba(212, 175, 55, 0.08)' : '#161616',
+                            border: isPortada ? '2px solid var(--gold-jewel)' : '1px solid rgba(255,255,255,0.15)',
+                            borderRadius: '12px',
+                            overflow: 'hidden',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            boxShadow: isPortada ? '0 0 16px rgba(212,175,55,0.35)' : '0 4px 10px rgba(0,0,0,0.4)',
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          {/* Cabecera del Slot */}
+                          <div style={{
+                            background: isPortada ? 'linear-gradient(90deg, #D4AF37, #F3E5AB)' : 'rgba(255,255,255,0.06)',
+                            color: isPortada ? '#000' : 'var(--gold-jewel)',
+                            padding: '6px 10px',
+                            fontSize: '0.78rem',
+                            fontWeight: 'bold',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center'
+                          }}>
+                            <span>{slotTitle}</span>
+                            {isPortada && <span style={{ background: '#000', color: '#fff', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '4px' }}>ACTIVA</span>}
+                          </div>
+
+                          {/* Imagen Preview */}
+                          <div style={{ height: '160px', width: '100%', position: 'relative', backgroundColor: '#0c0c0c' }}>
+                            <img 
+                              src={resolveImageUrl(imgUrl)} 
+                              alt={slotTitle} 
+                              style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                              onError={(e) => { e.target.src = '/icon-192.png'; }}
+                            />
+                          </div>
+
+                          {/* Barra de Herramientas de Edición para este Slot */}
+                          <div style={{ padding: '10px', background: '#121212', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              {/* Botón Cambiar / Editar Foto de este Slot */}
+                              <label 
+                                htmlFor={`replace-file-${slotIdx}`}
+                                className="btn-outline-gold"
+                                style={{
+                                  flex: 1,
+                                  padding: '6px 10px',
+                                  fontSize: '0.78rem',
+                                  textAlign: 'center',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: '4px',
+                                  margin: 0
+                                }}
+                                title={`Subir una nueva imagen para reemplazar ${slotTitle}`}
+                              >
+                                <span>✏️ Cambiar Foto</span>
+                              </label>
+                              <input 
+                                id={`replace-file-${slotIdx}`} 
+                                type="file" 
+                                accept="image/*" 
+                                onChange={(e) => {
+                                  if (e.target.files && e.target.files[0]) {
+                                    handleSlotImageUpload(slotIdx, e.target.files[0]);
+                                  }
+                                  e.target.value = '';
+                                }} 
+                                style={{ display: 'none' }} 
+                              />
+
+                              {/* Botón Eliminar Foto */}
+                              <button 
+                                type="button" 
+                                onClick={() => handleRemoveProductImage(slotIdx)} 
+                                style={{
+                                  background: 'rgba(231,76,60,0.15)',
+                                  border: '1px solid rgba(231,76,60,0.4)',
+                                  color: '#e74c3c',
+                                  borderRadius: '8px',
+                                  padding: '6px 10px',
+                                  fontSize: '0.8rem',
+                                  cursor: 'pointer',
+                                  fontWeight: 'bold'
+                                }}
+                                title="Eliminar esta foto"
+                              >
+                                🗑️
+                              </button>
+                            </div>
+
+                            {/* Botón Poner como Portada y Reordenamiento */}
+                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                              {!isPortada ? (
+                                <button 
+                                  type="button" 
+                                  onClick={() => handleSetMainProductImage(slotIdx)}
+                                  style={{
+                                    flex: 1,
+                                    background: 'linear-gradient(135deg, rgba(212, 175, 55, 0.25), rgba(212, 175, 55, 0.1))',
+                                    border: '1px solid var(--gold-jewel)',
+                                    color: 'var(--gold-jewel)',
+                                    borderRadius: '6px',
+                                    padding: '5px 8px',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 'bold',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '4px'
+                                  }}
+                                  title="Convertir esta imagen en la foto principal de portada"
+                                >
+                                  ⭐ Elegir como Portada
+                                </button>
+                              ) : (
+                                <div style={{ flex: 1, fontSize: '0.72rem', color: '#2ecc71', fontWeight: 'bold', textAlign: 'center', padding: '4px' }}>
+                                  ✅ Es la Portada Oficial
+                                </div>
+                              )}
+
+                              {/* Flechas mover */}
+                              {slotIdx > 0 && (
+                                <button 
+                                  type="button"
+                                  onClick={() => handleMoveProductImage(slotIdx, slotIdx - 1)}
+                                  style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: '#fff', borderRadius: '4px', width: '28px', height: '28px', cursor: 'pointer', fontSize: '0.8rem' }}
+                                  title="Mover hacia la izquierda"
+                                >
+                                  ◀
+                                </button>
+                              )}
+                              {slotIdx < currentImages.length - 1 && (
+                                <button 
+                                  type="button"
+                                  onClick={() => handleMoveProductImage(slotIdx, slotIdx + 1)}
+                                  style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: '#fff', borderRadius: '4px', width: '28px', height: '28px', cursor: 'pointer', fontSize: '0.8rem' }}
+                                  title="Mover hacia la derecha"
+                                >
+                                  ▶
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    } else {
+                      // SLOT VACÍO
+                      return (
+                        <label 
+                          key={slotIdx}
+                          htmlFor={`upload-slot-${slotIdx}`}
+                          style={{
+                            border: isPortada ? '2px dashed var(--gold-jewel)' : '2px dashed rgba(212, 175, 55, 0.4)',
+                            background: isPortada ? 'rgba(212, 175, 55, 0.04)' : 'rgba(255, 255, 255, 0.02)',
+                            borderRadius: '12px',
+                            minHeight: '230px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: subiendoImagenProd ? 'not-allowed' : 'pointer',
+                            padding: '16px',
+                            textAlign: 'center',
+                            transition: 'all 0.2s ease'
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--gold-jewel)'; e.currentTarget.style.backgroundColor = 'rgba(212, 175, 55, 0.08)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.borderColor = isPortada ? 'var(--gold-jewel)' : 'rgba(212, 175, 55, 0.4)'; e.currentTarget.style.backgroundColor = isPortada ? 'rgba(212, 175, 55, 0.04)' : 'rgba(255, 255, 255, 0.02)'; }}
+                        >
+                          <span style={{ fontSize: '2.4rem', marginBottom: '8px' }}>
+                            {isPortada ? '⭐' : (slotIdx === 1 ? '🖼️' : '🔍')}
+                          </span>
+                          <span style={{ fontWeight: 'bold', color: isPortada ? 'var(--gold-jewel)' : '#fff', fontSize: '0.9rem', marginBottom: '4px' }}>
+                            + Subir {isPortada ? 'Foto de Portada' : (slotIdx === 1 ? 'Foto 2' : 'Foto 3')}
+                          </span>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                            {isPortada ? '(Portada principal visible en catálogo)' : 'Haz clic para subir esta foto'}
+                          </span>
+                          <input 
+                            id={`upload-slot-${slotIdx}`} 
+                            type="file" 
+                            accept="image/*" 
+                            disabled={subiendoImagenProd}
+                            onChange={(e) => {
+                              if (e.target.files && e.target.files[0]) {
+                                handleSlotImageUpload(slotIdx, e.target.files[0]);
+                              }
+                              e.target.value = '';
+                            }} 
+                            style={{ display: 'none' }} 
+                          />
+                        </label>
+                      );
+                    }
+                  })}
+                </div>
+
+                {/* Opciones adicionales: Subir en lote */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', paddingTop: '10px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <label 
+                      htmlFor="input-upload-prod-images-batch" 
+                      className="btn-outline-gold" 
+                      style={{ 
+                        cursor: subiendoImagenProd ? 'not-allowed' : 'pointer', 
+                        display: 'inline-flex', 
+                        alignItems: 'center', 
+                        gap: '6px', 
+                        padding: '8px 14px', 
+                        fontSize: '0.85rem',
+                        margin: 0,
+                        opacity: subiendoImagenProd ? 0.6 : 1
+                      }}
+                    >
+                      <span>📁 + Subir Múltiples Fotos a la Vez</span>
+                    </label>
+                    <input 
+                      id="input-upload-prod-images-batch" 
+                      type="file" 
+                      multiple 
+                      accept="image/*" 
+                      onChange={handleImageUpload} 
+                      disabled={subiendoImagenProd}
+                      style={{ display: 'none' }} 
+                    />
+                  </div>
+
+                  {subiendoImagenProd && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--gold-jewel)', fontSize: '0.85rem' }}>
+                      <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⏳</span>
+                      <span>Subiendo imagen al servidor... Por favor espera.</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '15px', marginTop: '10px' }}>
+                <button type="submit" className="btn-primary" style={{ flex: 1 }} disabled={subiendoImagenProd}>
+                  {subiendoImagenProd ? 'Subiendo fotos...' : '💾 Guardar Producto'}
+                </button>
+                <button type="button" className="btn-outline-gold" style={{ flex: 1 }} onClick={() => setEditingProd(null)}>
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        );
+      })()}
 
       <div style={{ background: 'rgba(26, 26, 26, 0.6)', backdropFilter: 'blur(10px)', borderRadius: '12px', border: '1px solid #333', overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -4175,40 +4615,61 @@ export default function AdminDashboard({ session, logout }) {
             </tr>
           </thead>
           <tbody>
-            {productos.map((p, i) => (
-              <tr key={p.id} style={{ background: i % 2 === 0 ? '#161616' : 'transparent' }}>
-                <td style={{...tableCellStyle, width: '60px'}}>
-                  <div style={{ width: '40px', height: '40px', borderRadius: '6px', background: '#222', overflow: 'hidden', display: 'flex', justifyContent: 'center', alignItems: 'center', position: 'relative' }}>
-                    {p.imagen_url ? (
-                      <img 
-                        src={resolveImageUrl(p.imagen_url.split(',')[0].trim())} 
-                        alt={p.nombre} 
-                        style={{width: '100%', height: '100%', objectFit: 'cover'}} 
-                        onError={(e) => { 
-                          e.target.style.display = 'none'; 
-                          if (e.target.nextSibling) e.target.nextSibling.style.display = 'block';
-                        }} 
-                      />
-                    ) : null}
-                    <span style={{ display: p.imagen_url ? 'none' : 'block', fontSize: '1.2rem' }}>🛍️</span>
-                  </div>
-                </td>
-                <td style={{...tableCellStyle, fontWeight: 'bold'}}>{p.nombre}</td>
-                <td style={{...tableCellStyle, color: '#aaa'}}>{p.categoria_nombre}</td>
-                <td style={{...tableCellStyle, color: 'var(--gold-jewel)'}}>${Number(p.precio).toLocaleString('es-CL')}</td>
-                <td style={{...tableCellStyle}}>
-                  <span style={{ 
-                    background: p.stock < 5 ? 'rgba(231, 76, 60, 0.1)' : 'rgba(39, 174, 96, 0.1)', 
-                    color: p.stock < 5 ? '#e74c3c' : 'var(--green-emerald-light)',
-                    padding: '5px 10px', borderRadius: '20px', fontWeight: 'bold'
-                  }}>{p.stock}</span>
-                </td>
-                <td style={tableCellStyle}>
-                  <button onClick={() => setEditingProd(p)} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', marginRight: '10px' }}>✏️</button>
-                  <button onClick={() => borrarProducto(p.id)} style={{ background: 'transparent', border: 'none', color: '#e74c3c', cursor: 'pointer' }}>🗑️</button>
-                </td>
-              </tr>
-            ))}
+            {productos.map((p, i) => {
+              const pImages = p.imagen_url ? p.imagen_url.split(',').map(s => s.trim()).filter(Boolean) : [];
+              return (
+                <tr key={p.id} style={{ background: i % 2 === 0 ? '#161616' : 'transparent' }}>
+                  <td style={{...tableCellStyle, width: '60px'}}>
+                    <div style={{ width: '45px', height: '45px', borderRadius: '6px', background: '#222', overflow: 'hidden', display: 'flex', justifyContent: 'center', alignItems: 'center', position: 'relative' }}>
+                      {pImages.length > 0 ? (
+                        <>
+                          <img 
+                            src={resolveImageUrl(pImages[0])} 
+                            alt={p.nombre} 
+                            style={{width: '100%', height: '100%', objectFit: 'cover'}} 
+                            onError={(e) => { 
+                              e.target.style.display = 'none'; 
+                              if (e.target.nextSibling) e.target.nextSibling.style.display = 'block';
+                            }} 
+                          />
+                          {pImages.length > 1 && (
+                            <span style={{ 
+                              position: 'absolute', 
+                              bottom: '2px', 
+                              right: '2px', 
+                              background: 'var(--gold-jewel)', 
+                              color: '#000', 
+                              fontSize: '0.65rem', 
+                              fontWeight: 'bold', 
+                              padding: '1px 4px', 
+                              borderRadius: '4px',
+                              boxShadow: '0 2px 4px rgba(0,0,0,0.8)'
+                            }}>
+                              +{pImages.length}
+                            </span>
+                          )}
+                        </>
+                      ) : null}
+                      <span style={{ display: pImages.length > 0 ? 'none' : 'block', fontSize: '1.2rem' }}>🛍️</span>
+                    </div>
+                  </td>
+                  <td style={{...tableCellStyle, fontWeight: 'bold'}}>{p.nombre}</td>
+                  <td style={{...tableCellStyle, color: '#aaa'}}>{p.categoria_nombre}</td>
+                  <td style={{...tableCellStyle, color: 'var(--gold-jewel)'}}>${Number(p.precio).toLocaleString('es-CL')}</td>
+                  <td style={{...tableCellStyle}}>
+                    <span style={{ 
+                      background: p.stock < 5 ? 'rgba(231, 76, 60, 0.1)' : 'rgba(39, 174, 96, 0.1)', 
+                      color: p.stock < 5 ? '#e74c3c' : 'var(--green-emerald-light)',
+                      padding: '5px 10px', borderRadius: '20px', fontWeight: 'bold'
+                    }}>{p.stock}</span>
+                  </td>
+                  <td style={tableCellStyle}>
+                    <button onClick={() => setEditingProd(p)} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', marginRight: '10px' }} title="Editar">✏️</button>
+                    <button onClick={() => borrarProducto(p.id)} style={{ background: 'transparent', border: 'none', color: '#e74c3c', cursor: 'pointer' }} title="Eliminar">🗑️</button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -6143,7 +6604,7 @@ export default function AdminDashboard({ session, logout }) {
                       <button
                         onClick={() => {
                           setClientePremio(historialCRMActivo);
-                          setPremioModalTipo('producto');
+                          setPremioModalTipo('decant');
                           setShowPremioModal(true);
                         }}
                         style={{
@@ -6311,144 +6772,217 @@ export default function AdminDashboard({ session, logout }) {
        )}
 
        {/* Modal Entregar Premio VIP / Regalo Rápido */}
-       {showPremioModal && clientePremio && (
-         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1400, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '15px' }}>
-           <div style={{ background: '#181818', padding: '28px', borderRadius: '16px', width: '100%', maxWidth: '480px', border: '2px solid var(--gold-jewel)', boxShadow: '0 15px 40px rgba(0,0,0,0.9)' }}>
-             
-             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px', marginBottom: '16px' }}>
-               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                 <span style={{ fontSize: '1.8rem' }}>🎁</span>
-                 <div>
-                   <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.2rem' }}>Entregar Regalo / Premio</h3>
-                   <span style={{ fontSize: '0.8rem', color: '#aaa' }}>Fidelización y Atención VIP</span>
-                 </div>
-               </div>
-               <button 
-                 onClick={() => { setShowPremioModal(false); setClientePremio(null); }} 
-                 style={{ background: 'transparent', border: 'none', color: '#fff', fontSize: '1.5rem', cursor: 'pointer' }}
-               >
-                 ×
-               </button>
-             </div>
+        {showPremioModal && clientePremio && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1400, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '15px' }}>
+            <div style={{ background: '#181818', padding: '28px', borderRadius: '16px', width: '100%', maxWidth: '480px', border: '2px solid var(--gold-jewel)', boxShadow: '0 15px 40px rgba(0,0,0,0.9)' }}>
+              
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '1.8rem' }}>🎁</span>
+                  <div>
+                    <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.2rem' }}>Entregar Regalo / Premio</h3>
+                    <span style={{ fontSize: '0.8rem', color: '#aaa' }}>Fidelización y Atención VIP</span>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => { setShowPremioModal(false); setClientePremio(null); }} 
+                  style={{ background: 'transparent', border: 'none', color: '#fff', fontSize: '1.5rem', cursor: 'pointer' }}
+                >
+                  ×
+                </button>
+              </div>
 
-             {/* Ficha Cliente */}
-             <div style={{ background: 'rgba(212, 175, 55, 0.08)', borderRadius: '10px', padding: '12px 16px', border: '1px solid rgba(212, 175, 55, 0.25)', marginBottom: '18px' }}>
-               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                 <span style={{ color: '#aaa', fontSize: '0.85rem' }}>Cliente:</span>
-                 <strong style={{ color: '#fff' }}>👤 {clientePremio.nombre}</strong>
-               </div>
-               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                 <span style={{ color: '#aaa', fontSize: '0.85rem' }}>Cortes este mes:</span>
-                 <span style={{ color: 'var(--gold-jewel)', fontWeight: 'bold', fontSize: '0.85rem' }}>
-                   {clientePremio.cortes_mes || 0} cortes (Meta: cada {metaCortesPremio})
-                 </span>
-               </div>
-             </div>
+              {/* Ficha Cliente */}
+              <div style={{ background: 'rgba(212, 175, 55, 0.08)', borderRadius: '10px', padding: '12px 16px', border: '1px solid rgba(212, 175, 55, 0.25)', marginBottom: '18px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                  <span style={{ color: '#aaa', fontSize: '0.85rem' }}>Cliente:</span>
+                  <strong style={{ color: '#fff' }}>👤 {clientePremio.nombre}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#aaa', fontSize: '0.85rem' }}>Cortes acumulados:</span>
+                  <span style={{ color: 'var(--gold-jewel)', fontWeight: 'bold', fontSize: '0.85rem' }}>
+                    {clientePremio.cortes_acumulados || 0} cortes (Meta: cada {metaCortesPremio})
+                  </span>
+                </div>
+              </div>
 
-             <form onSubmit={handleEntregarPremio} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-               
-               {/* Selector de Tipo de Regalo */}
-               <div style={{ display: 'flex', gap: '10px' }}>
-                 <button
-                   type="button"
-                   onClick={() => setPremioModalTipo('producto')}
-                   style={{
-                     flex: 1,
-                     padding: '8px 12px',
-                     borderRadius: '8px',
-                     fontSize: '0.82rem',
-                     fontWeight: 'bold',
-                     cursor: 'pointer',
-                     background: premioModalTipo === 'producto' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.06)',
-                     color: premioModalTipo === 'producto' ? '#000' : '#ccc',
-                     border: '1px solid ' + (premioModalTipo === 'producto' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.15)')
-                   }}
-                 >
-                   📦 Del Inventario
-                 </button>
-                 <button
-                   type="button"
-                   onClick={() => setPremioModalTipo('personalizado')}
-                   style={{
-                     flex: 1,
-                     padding: '8px 12px',
-                     borderRadius: '8px',
-                     fontSize: '0.82rem',
-                     fontWeight: 'bold',
-                     cursor: 'pointer',
-                     background: premioModalTipo === 'personalizado' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.06)',
-                     color: premioModalTipo === 'personalizado' ? '#000' : '#ccc',
-                     border: '1px solid ' + (premioModalTipo === 'personalizado' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.15)')
-                   }}
-                 >
-                   ✨ Detalle / Personalizado
-                 </button>
-               </div>
+              <form onSubmit={handleEntregarPremio} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                {/* Selector de Tipo de Regalo (3 Pestañas Claras) */}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setPremioModalTipo('decant')}
+                    style={{
+                      flex: 1,
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      fontSize: '0.8rem',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      background: premioModalTipo === 'decant' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.06)',
+                      color: premioModalTipo === 'decant' ? '#000' : '#ccc',
+                      border: '1px solid ' + (premioModalTipo === 'decant' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.15)')
+                    }}
+                  >
+                    💎 Decants VIP
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPremioModalTipo('producto')}
+                    style={{
+                      flex: 1,
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      fontSize: '0.8rem',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      background: premioModalTipo === 'producto' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.06)',
+                      color: premioModalTipo === 'producto' ? '#000' : '#ccc',
+                      border: '1px solid ' + (premioModalTipo === 'producto' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.15)')
+                    }}
+                  >
+                    📦 De Bodega
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPremioModalTipo('personalizado')}
+                    style={{
+                      flex: 1,
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      fontSize: '0.8rem',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      background: premioModalTipo === 'personalizado' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.06)',
+                      color: premioModalTipo === 'personalizado' ? '#000' : '#ccc',
+                      border: '1px solid ' + (premioModalTipo === 'personalizado' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.15)')
+                    }}
+                  >
+                    ✨ Personalizado
+                  </button>
+                </div>
 
-               {premioModalTipo === 'producto' ? (
-                 <div>
-                   <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '5px' }}>
-                     Seleccionar Producto de Regalo (Decants, Pomadas, Gorras...):
-                   </label>
-                   <select 
-                     className="input-field" 
-                     style={{ margin: 0 }}
-                     value={premioProductoId}
-                     onChange={e => setPremioProductoId(e.target.value)}
-                   >
-                     <option value="">-- Seleccionar Producto del Inventario --</option>
-                     {productos.filter(p => Number(p.stock) > 0).map(p => (
-                       <option key={p.id} value={p.id}>
-                         {p.nombre} (Stock: {p.stock} unid. | ${Number(p.precio).toLocaleString('es-CL')})
-                       </option>
-                     ))}
-                   </select>
-                   <span style={{ fontSize: '0.72rem', color: '#888', marginTop: '4px', display: 'block' }}>
-                     Se descontará automáticamente 1 unidad del stock de la bodega.
-                   </span>
-                 </div>
-               ) : (
-                 <div>
-                   <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '5px' }}>
-                     Nombre o Detalle del Regalo:
-                   </label>
-                   <input 
-                     type="text"
-                     className="input-field"
-                     style={{ margin: 0 }}
-                     placeholder="Ej: Decant Tom Ford 10ml, Limpieza Facial de Cortesía..."
-                     value={premioPersonalizadoTexto}
-                     onChange={e => setPremioPersonalizadoTexto(e.target.value)}
-                   />
-                   <span style={{ fontSize: '0.72rem', color: '#888', marginTop: '4px', display: 'block' }}>
-                     Quedará registrado permanentemente en el historial VIP del cliente.
-                   </span>
-                 </div>
-               )}
+                {premioModalTipo === 'decant' && (
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '8px' }}>
+                      Selecciona el Decant de 10ml entregado:
+                    </label>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '10px' }}>
+                      {[
+                        'Decant Creed Aventus 10ml',
+                        'Decant Tom Ford Oud Wood 10ml',
+                        'Decant Dior Sauvage Elixir 10ml',
+                        'Decant Bleu de Chanel 10ml',
+                        'Decant Jean Paul Gaultier 10ml',
+                        'Decant VIP de Cortesía 10ml'
+                      ].map((decName) => {
+                        const isSelected = premioDecantRapido === decName;
+                        return (
+                          <button
+                            key={decName}
+                            type="button"
+                            onClick={() => setPremioDecantRapido(decName)}
+                            style={{
+                              padding: '10px 8px',
+                              borderRadius: '8px',
+                              fontSize: '0.78rem',
+                              fontWeight: 'bold',
+                              textAlign: 'left',
+                              cursor: 'pointer',
+                              background: isSelected ? 'rgba(212, 175, 55, 0.2)' : 'rgba(255,255,255,0.04)',
+                              color: isSelected ? 'var(--gold-jewel)' : '#ccc',
+                              border: isSelected ? '2px solid var(--gold-jewel)' : '1px solid rgba(255,255,255,0.1)',
+                              transition: 'all 0.15s'
+                            }}
+                          >
+                            💎 {decName.replace('Decant ', '')}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--gold-jewel)', display: 'block' }}>
+                      ✅ Seleccionado: <strong>{premioDecantRapido}</strong>
+                    </span>
+                  </div>
+                )}
 
-               <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-                 <button 
-                   type="submit" 
-                   className="btn-primary" 
-                   style={{ flex: 2, padding: '12px', fontWeight: 'bold' }}
-                 >
-                   🎁 Confirmar y Entregar Regalo
-                 </button>
-                 <button 
-                   type="button" 
-                   className="btn-outline-gold" 
-                   style={{ flex: 1, padding: '12px' }} 
-                   onClick={() => { setShowPremioModal(false); setClientePremio(null); }}
-                 >
-                   Cancelar
-                 </button>
-               </div>
-             </form>
-           </div>
-         </div>
-       )}
+                {premioModalTipo === 'producto' && (
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '5px' }}>
+                      Seleccionar Producto de Regalo (Bodega / Inventario):
+                    </label>
+                    <select 
+                      className="input-field" 
+                      style={{ margin: 0 }}
+                      value={premioProductoId}
+                      onChange={e => setPremioProductoId(e.target.value)}
+                    >
+                      <option value="">-- Seleccionar Producto de Bodega --</option>
+                      {productos.map(p => (
+                        <option key={p.id} value={p.id} style={{ color: '#000' }}>
+                          {p.nombre} (Stock: {p.stock} unid. | ${Number(p.precio).toLocaleString('es-CL')})
+                        </option>
+                      ))}
+                    </select>
+                    <span style={{ fontSize: '0.72rem', color: '#888', marginTop: '4px', display: 'block' }}>
+                      Se descontará automáticamente 1 unidad del stock de bodega si hay unidades disponibles.
+                    </span>
+                  </div>
+                )}
 
-       {/* Modal Detalle de Ticket / Boleta */}
+                {premioModalTipo === 'personalizado' && (
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '5px' }}>
+                      Nombre o Detalle del Regalo:
+                    </label>
+                    <input 
+                      type="text" 
+                      className="input-field" 
+                      style={{ margin: 0 }}
+                      placeholder="Ej: Decant Tom Ford 10ml, Limpieza Facial de Cortesía..."
+                      value={premioPersonalizadoTexto}
+                      onChange={e => setPremioPersonalizadoTexto(e.target.value)}
+                    />
+                    <span style={{ fontSize: '0.72rem', color: '#888', marginTop: '4px', display: 'block' }}>
+                      Quedará registrado permanentemente en el historial VIP del cliente.
+                    </span>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                  <button 
+                    type="submit" 
+                    className="btn-primary" 
+                    disabled={isSubmittingPremio}
+                    style={{ 
+                      flex: 2, 
+                      padding: '12px', 
+                      fontWeight: 'bold',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      opacity: isSubmittingPremio ? 0.7 : 1,
+                      cursor: isSubmittingPremio ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    {isSubmittingPremio ? '⏳ Registrando entrega...' : '🎁 Confirmar y Entregar Regalo'}
+                  </button>
+                  <button 
+                    type="button" 
+                    className="btn-outline-gold" 
+                    style={{ flex: 1, padding: '12px' }} 
+                    onClick={() => { setShowPremioModal(false); setClientePremio(null); }}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal Detalle de Ticket / Boleta */}
        {ticketDetalleModal && (
          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1200, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '15px' }}>
            <div style={{ background: '#181818', borderRadius: '14px', width: '100%', maxWidth: '480px', maxHeight: '90vh', overflowY: 'auto', border: '2px solid var(--gold-jewel)', padding: '24px', boxShadow: '0 15px 40px rgba(0,0,0,0.9)' }}>
@@ -6760,284 +7294,173 @@ export default function AdminDashboard({ session, logout }) {
                 </div>
               </div>
 
-              {/* 1. Tabla de Desglose Día por Día */}
-              <div style={{ marginBottom: '25px' }}>
-                <h4 style={{ color: 'var(--gold-jewel)', margin: '0 0 10px 0', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  📅 1. Desglose Día a Día (con % de Comisión Diario Aplicado)
-                </h4>
-                <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.08)', overflowX: 'auto' }}>
-                  <table style={{ width: '100%', fontSize: '0.82rem', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ background: 'rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: 'var(--text-secondary)' }}>Fecha</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: 'var(--text-secondary)' }}>Día</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'center', color: 'var(--text-secondary)' }}>Cortes</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'right', color: 'var(--text-secondary)' }}>Total Bruto ($)</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'center', color: '#2ecc71' }}>% Barbero</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'right', color: '#2ecc71' }}>Pago Barbero ($)</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'center', color: 'var(--gold-jewel)' }}>% Tienda</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'right', color: 'var(--gold-jewel)' }}>Ganancia Local ($)</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'center', color: 'var(--text-secondary)' }}>Ajustar %</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(barberoDetalleModal.detalle_dias || []).map((d, idx) => (
-                        <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', background: idx % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent' }}>
-                          <td style={{ padding: '8px 10px', fontWeight: 'bold' }}>{d.fecha}</td>
-                          <td style={{ padding: '8px 10px', color: '#ccc' }}>{d.dia_nombre}</td>
-                          <td style={{ padding: '8px 10px', textAlign: 'center', fontWeight: 'bold' }}>{d.cortes_dia}</td>
-                          <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 'bold' }}>${Number(d.total_bruto_dia).toLocaleString('es-CL')}</td>
-                          <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                            <span style={{ background: 'rgba(46, 204, 113, 0.15)', color: '#2ecc71', padding: '2px 8px', borderRadius: '6px', fontWeight: 'bold', border: '1px solid rgba(46, 204, 113, 0.3)' }}>
-                              {d.porcentaje_barbero}%
-                            </span>
-                          </td>
-                          <td style={{ padding: '8px 10px', textAlign: 'right', color: '#2ecc71', fontWeight: 'bold' }}>
-                            ${Number(d.comision_barbero_dia).toLocaleString('es-CL')}
-                          </td>
-                          <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                            <span style={{ background: 'rgba(212, 175, 55, 0.15)', color: 'var(--gold-jewel)', padding: '2px 8px', borderRadius: '6px', fontWeight: 'bold', border: '1px solid rgba(212, 175, 55, 0.3)' }}>
-                              {d.porcentaje_tienda}%
-                            </span>
-                          </td>
-                          <td style={{ padding: '8px 10px', textAlign: 'right', color: 'var(--gold-jewel)', fontWeight: 'bold' }}>
-                            ${Number(d.ganancia_tienda_dia).toLocaleString('es-CL')}
-                          </td>
-                          <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                            <button
-                              onClick={() => modificarComisionDia(d.fecha, d.porcentaje_barbero)}
-                              style={{
-                                background: 'rgba(212, 175, 55, 0.1)',
-                                border: '1px solid var(--gold-jewel)',
-                                color: 'var(--gold-jewel)',
-                                borderRadius: '4px',
-                                padding: '3px 8px',
-                                fontSize: '0.72rem',
-                                cursor: 'pointer',
-                                fontWeight: 'bold'
-                              }}
-                              title="Editar el porcentaje aplicado a este día específico"
-                            >
-                              ✏️ %
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <form onSubmit={handleEntregarPremio} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                {/* Selector de Tipo de Regalo (3 Pestañas Claras) */}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setPremioModalTipo('decant')}
+                    style={{
+                      flex: 1,
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      fontSize: '0.8rem',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      background: premioModalTipo === 'decant' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.06)',
+                      color: premioModalTipo === 'decant' ? '#000' : '#ccc',
+                      border: '1px solid ' + (premioModalTipo === 'decant' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.15)')
+                    }}
+                  >
+                    💎 Decants VIP
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPremioModalTipo('producto')}
+                    style={{
+                      flex: 1,
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      fontSize: '0.8rem',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      background: premioModalTipo === 'producto' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.06)',
+                      color: premioModalTipo === 'producto' ? '#000' : '#ccc',
+                      border: '1px solid ' + (premioModalTipo === 'producto' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.15)')
+                    }}
+                  >
+                    📦 De Bodega
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPremioModalTipo('personalizado')}
+                    style={{
+                      flex: 1,
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      fontSize: '0.8rem',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      background: premioModalTipo === 'personalizado' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.06)',
+                      color: premioModalTipo === 'personalizado' ? '#000' : '#ccc',
+                      border: '1px solid ' + (premioModalTipo === 'personalizado' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.15)')
+                    }}
+                  >
+                    ✨ Personalizado
+                  </button>
                 </div>
-              </div>
 
-              {/* 2. Tabla de Citas Individuales */}
-              <div style={{ marginBottom: '20px' }}>
-                <h4 style={{ color: 'var(--gold-jewel)', margin: '0 0 10px 0', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  ✂️ 2. Detalle Individual de Citas Atendidas
-                </h4>
-                <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.08)', maxHeight: '250px', overflowY: 'auto' }}>
-                  <table style={{ width: '100%', fontSize: '0.8rem', borderCollapse: 'collapse' }}>
-                    <thead style={{ position: 'sticky', top: 0, background: '#222', zIndex: 5 }}>
-                      <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: 'var(--text-secondary)' }}>Fecha / Hora</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: 'var(--text-secondary)' }}>Cliente</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: 'var(--text-secondary)' }}>Servicios Realizados</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'center', color: 'var(--text-secondary)' }}>Método</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'right', color: 'var(--text-secondary)' }}>Monto Cobrado</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'right', color: '#2ecc71' }}>Comisión ($)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(barberoDetalleModal.citas || []).map((c, idx) => (
-                        <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                          <td style={{ padding: '7px 10px' }}>{c.fecha} {c.hora.substring(0, 5)}</td>
-                          <td style={{ padding: '7px 10px', fontWeight: 'bold' }}>{c.cliente_nombre}</td>
-                          <td style={{ padding: '7px 10px', color: '#ccc' }}>{c.servicios_nombres}</td>
-                          <td style={{ padding: '7px 10px', textAlign: 'center' }}>{c.metodo_pago || 'Efectivo'}</td>
-                          <td style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 'bold' }}>${Number(c.subtotal).toLocaleString('es-CL')}</td>
-                          <td style={{ padding: '7px 10px', textAlign: 'right', color: '#2ecc71', fontWeight: 'bold' }}>
-                            ${Number(c.comision_barbero).toLocaleString('es-CL')}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Botón de Cierre */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '15px' }}>
-                <button 
-                  className="btn-outline-gold" 
-                  onClick={() => setBarberoDetalleModal(null)}
-                  style={{ padding: '8px 24px', fontWeight: 'bold' }}
-                >
-                  Cerrar Desglose
-                </button>
-              </div>
-
-            </div>
-          </div>
-        )}
-
-        {/* Modal Registrar / Gestionar Pago de Liquidación */}
-        {pagoModalData && (
-          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1300, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '15px' }}>
-            <div style={{ background: '#181818', borderRadius: '14px', width: '100%', maxWidth: '520px', maxHeight: '90vh', overflowY: 'auto', border: '2px solid var(--gold-jewel)', padding: '28px', boxShadow: '0 15px 40px rgba(0,0,0,0.9)' }}>
-              
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '14px', marginBottom: '18px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <span style={{ fontSize: '1.8rem' }}>💰</span>
+                {premioModalTipo === 'decant' && (
                   <div>
-                    <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.2rem' }}>
-                      {pagoModalData.es_edicion ? 'Editar Registro de Pago' : 'Registrar Pago a Trabajador'}
-                    </h3>
-                    <span style={{ fontSize: '0.8rem', color: '#aaa' }}>
-                      Liquidación de comisiones de barbería
+                    <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '8px' }}>
+                      Selecciona el Decant de 10ml entregado:
+                    </label>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '10px' }}>
+                      {[
+                        'Decant Creed Aventus 10ml',
+                        'Decant Tom Ford Oud Wood 10ml',
+                        'Decant Dior Sauvage Elixir 10ml',
+                        'Decant Bleu de Chanel 10ml',
+                        'Decant Jean Paul Gaultier 10ml',
+                        'Decant VIP de Cortesía 10ml'
+                      ].map((decName) => {
+                        const isSelected = premioDecantRapido === decName;
+                        return (
+                          <button
+                            key={decName}
+                            type="button"
+                            onClick={() => setPremioDecantRapido(decName)}
+                            style={{
+                              padding: '10px 8px',
+                              borderRadius: '8px',
+                              fontSize: '0.78rem',
+                              fontWeight: 'bold',
+                              textAlign: 'left',
+                              cursor: 'pointer',
+                              background: isSelected ? 'rgba(212, 175, 55, 0.2)' : 'rgba(255,255,255,0.04)',
+                              color: isSelected ? 'var(--gold-jewel)' : '#ccc',
+                              border: isSelected ? '2px solid var(--gold-jewel)' : '1px solid rgba(255,255,255,0.1)',
+                              transition: 'all 0.15s'
+                            }}
+                          >
+                            💎 {decName.replace('Decant ', '')}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--gold-jewel)', display: 'block' }}>
+                      ✅ Seleccionado: <strong>{premioDecantRapido}</strong>
                     </span>
                   </div>
-                </div>
-                <button 
-                  onClick={() => setPagoModalData(null)} 
-                  style={{ background: 'transparent', border: 'none', color: '#fff', fontSize: '1.5rem', cursor: 'pointer' }}
-                >
-                  ×
-                </button>
-              </div>
-
-              {/* Tarjeta Resumen de Liquidación */}
-              <div style={{ background: 'rgba(212, 175, 55, 0.08)', border: '1px solid rgba(212, 175, 55, 0.3)', borderRadius: '10px', padding: '14px', marginBottom: '20px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ color: '#aaa', fontSize: '0.85rem' }}>Barbero:</span>
-                  <strong style={{ color: '#fff', fontSize: '0.95rem' }}>💈 {pagoModalData.barbero_nombre}</strong>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ color: '#aaa', fontSize: '0.85rem' }}>Período que cubre:</span>
-                  <span style={{ color: 'var(--gold-jewel)', fontWeight: 'bold', fontSize: '0.85rem' }}>
-                    {pagoModalData.periodo_inicio} al {pagoModalData.periodo_fin}
-                  </span>
-                </div>
-                {pagoModalData.total_cortes !== undefined && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                    <span style={{ color: '#aaa', fontSize: '0.85rem' }}>Cortes Realizados:</span>
-                    <span style={{ color: '#ccc', fontSize: '0.85rem' }}>{pagoModalData.total_cortes} citas</span>
-                  </div>
                 )}
-                <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '8px', marginTop: '8px' }}>
-                  <span style={{ color: '#aaa', fontSize: '0.9rem', fontWeight: 'bold' }}>Comisión Calculada:</span>
-                  <strong style={{ color: '#2ecc71', fontSize: '1.1rem' }}>
-                    ${Number(pagoModalData.comision_calculada || pagoModalData.monto).toLocaleString('es-CL')}
-                  </strong>
-                </div>
-              </div>
 
-              {/* Formulario de Pago */}
-              <form onSubmit={handleGuardarPago} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '5px', fontWeight: 'bold' }}>
-                    💵 Monto a Registrar / Pagado ($) *
-                  </label>
-                  <input 
-                    type="number" 
-                    required 
-                    min="0"
-                    className="input-field" 
-                    style={{ margin: 0, fontSize: '1rem', fontWeight: 'bold', color: '#2ecc71' }}
-                    value={pagoModalData.monto} 
-                    onChange={e => setPagoModalData({...pagoModalData, monto: e.target.value})} 
-                  />
-                  <span style={{ fontSize: '0.72rem', color: '#888', marginTop: '2px', display: 'block' }}>
-                    Puedes ajustar el monto final en caso de anticipos, propinas o retenciones.
-                  </span>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                {premioModalTipo === 'producto' && (
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '5px', fontWeight: 'bold' }}>
-                      📅 Fecha de Pago *
-                    </label>
-                    <input 
-                      type="date" 
-                      required 
-                      className="input-field" 
-                      style={{ margin: 0 }}
-                      value={pagoModalData.fecha_pago} 
-                      onChange={e => setPagoModalData({...pagoModalData, fecha_pago: e.target.value})} 
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '5px', fontWeight: 'bold' }}>
-                      💳 Método de Pago *
+                    <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '5px' }}>
+                      Seleccionar Producto de Regalo (Bodega / Inventario):
                     </label>
                     <select 
                       className="input-field" 
                       style={{ margin: 0 }}
-                      value={pagoModalData.metodo_pago} 
-                      onChange={e => setPagoModalData({...pagoModalData, metodo_pago: e.target.value})}
+                      value={premioProductoId}
+                      onChange={e => setPremioProductoId(e.target.value)}
                     >
-                      <option value="Transferencia">🏦 Transferencia Bancaria</option>
-                      <option value="Efectivo">💵 Efectivo</option>
-                      <option value="Tarjeta">💳 Tarjeta / Débito</option>
-                      <option value="Cheque">📄 Cheque</option>
-                      <option value="Otro">🔹 Otro</option>
+                      <option value="">-- Seleccionar Producto de Bodega --</option>
+                      {productos.map(p => (
+                        <option key={p.id} value={p.id} style={{ color: '#000' }}>
+                          {p.nombre} (Stock: {p.stock} unid. | ${Number(p.precio).toLocaleString('es-CL')})
+                        </option>
+                      ))}
                     </select>
+                    <span style={{ fontSize: '0.72rem', color: '#888', marginTop: '4px', display: 'block' }}>
+                      Se descontará automáticamente 1 unidad del stock de bodega si hay unidades disponibles.
+                    </span>
                   </div>
-                </div>
+                )}
 
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '5px', fontWeight: 'bold' }}>
-                    🔢 N° de Operación / Comprobante de Transferencia (Opcional)
-                  </label>
-                  <input 
-                    type="text" 
-                    placeholder="Ej: TRX-98234123, Transf. Banco Estado" 
-                    className="input-field" 
-                    style={{ margin: 0 }}
-                    value={pagoModalData.numero_comprobante} 
-                    onChange={e => setPagoModalData({...pagoModalData, numero_comprobante: e.target.value})} 
-                  />
-                </div>
+                {premioModalTipo === 'personalizado' && (
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '5px' }}>
+                      Nombre o Detalle del Regalo:
+                    </label>
+                    <input 
+                      type="text" 
+                      className="input-field" 
+                      style={{ margin: 0 }}
+                      placeholder="Ej: Decant Tom Ford 10ml, Limpieza Facial de Cortesía..."
+                      value={premioPersonalizadoTexto}
+                      onChange={e => setPremioPersonalizadoTexto(e.target.value)}
+                    />
+                    <span style={{ fontSize: '0.72rem', color: '#888', marginTop: '4px', display: 'block' }}>
+                      Quedará registrado permanentemente en el historial VIP del cliente.
+                    </span>
+                  </div>
+                )}
 
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '5px', fontWeight: 'bold' }}>
-                    📝 Notas / Observaciones (Opcional)
-                  </label>
-                  <textarea 
-                    rows="2"
-                    placeholder="Ej: Pago quincenal completo, incluye bono por puntualidad..."
-                    className="input-field" 
-                    style={{ margin: 0, resize: 'vertical' }}
-                    value={pagoModalData.notas} 
-                    onChange={e => setPagoModalData({...pagoModalData, notas: e.target.value})} 
-                  />
-                </div>
-
-                {/* Botones de Acción */}
-                <div style={{ display: 'flex', gap: '10px', marginTop: '10px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
                   <button 
                     type="submit" 
-                    disabled={guardandoPago}
                     className="btn-primary" 
-                    style={{ flex: 2, padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: 'bold', background: '#27ae60', borderColor: '#27ae60' }}
+                    disabled={isSubmittingPremio}
+                    style={{ 
+                      flex: 2, 
+                      padding: '12px', 
+                      fontWeight: 'bold',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      opacity: isSubmittingPremio ? 0.7 : 1,
+                      cursor: isSubmittingPremio ? 'not-allowed' : 'pointer'
+                    }}
                   >
-                    {guardandoPago ? '💾 Guardando...' : (pagoModalData.es_edicion ? '💾 Actualizar Pago' : '✅ Confirmar y Marcar Pagado')}
+                    {isSubmittingPremio ? '⏳ Registrando entrega...' : '🎁 Confirmar y Entregar Regalo'}
                   </button>
-
-                  {pagoModalData.es_edicion && pagoModalData.pago_id && (
-                    <button 
-                      type="button" 
-                      onClick={() => handleEliminarPago(pagoModalData.pago_id)}
-                      style={{ flex: 1, padding: '12px', background: 'transparent', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}
-                    >
-                      🗑️ Anular Pago
-                    </button>
-                  )}
-
                   <button 
                     type="button" 
                     className="btn-outline-gold" 
-                    onClick={() => setPagoModalData(null)}
-                    style={{ flex: 1, padding: '12px' }}
+                    style={{ flex: 1, padding: '12px' }} 
+                    onClick={() => { setShowPremioModal(false); setClientePremio(null); }}
                   >
                     Cancelar
                   </button>

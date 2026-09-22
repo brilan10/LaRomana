@@ -3,7 +3,7 @@ import { API_URL } from '../App';
 import { formatRut } from '../utils/rut';
 import { resolveImageUrl } from '../utils/imageHelper';
 
-const ProductoCard = ({ p, agregarAlCarrito }) => {
+const ProductoCard = ({ p, agregarAlCarrito, onVerDetalle }) => {
   const images = p.imagen_url ? p.imagen_url.split(',').map(url => url.trim()).filter(url => url) : [];
   const [imgIndex, setImgIndex] = useState(0);
   const [imgError, setImgError] = useState(false);
@@ -19,35 +19,64 @@ const ProductoCard = ({ p, agregarAlCarrito }) => {
   };
 
   return (
-    <div className="card" style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', padding: '15px' }}>
+    <div 
+      className="card" 
+      onClick={() => onVerDetalle && onVerDetalle(p)}
+      style={{ 
+        textAlign: 'center', 
+        display: 'flex', 
+        flexDirection: 'column', 
+        padding: '14px', 
+        cursor: 'pointer',
+        transition: 'all 0.2s ease',
+        position: 'relative'
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.transform = 'translateY(-3px)';
+        e.currentTarget.style.borderColor = 'var(--gold-jewel)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.transform = 'none';
+        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.05)';
+      }}
+    >
       {images.length > 0 && !imgError ? (
-        <div style={{ position: 'relative', width: '100%', height: '140px', marginBottom: '12px' }}>
+        <div style={{ position: 'relative', width: '100%', height: '140px', marginBottom: '12px', borderRadius: '8px', overflow: 'hidden', backgroundColor: '#0a0a0a' }}>
           <img 
             src={resolveImageUrl(images[imgIndex])} 
             alt={p.nombre} 
-            style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '8px' }} 
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
             onError={() => setImgError(true)}
           />
           {images.length > 1 && (
             <>
-              <button onClick={prevImg} style={{ position: 'absolute', left: '5px', top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.6)', border: 'none', color: '#fff', borderRadius: '50%', width: '26px', height: '26px', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>‹</button>
-              <button onClick={nextImg} style={{ position: 'absolute', right: '5px', top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.6)', border: 'none', color: '#fff', borderRadius: '50%', width: '26px', height: '26px', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>›</button>
-              <div style={{ position: 'absolute', bottom: '5px', left: '0', right: '0', display: 'flex', justifyContent: 'center', gap: '3px' }}>
+              <button onClick={prevImg} style={{ position: 'absolute', left: '4px', top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.7)', border: 'none', color: '#fff', borderRadius: '50%', width: '26px', height: '26px', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 2 }}>‹</button>
+              <button onClick={nextImg} style={{ position: 'absolute', right: '4px', top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.7)', border: 'none', color: '#fff', borderRadius: '50%', width: '26px', height: '26px', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 2 }}>›</button>
+              <div style={{ position: 'absolute', bottom: '5px', left: '0', right: '0', display: 'flex', justifyContent: 'center', gap: '3px', zIndex: 2 }}>
                 {images.map((_, i) => <div key={i} style={{ width: '6px', height: '6px', borderRadius: '50%', background: i === imgIndex ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.5)' }} />)}
               </div>
             </>
           )}
+          {/* Badge fotos */}
+          <div style={{ position: 'absolute', top: '5px', right: '5px', background: 'rgba(0,0,0,0.75)', color: 'var(--gold-jewel)', padding: '2px 6px', borderRadius: '6px', fontSize: '0.65rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '3px', zIndex: 2 }}>
+            🔍 {images.length > 1 ? `${images.length} fotos` : 'Ver'}
+          </div>
         </div>
       ) : (
-        <div style={{ fontSize: '3rem', marginBottom: '10px' }}>🛍️</div>
+        <div style={{ fontSize: '3rem', marginBottom: '10px', height: '140px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0a0a0a', borderRadius: '8px' }}>🛍️</div>
       )}
-      <div style={{ fontWeight: 'bold', fontSize: '0.95rem', marginBottom: '6px', flex: 1 }}>{p.nombre}</div>
+      <div style={{ fontWeight: 'bold', fontSize: '0.95rem', marginBottom: '6px', flex: 1, color: '#fff', lineHeight: 1.3 }}>{p.nombre}</div>
       <div style={{ color: 'var(--gold-jewel)', fontWeight: 'bold', fontSize: '1.1rem', marginBottom: '4px' }}>${Number(p.precio).toLocaleString('es-CL')}</div>
-      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>Stock disponible: {p.stock}</div>
+      <div style={{ fontSize: '0.8rem', color: p.stock < 5 ? '#e74c3c' : 'var(--text-secondary)', marginBottom: '12px' }}>
+        {p.stock > 0 ? `Stock: ${p.stock} un.` : 'Agotado'}
+      </div>
       <button 
         className="btn-outline-gold" 
-        style={{ padding: '8px 12px', width: '100%', opacity: p.stock <= 0 ? 0.5 : 1 }} 
-        onClick={() => agregarAlCarrito(p)} 
+        style={{ padding: '8px 12px', width: '100%', opacity: p.stock <= 0 ? 0.5 : 1, fontSize: '0.9rem' }} 
+        onClick={(e) => {
+          e.stopPropagation();
+          agregarAlCarrito(p, 1);
+        }} 
         disabled={p.stock <= 0}
       >
         {p.stock > 0 ? '🛒 Añadir al Carrito' : 'Agotado'}
@@ -80,6 +109,12 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
   const [showDropdownTickets, setShowDropdownTickets] = useState(false);
   const [pedidosEncontrados, setPedidosEncontrados] = useState(null);
   const [cargandoTickets, setCargandoTickets] = useState(false);
+
+  // Modal Detalle / Galería de Producto tipo Tienda
+  const [productoDetalle, setProductoDetalle] = useState(null);
+  const [imgDetalleIndex, setImgDetalleIndex] = useState(0);
+  const [cantModal, setCantModal] = useState(1);
+  const [agregadoFeedback, setAgregadoFeedback] = useState(false);
 
   useEffect(() => {
     fetch(`${API_URL}/api.php?action=get_productos`)
@@ -209,11 +244,22 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
     ? [...productos].sort((a,b) => (b.ventas || 0) - (a.ventas || 0)).slice(0, 12)
     : productos.filter(p => p.categoria === catSeleccionada);
 
-  const agregarAlCarrito = (prod) => {
+  const abrirDetalleProducto = (p) => {
+    setProductoDetalle(p);
+    setImgDetalleIndex(0);
+    setCantModal(1);
+    setAgregadoFeedback(false);
+  };
+
+  const agregarAlCarrito = (prod, cantidad = 1) => {
+    const cant = Number(cantidad) || 1;
     setCarrito(prev => {
       const existe = prev.find(item => item.id === prod.id);
-      if (existe) return prev.map(item => item.id === prod.id ? {...item, cantidad: item.cantidad + 1} : item);
-      return [...prev, {...prod, cantidad: 1}];
+      if (existe) {
+        const nuevaCant = Math.min(prod.stock, existe.cantidad + cant);
+        return prev.map(item => item.id === prod.id ? {...item, cantidad: nuevaCant} : item);
+      }
+      return [...prev, {...prod, cantidad: Math.min(prod.stock, cant)}];
     });
   };
 
@@ -406,7 +452,7 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
       {productos.length === 0 ? <p>Cargando catálogo...</p> : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '12px' }}>
           {productosMostrar.map(p => (
-            <ProductoCard key={p.id} p={p} agregarAlCarrito={agregarAlCarrito} />
+            <ProductoCard key={p.id} p={p} agregarAlCarrito={agregarAlCarrito} onVerDetalle={abrirDetalleProducto} />
           ))}
         </div>
       )}
@@ -448,6 +494,354 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
           </button>
         </div>
       )}
+
+      {/* --- MODAL DE DETALLE Y GALERÍA DE FOTOS DEL PRODUCTO (TIPO TIENDA) --- */}
+      {productoDetalle && (() => {
+        const pImages = productoDetalle.imagen_url 
+          ? productoDetalle.imagen_url.split(',').map(u => u.trim()).filter(Boolean) 
+          : [];
+        const currentImgUrl = pImages.length > 0 ? pImages[imgDetalleIndex] || pImages[0] : null;
+
+        const nextModalImg = (e) => {
+          e?.stopPropagation();
+          if (pImages.length > 0) {
+            setImgDetalleIndex((prev) => (prev + 1) % pImages.length);
+          }
+        };
+
+        const prevModalImg = (e) => {
+          e?.stopPropagation();
+          if (pImages.length > 0) {
+            setImgDetalleIndex((prev) => (prev - 1 + pImages.length) % pImages.length);
+          }
+        };
+
+        const handleModalAddCart = () => {
+          if (productoDetalle.stock <= 0) return;
+          agregarAlCarrito(productoDetalle, cantModal);
+          setAgregadoFeedback(true);
+          setTimeout(() => {
+            setAgregadoFeedback(false);
+          }, 2500);
+        };
+
+        return (
+          <div 
+            style={{
+              position: 'fixed',
+              inset: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.88)',
+              backdropFilter: 'blur(10px)',
+              zIndex: 2500,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '16px',
+              animation: 'fadeIn 0.25s ease-out'
+            }}
+            onClick={() => setProductoDetalle(null)}
+          >
+            <div 
+              className="card"
+              style={{
+                width: '100%',
+                maxWidth: '560px',
+                maxHeight: '92vh',
+                overflowY: 'auto',
+                backgroundColor: '#161616',
+                border: '2px solid var(--gold-jewel)',
+                borderRadius: '16px',
+                padding: '20px',
+                boxShadow: '0 20px 50px rgba(0,0,0,0.8), 0 0 30px rgba(212,175,55,0.25)',
+                position: 'relative',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '16px'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Cabecera del modal */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ 
+                  background: 'rgba(212, 175, 55, 0.15)', 
+                  color: 'var(--gold-jewel)', 
+                  border: '1px solid rgba(212, 175, 55, 0.4)', 
+                  padding: '4px 12px', 
+                  borderRadius: '20px', 
+                  fontSize: '0.8rem', 
+                  fontWeight: 'bold' 
+                }}>
+                  🏷️ {productoDetalle.categoria || 'Catálogo Oficial'}
+                </span>
+                <button 
+                  onClick={() => setProductoDetalle(null)}
+                  style={{ 
+                    background: 'rgba(255,255,255,0.1)', 
+                    border: 'none', 
+                    color: '#fff', 
+                    width: '34px', 
+                    height: '34px', 
+                    borderRadius: '50%', 
+                    fontSize: '1.2rem', 
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    transition: 'background 0.2s'
+                  }}
+                  title="Cerrar"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Visor Principal de Imagen */}
+              <div style={{ 
+                position: 'relative', 
+                width: '100%', 
+                height: '280px', 
+                backgroundColor: '#0a0a0a', 
+                borderRadius: '12px', 
+                overflow: 'hidden',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                border: '1px solid rgba(255,255,255,0.08)'
+              }}>
+                {currentImgUrl ? (
+                  <img 
+                    src={resolveImageUrl(currentImgUrl)} 
+                    alt={productoDetalle.nombre} 
+                    style={{ 
+                      width: '100%', 
+                      height: '100%', 
+                      objectFit: 'contain', 
+                      backgroundColor: '#0a0a0a',
+                      transition: 'opacity 0.2s ease-in-out'
+                    }}
+                    onError={(e) => {
+                      e.target.src = '/icon-192.png';
+                    }}
+                  />
+                ) : (
+                  <div style={{ fontSize: '4.5rem' }}>🛍️</div>
+                )}
+
+                {/* Flechas de navegación */}
+                {pImages.length > 1 && (
+                  <>
+                    <button 
+                      onClick={prevModalImg} 
+                      style={{ 
+                        position: 'absolute', 
+                        left: '10px', 
+                        top: '50%', 
+                        transform: 'translateY(-50%)', 
+                        background: 'rgba(0,0,0,0.7)', 
+                        border: '1px solid var(--gold-jewel)', 
+                        color: 'var(--gold-jewel)', 
+                        borderRadius: '50%', 
+                        width: '38px', 
+                        height: '38px', 
+                        fontSize: '1.4rem', 
+                        cursor: 'pointer', 
+                        display: 'flex', 
+                        justifyContent: 'center', 
+                        alignItems: 'center',
+                        boxShadow: '0 4px 10px rgba(0,0,0,0.5)',
+                        zIndex: 3
+                      }}
+                    >
+                      ‹
+                    </button>
+                    <button 
+                      onClick={nextModalImg} 
+                      style={{ 
+                        position: 'absolute', 
+                        right: '10px', 
+                        top: '50%', 
+                        transform: 'translateY(-50%)', 
+                        background: 'rgba(0,0,0,0.7)', 
+                        border: '1px solid var(--gold-jewel)', 
+                        color: 'var(--gold-jewel)', 
+                        borderRadius: '50%', 
+                        width: '38px', 
+                        height: '38px', 
+                        fontSize: '1.4rem', 
+                        cursor: 'pointer', 
+                        display: 'flex', 
+                        justifyContent: 'center', 
+                        alignItems: 'center',
+                        boxShadow: '0 4px 10px rgba(0,0,0,0.5)',
+                        zIndex: 3
+                      }}
+                    >
+                      ›
+                    </button>
+
+                    {/* Indicador de foto actual */}
+                    <div style={{ 
+                      position: 'absolute', 
+                      bottom: '10px', 
+                      right: '10px', 
+                      background: 'rgba(0,0,0,0.75)', 
+                      color: 'var(--gold-jewel)', 
+                      border: '1px solid rgba(212,175,55,0.4)',
+                      padding: '3px 10px', 
+                      borderRadius: '12px', 
+                      fontSize: '0.75rem',
+                      fontWeight: 'bold',
+                      zIndex: 3
+                    }}>
+                      📷 {imgDetalleIndex + 1} / {pImages.length}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Carrusel / Tira de Miniaturas */}
+              {pImages.length > 1 && (
+                <div style={{ 
+                  display: 'flex', 
+                  gap: '10px', 
+                  overflowX: 'auto', 
+                  paddingBottom: '4px',
+                  scrollBehavior: 'smooth'
+                }}>
+                  {pImages.map((imgUrl, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setImgDetalleIndex(i)}
+                      style={{
+                        width: '62px',
+                        height: '62px',
+                        flexShrink: 0,
+                        borderRadius: '8px',
+                        overflow: 'hidden',
+                        padding: 0,
+                        border: i === imgDetalleIndex ? '2px solid var(--gold-jewel)' : '1px solid rgba(255,255,255,0.2)',
+                        background: '#0d0d0d',
+                        cursor: 'pointer',
+                        boxShadow: i === imgDetalleIndex ? '0 0 8px rgba(212,175,55,0.6)' : 'none',
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <img 
+                        src={resolveImageUrl(imgUrl)} 
+                        alt={`Thumb ${i + 1}`} 
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Información del Producto */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <h2 style={{ margin: 0, color: '#fff', fontSize: '1.35rem', lineHeight: 1.25 }}>
+                  {productoDetalle.nombre}
+                </h2>
+
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+                  <div style={{ color: 'var(--gold-jewel)', fontWeight: 'bold', fontSize: '1.5rem' }}>
+                    ${Number(productoDetalle.precio).toLocaleString('es-CL')}
+                  </div>
+
+                  <div style={{ 
+                    fontSize: '0.85rem', 
+                    fontWeight: 'bold',
+                    padding: '4px 12px',
+                    borderRadius: '20px',
+                    background: productoDetalle.stock > 0 ? 'rgba(39, 174, 96, 0.15)' : 'rgba(231, 76, 60, 0.15)',
+                    color: productoDetalle.stock > 0 ? 'var(--green-emerald-light)' : '#e74c3c',
+                    border: `1px solid ${productoDetalle.stock > 0 ? 'rgba(39,174,96,0.3)' : 'rgba(231,76,60,0.3)'}`
+                  }}>
+                    {productoDetalle.stock > 0 ? `🟢 En Stock (${productoDetalle.stock} disponibles)` : '🔴 Agotado'}
+                  </div>
+                </div>
+
+                {/* Descripción */}
+                <div style={{ 
+                  background: 'rgba(255,255,255,0.03)', 
+                  padding: '12px 14px', 
+                  borderRadius: '8px', 
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  color: 'var(--text-secondary)',
+                  fontSize: '0.9rem',
+                  lineHeight: 1.45,
+                  marginTop: '4px'
+                }}>
+                  {productoDetalle.descripcion && productoDetalle.descripcion.trim().length > 0 
+                    ? productoDetalle.descripcion 
+                    : 'Artículo disponible en La Romana Peluquería & Barbería. Calidad y estilo garantizados.'}
+                </div>
+              </div>
+
+              {/* Acciones de compra en el modal */}
+              {productoDetalle.stock > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '6px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Cantidad:</span>
+                    <div style={{ display: 'flex', alignItems: 'center', border: '1px solid rgba(212,175,55,0.4)', borderRadius: '8px', overflow: 'hidden', background: '#0a0a0a' }}>
+                      <button 
+                        onClick={() => setCantModal(prev => Math.max(1, prev - 1))}
+                        style={{ background: 'transparent', border: 'none', color: 'var(--gold-jewel)', width: '36px', height: '36px', fontSize: '1.2rem', cursor: 'pointer', fontWeight: 'bold' }}
+                      >
+                        -
+                      </button>
+                      <span style={{ width: '36px', textAlign: 'center', fontWeight: 'bold', color: '#fff', fontSize: '1rem' }}>
+                        {cantModal}
+                      </span>
+                      <button 
+                        onClick={() => setCantModal(prev => Math.min(productoDetalle.stock, prev + 1))}
+                        style={{ background: 'transparent', border: 'none', color: 'var(--gold-jewel)', width: '36px', height: '36px', fontSize: '1.2rem', cursor: 'pointer', fontWeight: 'bold' }}
+                      >
+                        +
+                      </button>
+                    </div>
+                    <span style={{ fontSize: '0.85rem', color: '#aaa' }}>
+                      Subtotal: <strong style={{ color: 'var(--gold-jewel)' }}>${(Number(productoDetalle.precio) * cantModal).toLocaleString('es-CL')}</strong>
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button 
+                      className="btn-primary" 
+                      style={{ 
+                        flex: 1, 
+                        padding: '12px', 
+                        fontSize: '1rem', 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center', 
+                        gap: '8px',
+                        borderRadius: '10px',
+                        boxShadow: '0 4px 15px rgba(39, 174, 96, 0.4)'
+                      }}
+                      onClick={handleModalAddCart}
+                    >
+                      🛒 {agregadoFeedback ? '✅ ¡Añadido al Carrito!' : `Añadir al Carrito (${cantModal})`}
+                    </button>
+                    <button 
+                      className="btn-outline-gold"
+                      style={{ padding: '12px 18px', borderRadius: '10px', fontSize: '0.9rem' }}
+                      onClick={() => setProductoDetalle(null)}
+                    >
+                      Cerrar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ marginTop: '10px' }}>
+                  <button className="btn-outline-gold" style={{ width: '100%', opacity: 0.5, cursor: 'not-allowed' }} disabled>
+                    Producto Agotado
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* --- MODAL PARA BUSCAR TICKETS DE COMPRA --- */}
       {modalTickets && (

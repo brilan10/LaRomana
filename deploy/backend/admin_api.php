@@ -1076,43 +1076,88 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             break;
 
         case 'entregar_premio_crm':
-            $cliente_id = intval($data['cliente_id'] ?? 0);
-            $producto_id = intval($data['producto_id'] ?? 0);
-            $premio_personalizado = trim($data['premio_personalizado'] ?? '');
-            
-            if (!$cliente_id) {
-                echo json_encode(["status" => "error", "message" => "Cliente no especificado."]);
-                break;
-            }
+            try {
+                // Asegurar existencia de tablas si no existieran
+                try {
+                    $pdo->exec("CREATE TABLE IF NOT EXISTS historial_recompensas (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        cliente_id INT NOT NULL,
+                        cita_id INT DEFAULT NULL,
+                        aroma_decant VARCHAR(255) NOT NULL,
+                        fecha_entrega TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        INDEX idx_cliente (cliente_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+                } catch (\Exception $eTable) {}
 
-            $prodNombre = null;
-            if ($producto_id > 0) {
-                $sProd = $pdo->prepare("SELECT nombre, stock FROM productos WHERE id = ?");
-                $sProd->execute([$producto_id]);
-                $prod = $sProd->fetch();
-                if ($prod) {
-                    $prodNombre = $prod['nombre'];
-                    if ($prod['stock'] > 0) {
-                        $pdo->prepare("UPDATE productos SET stock = stock - 1 WHERE id = ?")->execute([$producto_id]);
+                try {
+                    $pdo->exec("CREATE TABLE IF NOT EXISTS configuraciones (
+                        clave VARCHAR(50) PRIMARY KEY,
+                        valor TEXT NOT NULL,
+                        descripcion VARCHAR(255) DEFAULT NULL,
+                        fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+                } catch (\Exception $eConf) {}
+
+                $cliente_id = intval($data['cliente_id'] ?? 0);
+                $producto_id = intval($data['producto_id'] ?? 0);
+                $premio_personalizado = trim($data['premio_personalizado'] ?? ($data['aroma_decant'] ?? ($data['nombre_regalo'] ?? '')));
+                
+                if (!$cliente_id) {
+                    echo json_encode(["status" => "error", "message" => "Cliente no especificado."]);
+                    break;
+                }
+
+                $prodNombre = null;
+                if ($producto_id > 0) {
+                    $sProd = $pdo->prepare("SELECT nombre, stock FROM productos WHERE id = ?");
+                    $sProd->execute([$producto_id]);
+                    $prod = $sProd->fetch();
+                    if ($prod) {
+                        $prodNombre = $prod['nombre'];
+                        if (intval($prod['stock']) > 0) {
+                            $pdo->prepare("UPDATE productos SET stock = GREATEST(0, stock - 1) WHERE id = ?")->execute([$producto_id]);
+                        }
                     }
                 }
-            } elseif (!empty($premio_personalizado)) {
-                $prodNombre = $premio_personalizado;
-            }
+                
+                if (!$prodNombre && !empty($premio_personalizado)) {
+                    $prodNombre = $premio_personalizado;
+                    // Descontar de bodega si coincide
+                    try {
+                        $sMatch = $pdo->prepare("SELECT id, stock FROM productos WHERE LOWER(nombre) = LOWER(?) OR nombre LIKE ? LIMIT 1");
+                        $sMatch->execute([$prodNombre, "%$prodNombre%"]);
+                        $prodMatch = $sMatch->fetch();
+                        if ($prodMatch && intval($prodMatch['stock']) > 0) {
+                            $pdo->prepare("UPDATE productos SET stock = GREATEST(0, stock - 1) WHERE id = ?")->execute([$prodMatch['id']]);
+                        }
+                    } catch (\Exception $eStock) {}
+                }
 
-            if ($prodNombre) {
-                // Registrar en historial_recompensas
-                $pdo->prepare("INSERT INTO historial_recompensas (cliente_id, cita_id, aroma_decant, fecha_entrega) VALUES (?, NULL, ?, NOW())")
-                    ->execute([$cliente_id, $prodNombre]);
+                if ($prodNombre) {
+                    // Registrar en historial_recompensas
+                    $pdo->prepare("INSERT INTO historial_recompensas (cliente_id, cita_id, aroma_decant, fecha_entrega) VALUES (?, NULL, ?, NOW())")
+                        ->execute([$cliente_id, $prodNombre]);
 
-                // Descontar meta de cortes acumulados del cliente
-                $stmtMeta = $pdo->query("SELECT valor FROM configuraciones WHERE clave = 'meta_cortes_premio'");
-                $meta = intval($stmtMeta->fetchColumn() ?: 3);
-                $pdo->prepare("UPDATE clientes SET cortes_acumulados = GREATEST(0, cortes_acumulados - ?) WHERE id = ?")->execute([$meta, $cliente_id]);
+                    // Descontar meta de cortes acumulados del cliente
+                    $meta = 3;
+                    try {
+                        $stmtMeta = $pdo->query("SELECT valor FROM configuraciones WHERE clave = 'meta_cortes_premio'");
+                        $metaVal = $stmtMeta ? $stmtMeta->fetchColumn() : 3;
+                        if ($metaVal) $meta = intval($metaVal);
+                    } catch (\Exception $eM) {}
 
-                echo json_encode(["status" => "success", "message" => "Regalo entregado con éxito: " . $prodNombre]);
-            } else {
-                echo json_encode(["status" => "error", "message" => "Debes seleccionar un producto del inventario o escribir el nombre del regalo/decant."]);
+                    $pdo->prepare("UPDATE clientes SET cortes_acumulados = GREATEST(0, COALESCE(cortes_acumulados, 0) - ?) WHERE id = ?")->execute([$meta, $cliente_id]);
+
+                    echo json_encode([
+                        "status" => "success", 
+                        "message" => "¡Regalo entregado con éxito: " . $prodNombre . "!",
+                        "regalo" => $prodNombre
+                    ]);
+                } else {
+                    echo json_encode(["status" => "error", "message" => "Debes seleccionar un Decant, un producto de bodega o escribir el detalle del regalo."]);
+                }
+            } catch (\Exception $e) {
+                echo json_encode(["status" => "error", "message" => "Error al entregar premio: " . $e->getMessage()]);
             }
             break;
             
