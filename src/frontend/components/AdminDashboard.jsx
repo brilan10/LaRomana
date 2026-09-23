@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { API_URL } from '../App';
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import ExcelJS from 'exceljs';
@@ -14,6 +14,12 @@ const formatDateYMD = (d = new Date()) => {
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
+
+const HORAS_CALENDARIO = [];
+for (let h = 10; h <= 20; h++) {
+  HORAS_CALENDARIO.push(`${String(h).padStart(2, '0')}:00`);
+  if (h < 20) HORAS_CALENDARIO.push(`${String(h).padStart(2, '0')}:30`);
+}
 
 export default function AdminDashboard({ session, logout }) {
   const [tab, setTab] = useState('dashboard');
@@ -87,6 +93,21 @@ export default function AdminDashboard({ session, logout }) {
   const [loadingLiquidacion, setLoadingLiquidacion] = useState(false);
   const [barberoDetalleModal, setBarberoDetalleModal] = useState(null);
 
+  // Mantener filtros de analítica protegidos frente a actualizaciones
+  const liqFiltrosRef = useRef({
+    inicio: liqFechaInicio,
+    fin: liqFechaFin,
+    barbero: liqBarberoId
+  });
+
+  useEffect(() => {
+    liqFiltrosRef.current = {
+      inicio: liqFechaInicio,
+      fin: liqFechaFin,
+      barbero: liqBarberoId
+    };
+  }, [liqFechaInicio, liqFechaFin, liqBarberoId]);
+
   // Registro y Control de Pagos a Trabajadores
   const [pagoModalData, setPagoModalData] = useState(null);
   const [guardandoPago, setGuardandoPago] = useState(false);
@@ -99,7 +120,8 @@ export default function AdminDashboard({ session, logout }) {
   const [customCharts, setCustomCharts] = useState([]);
   
   // Calendario Interactivo
-  const [fechaCalendario, setFechaCalendario] = useState(new Date().toISOString().split('T')[0]);
+  const hoyStr = new Date().toISOString().split('T')[0];
+  const [fechaCalendario, setFechaCalendario] = useState(hoyStr);
   const [vistaCalendario, setVistaCalendario] = useState('dia'); // dia, semana, mes
   const [showModalCita, setShowModalCita] = useState(false);
   const [nuevaCitaForm, setNuevaCitaForm] = useState({
@@ -302,7 +324,7 @@ export default function AdminDashboard({ session, logout }) {
   };
 
   useEffect(() => {
-    const fetchData = () => {
+    const fetchData = (isInterval = false) => {
       // Si hay un modal de cobro o edición abierto, no interferir con la interacción del usuario
       if (cobroActivo || showModalCita || showNuevoClienteModal || ticketDetalleModal || pagoModalData || showAbrirCaja || showCerrarCaja || showPremioModal || barberoDetalleModal || historialPagosModal || showVentaCatalogoModal) {
         return;
@@ -318,8 +340,12 @@ export default function AdminDashboard({ session, logout }) {
         cargarBodega();
       }
       if (tab === 'analitica') {
-        cargarLiquidaciones();
-        cargarEquipo();
+        // En analítica desactivamos la actualización automática por intervalo/polling.
+        // Solo se carga al entrar a la pestaña (isInterval === false), respetando siempre los filtros seleccionados por el usuario.
+        if (!isInterval) {
+          cargarLiquidaciones(liqFiltrosRef.current.inicio, liqFiltrosRef.current.fin, liqFiltrosRef.current.barbero);
+          cargarEquipo();
+        }
       }
       if (tab === 'crm') {
         cargarCRM();
@@ -332,16 +358,16 @@ export default function AdminDashboard({ session, logout }) {
       }
     };
 
-    fetchData(); // Carga inicial
+    fetchData(false); // Carga inicial al entrar o cambiar de pestaña
 
-    // Polling cada 10 segundos para mantener datos y calendario en tiempo real
-    const intervalId = setInterval(fetchData, 10000);
+    // Polling cada 10 segundos para mantener datos operativos en tiempo real (excluye analítica)
+    const intervalId = setInterval(() => fetchData(true), 10000);
 
     const onFocus = () => {
-      fetchData();
+      if (tab !== 'analitica') fetchData(false);
     };
     const onVisibilityChange = () => {
-      if (!document.hidden) fetchData();
+      if (!document.hidden && tab !== 'analitica') fetchData(false);
     };
 
     window.addEventListener('focus', onFocus);
@@ -451,7 +477,17 @@ export default function AdminDashboard({ session, logout }) {
     }
   };
 
-  const cargarLiquidaciones = async (inicio = liqFechaInicio, fin = liqFechaFin, barbero = liqBarberoId) => {
+  const cargarLiquidaciones = async (
+    inicio = liqFiltrosRef.current.inicio,
+    fin = liqFiltrosRef.current.fin,
+    barbero = liqFiltrosRef.current.barbero
+  ) => {
+    // Sincronizar estados locales si se pasa un nuevo filtro
+    if (inicio !== liqFechaInicio) setLiqFechaInicio(inicio);
+    if (fin !== liqFechaFin) setLiqFechaFin(fin);
+    if (barbero !== liqBarberoId) setLiqBarberoId(barbero);
+    liqFiltrosRef.current = { inicio, fin, barbero };
+
     setLoadingLiquidacion(true);
     try {
       const res = await fetch(`${API_URL}/admin_api.php?action=get_liquidacion_barberos&inicio=${inicio}&fin=${fin}&barbero_id=${barbero}`);
@@ -744,6 +780,7 @@ export default function AdminDashboard({ session, logout }) {
     const data = await res.json();
     if (data.status === 'success') {
       setCobroActivo(null);
+      cargarCalendario();
       cargarCaja();
       cargarDashboard();
       cargarBodega(); // Refrescar stock de decants si se usó
@@ -1279,15 +1316,33 @@ export default function AdminDashboard({ session, logout }) {
     }
   };
 
-  const abrirModalNuevaCita = (fecha = fechaCalendario, hora = '10:00', trabajador_id = '') => {
-    const esPasado = fecha < hoyStr;
+  const abrirModalNuevaCita = async (fecha = fechaCalendario, hora = '10:00', trabajador_id = '') => {
+    let barbs = trabajadores;
+    if (!barbs || barbs.length === 0) {
+      try {
+        const res = await fetch(`${API_URL}/admin_api.php?action=get_trabajadores`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            barbs = data;
+            setTrabajadores(data);
+          }
+        }
+      } catch (err) {}
+    }
+
+    const hoyActual = toYMD(new Date());
+    const fechaFinal = fecha || fechaCalendario || hoyActual;
+    const esPasado = fechaFinal < hoyActual;
+    const barberoSeleccionado = trabajador_id || (barbs && barbs.length > 0 ? barbs[0].id : '');
+
     setNuevaCitaForm({
-      fecha: fecha || fechaCalendario,
+      fecha: fechaFinal,
       rut: '',
       nombre: '',
       telefono: '',
       hora: hora || '10:00',
-      trabajador_id: trabajador_id || trabajadores[0]?.id || '',
+      trabajador_id: barberoSeleccionado,
       servicio_id: servicios[0]?.id || '',
       monto: servicios[0]?.precio || 14000,
       marcar_pagada: esPasado,
@@ -1362,26 +1417,31 @@ export default function AdminDashboard({ session, logout }) {
     setShowDropdownCitaRut(false);
   };
 
-  const handleAgendarCita = async (e) => {
-    e.preventDefault();
-    if (!nuevaCitaForm.rut || !nuevaCitaForm.nombre || !nuevaCitaForm.trabajador_id) {
+  const handleAgendarCita = async (e, abrirCobroInmediato = false) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const barberoIdFinal = nuevaCitaForm.trabajador_id || (trabajadores[0]?.id || '');
+    if (!nuevaCitaForm.rut || !nuevaCitaForm.nombre || !barberoIdFinal) {
         showToast("RUT, nombre y barbero son obligatorios.", "error");
         return;
     }
     
     const fechaUso = nuevaCitaForm.fecha || fechaCalendario;
+    const esPagada = Boolean(nuevaCitaForm.marcar_pagada);
+    const subtotalCalculado = nuevaCitaForm.monto !== '' && nuevaCitaForm.monto !== null ? Number(nuevaCitaForm.monto) : 14000;
+    const descVal = Number(nuevaCitaForm.descuento) || 0;
+
     const payload = {
         rut: nuevaCitaForm.rut.trim(),
         nombre: nuevaCitaForm.nombre.trim(),
         telefono: nuevaCitaForm.telefono ? nuevaCitaForm.telefono.trim() : null,
         fecha: fechaUso,
         hora: nuevaCitaForm.hora,
-        trabajador_id: nuevaCitaForm.trabajador_id,
+        trabajador_id: barberoIdFinal,
         servicios: nuevaCitaForm.servicio_id ? [nuevaCitaForm.servicio_id] : [],
-        monto: nuevaCitaForm.monto !== '' && nuevaCitaForm.monto !== null ? Number(nuevaCitaForm.monto) : null,
-        marcar_pagada: Boolean(nuevaCitaForm.marcar_pagada),
+        monto: subtotalCalculado,
+        marcar_pagada: esPagada,
         metodo_pago: nuevaCitaForm.metodo_pago || 'Efectivo',
-        descuento: Number(nuevaCitaForm.descuento) || 0
+        descuento: descVal
     };
 
     try {
@@ -1393,14 +1453,20 @@ export default function AdminDashboard({ session, logout }) {
       const data = await res.json();
       if (data.status === 'success') {
           const totalMostrado = Number(data.total_pagado !== undefined && data.total_pagado !== null ? data.total_pagado : (payload.monto || 14000));
-          const msg = nuevaCitaForm.marcar_pagada 
+          const msg = esPagada 
             ? `✅ Cita registrada y cobrada exitosamente ($${totalMostrado.toLocaleString('es-CL')} • ${payload.metodo_pago})` 
-            : "✅ Cita agendada exitosamente.";
+            : (abrirCobroInmediato ? "✅ Cita agendada. Abriendo módulo de cobro..." : "✅ Cita agendada exitosamente.");
           showToast(msg, "success");
           setShowModalCita(false);
           setSugerenciasCitaRut([]);
           setShowDropdownCitaRut(false);
           setClienteCitaEncontrado(null);
+
+          const barberoObj = trabajadores.find(t => String(t.id) === String(payload.trabajador_id));
+          const barberoNombre = barberoObj ? barberoObj.nombre : 'Barbero';
+          const servicioObj = servicios.find(s => String(s.id) === String(nuevaCitaForm.servicio_id));
+          const servicioNombre = servicioObj ? servicioObj.nombre : 'Corte / Servicio';
+
           setNuevaCitaForm({ 
             fecha: fechaCalendario, 
             rut: '', 
@@ -1414,10 +1480,30 @@ export default function AdminDashboard({ session, logout }) {
             metodo_pago: 'Efectivo', 
             descuento: 0 
           });
+
           cargarCalendario(fechaCalendario, vistaCalendario);
           cargarDashboard();
           cargarCRM();
           cargarCaja();
+
+          // Si el usuario pidió agendar y cobrar inmediatamente (y la cita no estaba ya pagada)
+          if (abrirCobroInmediato && !esPagada) {
+            setCobroActivo({
+              id: data.cita_id,
+              cliente_id: data.cliente_id,
+              cliente: payload.nombre,
+              cliente_rut: payload.rut,
+              cliente_telefono: payload.telefono || '',
+              trabajador_id: payload.trabajador_id,
+              trabajador: barberoNombre,
+              barbero: barberoNombre,
+              servicios_nombres: servicioNombre,
+              subtotal: subtotalCalculado,
+              descuento: descVal,
+              metodo: 'Efectivo',
+              decant_producto_id: ''
+            });
+          }
       } else {
           showToast(data.error || 'Error al agendar cita', 'error');
       }
@@ -1488,20 +1574,44 @@ export default function AdminDashboard({ session, logout }) {
   };
 
   const cargarBodega = async () => {
-    const resP = await fetch(`${API_URL}/admin_api.php?action=get_productos`);
-    setProductos(await resP.json());
-    const resC = await fetch(`${API_URL}/admin_api.php?action=get_categorias`);
-    setCategorias(await resC.json());
+    try {
+      const resP = await fetch(`${API_URL}/admin_api.php?action=get_productos`);
+      if (resP.ok) {
+        const dP = await resP.json();
+        if (Array.isArray(dP)) setProductos(dP);
+      }
+      const resC = await fetch(`${API_URL}/admin_api.php?action=get_categorias`);
+      if (resC.ok) {
+        const dC = await resC.json();
+        if (Array.isArray(dC)) setCategorias(dC);
+      }
+    } catch (e) {
+      console.error("Error al cargar bodega:", e);
+    }
   };
 
   const cargarEquipo = async () => {
-    const res = await fetch(`${API_URL}/admin_api.php?action=get_trabajadores`);
-    setTrabajadores(await res.json());
+    try {
+      const res = await fetch(`${API_URL}/admin_api.php?action=get_trabajadores`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setTrabajadores(data);
+      }
+    } catch (e) {
+      console.error("Error al cargar equipo:", e);
+    }
   };
 
   const cargarServicios = async () => {
-    const res = await fetch(`${API_URL}/admin_api.php?action=get_servicios`);
-    setServicios(await res.json());
+    try {
+      const res = await fetch(`${API_URL}/admin_api.php?action=get_servicios`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setServicios(data);
+      }
+    } catch (e) {
+      console.error("Error al cargar servicios:", e);
+    }
   };
 
   const handleImageUpload = async (e) => {
@@ -3177,9 +3287,7 @@ export default function AdminDashboard({ session, logout }) {
                       position: 'relative'
                     }}
                     onClick={() => {
-                      if (citasHora.length === 0) {
-                        abrirModalNuevaCita(fecha, hora);
-                      }
+                      abrirModalNuevaCita(fecha, hora, filtroBarberoCal || (trabajadores[0]?.id || ''));
                     }}
                   >
                     {citasHora.map((cita, idx) => {
@@ -3207,18 +3315,27 @@ export default function AdminDashboard({ session, logout }) {
                           <div style={{ fontWeight: 'bold', color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {cita.cliente}
                           </div>
-                          <div style={{ color: '#aaa', fontSize: '0.68rem', display: 'flex', justifyContent: 'space-between' }}>
-                            <span>💈 {cita.trabajador}</span>
-                            <span style={{ color: esCompletada ? '#2ecc71' : 'var(--gold-jewel)', fontWeight: 'bold' }}>
-                              ${Number(cita.total_pagado || cita.subtotal || 14000).toLocaleString('es-CL')}
-                            </span>
+                          <div style={{ color: '#aaa', fontSize: '0.68rem', marginTop: '1px' }}>
+                            💈 {cita.trabajador}
                           </div>
                         </div>
                       );
                     })}
+
                     {citasHora.length === 0 && (
-                      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#444', fontSize: '0.7rem' }}>
-                        +
+                      <div
+                        style={{
+                          height: '100%',
+                          minHeight: '40px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: '#666',
+                          fontSize: '0.75rem',
+                          pointerEvents: 'none'
+                        }}
+                      >
+                        + Agendar
                       </div>
                     )}
                   </div>
@@ -3515,562 +3632,6 @@ export default function AdminDashboard({ session, logout }) {
           </div>
 
         </div>
-
-        {/* Modal Nueva Cita (Con Soporte Retroactivo / Cobro Inmediato) */}
-        {showModalCita && (
-          <div style={{
-            background: 'rgba(20, 20, 20, 0.98)',
-            padding: '28px',
-            borderRadius: '16px',
-            border: '2px solid var(--gold-jewel)',
-            boxShadow: '0 20px 50px rgba(0,0,0,0.9)',
-            animation: 'fadeIn 0.25s ease-out'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '14px', marginBottom: '18px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span style={{ fontSize: '1.6rem' }}>📅</span>
-                <div>
-                  <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.25rem' }}>
-                    Agendar o Registrar Cita
-                  </h3>
-                  <span style={{ fontSize: '0.8rem', color: '#aaa' }}>
-                    Programa citas futuras o registra citas ya realizadas y cobradas de días anteriores
-                  </span>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowModalCita(false)}
-                style={{ background: 'transparent', border: 'none', color: '#fff', fontSize: '1.6rem', cursor: 'pointer' }}
-              >
-                ×
-              </button>
-            </div>
-
-            <form onSubmit={handleAgendarCita} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-              
-              {/* Fecha */}
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
-                  📅 Fecha de la Cita *
-                </label>
-                <input
-                  type="date"
-                  required
-                  className="input-field"
-                  style={{ margin: 0 }}
-                  value={nuevaCitaForm.fecha}
-                  onChange={e => {
-                    const newF = e.target.value;
-                    const esPas = newF < hoyStr;
-                    setNuevaCitaForm({
-                      ...nuevaCitaForm,
-                      fecha: newF,
-                      marcar_pagada: esPas ? true : nuevaCitaForm.marcar_pagada
-                    });
-                  }}
-                />
-              </div>
-
-              {/* Hora */}
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
-                  🕒 Hora de la Cita *
-                </label>
-                <select
-                  className="input-field"
-                  style={{ margin: 0 }}
-                  value={nuevaCitaForm.hora}
-                  onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, hora: e.target.value })}
-                  required
-                >
-                  {horas.map(h => (
-                    <option key={h} value={h}>{h} hrs</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* RUT con Autocompletado y Búsqueda en Vivo */}
-              <div style={{ position: 'relative' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                  <label style={{ fontSize: '0.82rem', color: clienteCitaEncontrado ? '#2ecc71' : 'var(--gold-jewel)', fontWeight: 'bold' }}>
-                    RUT del Cliente *
-                  </label>
-                  {buscandoClienteCita && (
-                    <span style={{ fontSize: '0.74rem', color: 'var(--gold-jewel)', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                      <span>⏳</span> Buscando en BD...
-                    </span>
-                  )}
-                  {clienteCitaEncontrado && (
-                    <span style={{ fontSize: '0.74rem', color: '#2ecc71', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                      <span>✅</span> Cliente en BD
-                    </span>
-                  )}
-                </div>
-                
-                <input
-                  className="input-field"
-                  style={{
-                    margin: 0,
-                    borderColor: clienteCitaEncontrado ? '#2ecc71' : undefined,
-                    boxShadow: clienteCitaEncontrado ? '0 0 10px rgba(46, 204, 113, 0.25)' : undefined
-                  }}
-                  placeholder="Ej: 12345678-9 (o busca por RUT)"
-                  value={nuevaCitaForm.rut}
-                  onChange={e => handleRutChangeCita(e.target.value)}
-                  onFocus={() => sugerenciasCitaRut.length > 0 && setShowDropdownCitaRut(true)}
-                  required
-                />
-
-                {/* Dropdown Flotante de Sugerencias en Vivo */}
-                {showDropdownCitaRut && sugerenciasCitaRut.length > 0 && (
-                  <div style={{
-                    position: 'absolute',
-                    top: '100%',
-                    left: 0,
-                    right: 0,
-                    background: '#181818',
-                    border: '2px solid var(--gold-jewel)',
-                    borderRadius: '10px',
-                    zIndex: 3000,
-                    boxShadow: '0 15px 40px rgba(0,0,0,0.95)',
-                    maxHeight: '230px',
-                    overflowY: 'auto',
-                    marginTop: '4px'
-                  }}>
-                    <div style={{
-                      padding: '7px 12px',
-                      background: 'rgba(212,175,55,0.15)',
-                      fontSize: '0.74rem',
-                      color: 'var(--gold-jewel)',
-                      fontWeight: 'bold',
-                      borderBottom: '1px solid rgba(255,255,255,0.1)',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center'
-                    }}>
-                      <span>👇 Clientes encontrados (haz clic para autorrellenar):</span>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setShowDropdownCitaRut(false); }}
-                        style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '1rem', padding: 0 }}
-                      >
-                        ×
-                      </button>
-                    </div>
-                    {sugerenciasCitaRut.map(cli => (
-                      <div
-                        key={cli.id}
-                        onClick={() => seleccionarSugerenciaCita(cli)}
-                        style={{
-                          padding: '10px 14px',
-                          cursor: 'pointer',
-                          borderBottom: '1px solid rgba(255,255,255,0.06)',
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          transition: 'background 0.15s ease'
-                        }}
-                        onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(212, 175, 55, 0.2)'}
-                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                      >
-                        <div>
-                          <div style={{ fontWeight: 'bold', color: '#fff', fontSize: '0.92rem' }}>
-                            👤 {cli.nombre}
-                          </div>
-                          <div style={{ fontSize: '0.76rem', color: '#aaa', marginTop: '2px' }}>
-                            🪪 {cli.rut} {cli.telefono ? `• 📞 ${cli.telefono}` : ''}
-                          </div>
-                        </div>
-                        <div style={{ textAlign: 'right' }}>
-                          <span style={{
-                            background: 'rgba(46, 204, 113, 0.15)',
-                            color: '#2ecc71',
-                            padding: '3px 8px',
-                            borderRadius: '6px',
-                            fontSize: '0.74rem',
-                            fontWeight: 'bold',
-                            border: '1px solid rgba(46, 204, 113, 0.3)'
-                          }}>
-                            {cli.cortes_acumulados || 0} cortes
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Nombre */}
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', color: clienteCitaEncontrado ? '#2ecc71' : 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
-                  Nombre del Cliente *
-                </label>
-                <input
-                  className="input-field"
-                  style={{
-                    margin: 0,
-                    borderColor: clienteCitaEncontrado ? '#2ecc71' : undefined
-                  }}
-                  placeholder="Ej: Carlos Pérez"
-                  value={nuevaCitaForm.nombre}
-                  onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, nombre: e.target.value })}
-                  required
-                />
-              </div>
-
-              {/* Teléfono */}
-
-              {/* Barbero */}
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px' }}>
-                  Barbero Asignado *
-                </label>
-                <select
-                  className="input-field"
-                  style={{ margin: 0 }}
-                  value={nuevaCitaForm.trabajador_id}
-                  onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, trabajador_id: e.target.value })}
-                  required
-                >
-                  <option value="">-- Selecciona Barbero --</option>
-                  {trabajadores.map(t => (
-                    <option key={t.id} value={t.id}>{t.nombre}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Servicio */}
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px' }}>
-                  Servicio a Realizar
-                </label>
-                <select
-                  className="input-field"
-                  style={{ margin: 0 }}
-                  value={nuevaCitaForm.servicio_id}
-                  onChange={e => {
-                    const sId = e.target.value;
-                    const sFound = servicios.find(s => String(s.id) === String(sId));
-                    setNuevaCitaForm({
-                      ...nuevaCitaForm,
-                      servicio_id: sId,
-                      monto: sFound ? sFound.precio : nuevaCitaForm.monto
-                    });
-                  }}
-                >
-                  <option value="">Selecciona Servicio...</option>
-                  {servicios.map(s => (
-                    <option key={s.id} value={s.id}>{s.nombre} (${Number(s.precio).toLocaleString('es-CL')})</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Monto */}
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px' }}>
-                  Monto / Precio ($)
-                </label>
-                <input
-                  type="number"
-                  className="input-field"
-                  style={{ margin: 0 }}
-                  min="0"
-                  step="500"
-                  placeholder="Ej: 14000"
-                  value={nuevaCitaForm.monto}
-                  onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, monto: e.target.value })}
-                />
-              </div>
-
-              {/* Panel de Cobro Inmediato / Retroactivo */}
-              <div style={{
-                gridColumn: 'span 2',
-                background: nuevaCitaForm.marcar_pagada ? 'rgba(46, 204, 113, 0.1)' : 'rgba(212, 175, 55, 0.08)',
-                border: nuevaCitaForm.marcar_pagada ? '1px solid #2ecc71' : '1px solid rgba(212, 175, 55, 0.3)',
-                borderRadius: '12px',
-                padding: '16px',
-                transition: 'all 0.2s ease'
-              }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontWeight: 'bold', color: nuevaCitaForm.marcar_pagada ? '#2ecc71' : 'var(--gold-jewel)', fontSize: '0.95rem' }}>
-                  <input
-                    type="checkbox"
-                    checked={nuevaCitaForm.marcar_pagada}
-                    onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, marcar_pagada: e.target.checked })}
-                    style={{ width: '20px', height: '20px', accentColor: '#2ecc71' }}
-                  />
-                  ⚡ Registrar Cita como ya Realizada y Cobrada (Inmediata o de Días Pasados)
-                </label>
-                <div style={{ fontSize: '0.78rem', color: '#aaa', marginTop: '6px', marginLeft: '30px' }}>
-                  {nuevaCitaForm.fecha < hoyStr
-                    ? '⚠️ Esta cita es de una fecha anterior: al guardarla se registrará como Completada y Pagada, sumando a los ingresos históricos y al contador de cortes del cliente.'
-                    : 'Permite registrar la cita inmediatamente pagada sin tener que pasar por la sala de espera.'}
-                </div>
-
-                {nuevaCitaForm.marcar_pagada && (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '14px', paddingTop: '14px', borderTop: '1px dashed rgba(46, 204, 113, 0.3)' }}>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#ccc', marginBottom: '4px' }}>Método de Pago *</label>
-                      <select
-                        className="input-field"
-                        style={{ margin: 0 }}
-                        value={nuevaCitaForm.metodo_pago}
-                        onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, metodo_pago: e.target.value })}
-                      >
-                        <option value="Efectivo">💵 Efectivo</option>
-                        <option value="Transferencia">📲 Transferencia</option>
-                        <option value="Tarjeta de Débito">💳 Tarjeta de Débito</option>
-                        <option value="Tarjeta de Crédito">💳 Tarjeta de Crédito</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#ccc', marginBottom: '4px' }}>Descuento Aplicado ($)</label>
-                      <input
-                        type="number"
-                        min="0"
-                        step="500"
-                        className="input-field"
-                        style={{ margin: 0 }}
-                        placeholder="0"
-                        value={nuevaCitaForm.descuento}
-                        onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, descuento: e.target.value })}
-                      />
-                    </div>
-
-                    <div style={{ gridColumn: 'span 2', background: 'rgba(46, 204, 113, 0.2)', border: '1px solid #2ecc71', borderRadius: '8px', padding: '10px 14px', textAlign: 'center', color: '#2ecc71', fontWeight: 'bold', fontSize: '0.95rem' }}>
-                      💰 Total Neto a Registrar como Cobrado: ${Math.max(0, (Number(nuevaCitaForm.monto) || 0) - (Number(nuevaCitaForm.descuento) || 0)).toLocaleString('es-CL')} ({nuevaCitaForm.metodo_pago})
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Action Buttons */}
-              <div style={{ gridColumn: 'span 2', display: 'flex', gap: '12px', marginTop: '10px' }}>
-                <button
-                  type="submit"
-                  className="btn-primary"
-                  style={{ flex: 2, padding: '12px', fontWeight: 'bold', fontSize: '0.95rem' }}
-                >
-                  💾 {nuevaCitaForm.marcar_pagada ? 'Guardar y Registrar como Cobrada' : 'Agendar Cita'}
-                </button>
-                <button
-                  type="button"
-                  className="btn-outline-gold"
-                  style={{ flex: 1, padding: '12px' }}
-                  onClick={() => setShowModalCita(false)}
-                >
-                  Cancelar
-                </button>
-              </div>
-
-            </form>
-          </div>
-        )}
-
-        {/* Modal Detalle de Cita */}
-        {citaDetalleModal && (
-          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1250, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '15px' }}>
-            <div style={{ background: '#181818', borderRadius: '16px', width: '100%', maxWidth: '480px', maxHeight: '90vh', overflowY: 'auto', border: '2px solid var(--gold-jewel)', padding: '24px', boxShadow: '0 20px 50px rgba(0,0,0,0.95)' }}>
-              
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px', marginBottom: '16px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <span style={{ fontSize: '1.6rem' }}>💈</span>
-                  <div>
-                    <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.15rem' }}>
-                      Cita #{citaDetalleModal.id}
-                    </h3>
-                    <span style={{ fontSize: '0.78rem', color: '#aaa' }}>
-                      {citaDetalleModal.fecha} a las {citaDetalleModal.hora?.substring(0,5)} hrs
-                    </span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setCitaDetalleModal(null)}
-                  style={{ background: 'transparent', border: 'none', color: '#fff', fontSize: '1.6rem', cursor: 'pointer' }}
-                >
-                  ×
-                </button>
-              </div>
-
-              {/* Cita Info Grid */}
-              <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: '10px', padding: '14px', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.85rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: '#aaa' }}>Cliente:</span>
-                  <strong style={{ color: '#fff' }}>👤 {citaDetalleModal.cliente}</strong>
-                </div>
-                {citaDetalleModal.cliente_rut && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ color: '#aaa' }}>RUT:</span>
-                    <span style={{ color: 'var(--gold-jewel)' }}>{citaDetalleModal.cliente_rut}</span>
-                  </div>
-                )}
-                {citaDetalleModal.cliente_telefono && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ color: '#aaa' }}>Teléfono:</span>
-                    <span>{citaDetalleModal.cliente_telefono}</span>
-                  </div>
-                )}
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: '#aaa' }}>Barbero:</span>
-                  <strong style={{ color: '#fff' }}>💈 {citaDetalleModal.trabajador}</strong>
-                </div>
-                {citaDetalleModal.servicios_nombres && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ color: '#aaa' }}>Servicios:</span>
-                    <span style={{ color: '#ddd' }}>✂️ {citaDetalleModal.servicios_nombres}</span>
-                  </div>
-                )}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.07)' }}>
-                  <span style={{ color: '#aaa' }}>Estado:</span>
-                  <span style={{
-                    padding: '3px 10px',
-                    borderRadius: '10px',
-                    fontWeight: 'bold',
-                    fontSize: '0.78rem',
-                    background: citaDetalleModal.estado === 'Completada' ? 'rgba(46, 204, 113, 0.2)' : (citaDetalleModal.estado === 'Cancelada' ? 'rgba(231, 76, 60, 0.2)' : 'rgba(212, 175, 55, 0.2)'),
-                    color: citaDetalleModal.estado === 'Completada' ? '#2ecc71' : (citaDetalleModal.estado === 'Cancelada' ? '#e74c3c' : 'var(--gold-jewel)')
-                  }}>
-                    {citaDetalleModal.estado}
-                  </span>
-                </div>
-                {citaDetalleModal.metodo_pago && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ color: '#aaa' }}>Método de Pago:</span>
-                    <strong style={{ color: '#2ecc71' }}>{citaDetalleModal.metodo_pago}</strong>
-                  </div>
-                )}
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1rem', marginTop: '6px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.07)' }}>
-                  <span style={{ fontWeight: 'bold' }}>Total Cobrado / Pagado:</span>
-                  <strong style={{ color: 'var(--gold-jewel)', fontSize: '1.15rem' }}>
-                    ${Number(citaDetalleModal.total_pagado || citaDetalleModal.subtotal || 14000).toLocaleString('es-CL')}
-                  </strong>
-                </div>
-              </div>
-
-              {/* Botones de Acción */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const subVal = Number(citaDetalleModal.subtotal) > 0 ? Number(citaDetalleModal.subtotal) : (Number(citaDetalleModal.total_pagado) > 0 ? Number(citaDetalleModal.total_pagado) : 14000);
-                    const descVal = Number(citaDetalleModal.descuento) || 0;
-                    const totVal = Number(citaDetalleModal.total_pagado) > 0 ? Number(citaDetalleModal.total_pagado) : Math.max(0, subVal - descVal);
-                    printThermalTicket({
-                      tipo: 'corte',
-                      folio: `LR-CITA-${String(citaDetalleModal.id).padStart(4, '0')}`,
-                      fecha: `${citaDetalleModal.fecha} ${citaDetalleModal.hora?.substring(0,5) || ''}`,
-                      cliente: citaDetalleModal.cliente,
-                      rut: citaDetalleModal.cliente_rut,
-                      telefono: citaDetalleModal.cliente_telefono,
-                      barbero: citaDetalleModal.trabajador,
-                      items: [
-                        {
-                          nombre: citaDetalleModal.servicios_nombres || 'Corte de Cabello / Barbería',
-                          cantidad: 1,
-                          precio: subVal,
-                          subtotal: subVal
-                        }
-                      ],
-                      subtotal: subVal,
-                      descuento: descVal,
-                      total: totVal,
-                      metodoPago: citaDetalleModal.metodo_pago || 'Efectivo',
-                      estado: citaDetalleModal.estado === 'Completada' ? 'PAGADO' : (citaDetalleModal.estado || 'REGISTRADO'),
-                      cortesAcumulados: citaDetalleModal.cortes_acumulados
-                    });
-                  }}
-                  className="btn-outline-gold"
-                  style={{ padding: '11px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: 'bold', fontSize: '0.9rem' }}
-                >
-                  🖨️ Imprimir Boleta / Ticket Térmico (POS-80)
-                </button>
-
-                {(citaDetalleModal.estado === 'Pendiente' || citaDetalleModal.estado === 'Terminado_Esperando_Pago') && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const subVal = Number(citaDetalleModal.subtotal) > 0 ? Number(citaDetalleModal.subtotal) : (Number(citaDetalleModal.total_pagado) > 0 ? Number(citaDetalleModal.total_pagado) : 14000);
-                      setCobroActivo({
-                        ...citaDetalleModal,
-                        subtotal: subVal,
-                        barbero: citaDetalleModal.trabajador,
-                        descuento: Number(citaDetalleModal.descuento) || 0,
-                        metodo: citaDetalleModal.metodo_pago || 'Efectivo',
-                        decant_producto_id: ''
-                      });
-                      setCitaDetalleModal(null);
-                    }}
-                    className="btn-primary"
-                    style={{ padding: '12px', fontWeight: 'bold' }}
-                  >
-                    💰 Cobrar y Finalizar Cita Ahora
-                  </button>
-                )}
-
-                {citaDetalleModal.estado !== 'Cancelada' && (
-                  <button
-                    type="button"
-                    disabled={actualizandoCita}
-                    onClick={() => handleCambiarEstadoCita(citaDetalleModal.id, 'Cancelada')}
-                    style={{
-                      padding: '10px',
-                      background: 'rgba(231, 76, 60, 0.15)',
-                      border: '1px solid #e74c3c',
-                      color: '#e74c3c',
-                      borderRadius: '8px',
-                      fontWeight: 'bold',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    ❌ Marcar como Cancelada
-                  </button>
-                )}
-
-                {citaDetalleModal.estado === 'Cancelada' && (
-                  <button
-                    type="button"
-                    disabled={actualizandoCita}
-                    onClick={() => handleCambiarEstadoCita(citaDetalleModal.id, 'Pendiente')}
-                    className="btn-outline-gold"
-                    style={{ padding: '10px' }}
-                  >
-                    🔄 Reactivar como Pendiente
-                  </button>
-                )}
-
-                <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
-                  <button
-                    type="button"
-                    disabled={actualizandoCita}
-                    onClick={() => handleEliminarCita(citaDetalleModal.id)}
-                    style={{
-                      flex: 1,
-                      padding: '8px',
-                      background: 'transparent',
-                      border: '1px solid #555',
-                      color: '#888',
-                      borderRadius: '6px',
-                      fontSize: '0.78rem',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    🗑️ Eliminar Cita
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-outline-gold"
-                    style={{ flex: 1, padding: '8px' }}
-                    onClick={() => setCitaDetalleModal(null)}
-                  >
-                    Cerrar
-                  </button>
-                </div>
-              </div>
-
-            </div>
-          </div>
-        )}
 
         {/* Main Grid Viewport */}
         <div style={{ background: 'rgba(20, 20, 20, 0.75)', backdropFilter: 'blur(10px)', borderRadius: '14px', border: '1px solid #333', overflowX: 'auto', padding: '18px' }}>
@@ -6262,6 +5823,617 @@ export default function AdminDashboard({ session, logout }) {
            {tab === 'crm' && renderCRM()}
          </ErrorBoundary>
        </div>
+
+        {/* Modal Nueva Cita (Flotante Centrado con Backdrop en Raíz y Soporte de Cobro Inmediato) */}
+        {showModalCita && (
+          <div style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.88)',
+            backdropFilter: 'blur(5px)',
+            zIndex: 1300,
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: '15px'
+          }}>
+            <div style={{
+              background: '#181818',
+              borderRadius: '16px',
+              width: '100%',
+              maxWidth: '620px',
+              maxHeight: '92vh',
+              overflowY: 'auto',
+              border: '2px solid var(--gold-jewel)',
+              padding: '24px',
+              boxShadow: '0 20px 50px rgba(0,0,0,0.95)',
+              animation: 'fadeIn 0.2s ease-out'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '14px', marginBottom: '18px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '1.6rem' }}>📅</span>
+                  <div>
+                    <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.25rem' }}>
+                      Agendar o Registrar Cita
+                    </h3>
+                    <span style={{ fontSize: '0.8rem', color: '#aaa' }}>
+                      Programa citas o cobra en el acto por orden de llegada
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowModalCita(false)}
+                  style={{ background: 'transparent', border: 'none', color: '#fff', fontSize: '1.6rem', cursor: 'pointer' }}
+                >
+                  ×
+                </button>
+              </div>
+
+              <form onSubmit={handleAgendarCita} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                
+                {/* Fecha */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
+                    📅 Fecha de la Cita *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    className="input-field"
+                    style={{ margin: 0 }}
+                    value={nuevaCitaForm.fecha}
+                    onChange={e => {
+                      const newF = e.target.value;
+                      const hoyActual = toYMD(new Date());
+                      const esPas = newF < hoyActual;
+                      setNuevaCitaForm({
+                        ...nuevaCitaForm,
+                        fecha: newF,
+                        marcar_pagada: esPas ? true : nuevaCitaForm.marcar_pagada
+                      });
+                    }}
+                  />
+                </div>
+
+                {/* Hora */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
+                    🕒 Hora de la Cita *
+                  </label>
+                  <select
+                    className="input-field"
+                    style={{ margin: 0 }}
+                    value={nuevaCitaForm.hora}
+                    onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, hora: e.target.value })}
+                    required
+                  >
+                    {HORAS_CALENDARIO.map(h => (
+                      <option key={h} value={h}>{h} hrs</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* RUT con Autocompletado y Búsqueda en Vivo */}
+                <div style={{ position: 'relative' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <label style={{ fontSize: '0.82rem', color: clienteCitaEncontrado ? '#2ecc71' : 'var(--gold-jewel)', fontWeight: 'bold' }}>
+                      RUT del Cliente *
+                    </label>
+                    {buscandoClienteCita && (
+                      <span style={{ fontSize: '0.74rem', color: 'var(--gold-jewel)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                        <span>⏳</span> Buscando en BD...
+                      </span>
+                    )}
+                    {clienteCitaEncontrado && (
+                      <span style={{ fontSize: '0.74rem', color: '#2ecc71', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                        <span>✅</span> Cliente en BD
+                      </span>
+                    )}
+                  </div>
+                  
+                  <input
+                    className="input-field"
+                    style={{
+                      margin: 0,
+                      borderColor: clienteCitaEncontrado ? '#2ecc71' : undefined,
+                      boxShadow: clienteCitaEncontrado ? '0 0 10px rgba(46, 204, 113, 0.25)' : undefined
+                    }}
+                    placeholder="Ej: 12345678-9 (o busca por RUT)"
+                    value={nuevaCitaForm.rut}
+                    onChange={e => handleRutChangeCita(e.target.value)}
+                    onFocus={() => sugerenciasCitaRut.length > 0 && setShowDropdownCitaRut(true)}
+                    required
+                  />
+
+                  {/* Dropdown Flotante de Sugerencias en Vivo */}
+                  {showDropdownCitaRut && sugerenciasCitaRut.length > 0 && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      background: '#181818',
+                      border: '2px solid var(--gold-jewel)',
+                      borderRadius: '10px',
+                      zIndex: 3000,
+                      boxShadow: '0 15px 40px rgba(0,0,0,0.95)',
+                      maxHeight: '230px',
+                      overflowY: 'auto',
+                      marginTop: '4px'
+                    }}>
+                      <div style={{
+                        padding: '7px 12px',
+                        background: 'rgba(212,175,55,0.15)',
+                        fontSize: '0.74rem',
+                        color: 'var(--gold-jewel)',
+                        fontWeight: 'bold',
+                        borderBottom: '1px solid rgba(255,255,255,0.1)',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center'
+                      }}>
+                        <span>👇 Clientes encontrados (haz clic para autorrellenar):</span>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setShowDropdownCitaRut(false); }}
+                          style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '1rem', padding: 0 }}
+                        >
+                          ×
+                        </button>
+                      </div>
+                      {sugerenciasCitaRut.map(cli => (
+                        <div
+                          key={cli.id}
+                          onClick={() => seleccionarSugerenciaCita(cli)}
+                          style={{
+                            padding: '10px 14px',
+                            cursor: 'pointer',
+                            borderBottom: '1px solid rgba(255,255,255,0.06)',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            transition: 'background 0.15s ease'
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(212, 175, 55, 0.2)'}
+                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 'bold', color: '#fff', fontSize: '0.92rem' }}>
+                              👤 {cli.nombre}
+                            </div>
+                            <div style={{ fontSize: '0.76rem', color: '#aaa', marginTop: '2px' }}>
+                              🪪 {cli.rut} {cli.telefono ? `• 📞 ${cli.telefono}` : ''}
+                            </div>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <span style={{
+                              background: 'rgba(46, 204, 113, 0.15)',
+                              color: '#2ecc71',
+                              padding: '3px 8px',
+                              borderRadius: '6px',
+                              fontSize: '0.74rem',
+                              fontWeight: 'bold',
+                              border: '1px solid rgba(46, 204, 113, 0.3)'
+                            }}>
+                              {cli.cortes_acumulados || 0} cortes
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Nombre */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', color: clienteCitaEncontrado ? '#2ecc71' : 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
+                    Nombre del Cliente *
+                  </label>
+                  <input
+                    className="input-field"
+                    style={{
+                      margin: 0,
+                      borderColor: clienteCitaEncontrado ? '#2ecc71' : undefined
+                    }}
+                    placeholder="Ej: Carlos Pérez"
+                    value={nuevaCitaForm.nombre}
+                    onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, nombre: e.target.value })}
+                    required
+                  />
+                </div>
+
+                {/* Teléfono */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px' }}>
+                    📞 Teléfono (Opcional)
+                  </label>
+                  <input
+                    className="input-field"
+                    style={{ margin: 0 }}
+                    placeholder="Ej: +56912345678"
+                    value={nuevaCitaForm.telefono}
+                    onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, telefono: e.target.value })}
+                  />
+                </div>
+
+                {/* Barbero */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px' }}>
+                    Barbero Asignado *
+                  </label>
+                  <select
+                    className="input-field"
+                    style={{ margin: 0 }}
+                    value={nuevaCitaForm.trabajador_id || (trabajadores[0]?.id || '')}
+                    onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, trabajador_id: e.target.value })}
+                    required
+                  >
+                    <option value="">-- Selecciona Barbero --</option>
+                    {trabajadores.map(t => (
+                      <option key={t.id} value={t.id}>💈 {t.nombre}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Servicio */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px' }}>
+                    Servicio a Realizar
+                  </label>
+                  <select
+                    className="input-field"
+                    style={{ margin: 0 }}
+                    value={nuevaCitaForm.servicio_id}
+                    onChange={e => {
+                      const sId = e.target.value;
+                      const sFound = servicios.find(s => String(s.id) === String(sId));
+                      setNuevaCitaForm({
+                        ...nuevaCitaForm,
+                        servicio_id: sId,
+                        monto: sFound ? sFound.precio : nuevaCitaForm.monto
+                      });
+                    }}
+                  >
+                    <option value="">Selecciona Servicio...</option>
+                    {servicios.map(s => (
+                      <option key={s.id} value={s.id}>{s.nombre} (${Number(s.precio).toLocaleString('es-CL')})</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Monto */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px' }}>
+                    Monto / Precio ($)
+                  </label>
+                  <input
+                    type="number"
+                    className="input-field"
+                    style={{ margin: 0 }}
+                    min="0"
+                    step="500"
+                    placeholder="Ej: 14000"
+                    value={nuevaCitaForm.monto}
+                    onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, monto: e.target.value })}
+                  />
+                </div>
+
+                {/* Panel de Cobro Inmediato / Retroactivo */}
+                <div style={{
+                  gridColumn: 'span 2',
+                  background: nuevaCitaForm.marcar_pagada ? 'rgba(46, 204, 113, 0.1)' : 'rgba(212, 175, 55, 0.08)',
+                  border: nuevaCitaForm.marcar_pagada ? '1px solid #2ecc71' : '1px solid rgba(212, 175, 55, 0.3)',
+                  borderRadius: '12px',
+                  padding: '16px',
+                  transition: 'all 0.2s ease'
+                }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontWeight: 'bold', color: nuevaCitaForm.marcar_pagada ? '#2ecc71' : 'var(--gold-jewel)', fontSize: '0.95rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={nuevaCitaForm.marcar_pagada}
+                      onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, marcar_pagada: e.target.checked })}
+                      style={{ width: '20px', height: '20px', accentColor: '#2ecc71' }}
+                    />
+                    ⚡ Registrar Cita como ya Realizada y Cobrada (Inmediata o de Días Pasados)
+                  </label>
+                  <div style={{ fontSize: '0.78rem', color: '#aaa', marginTop: '6px', marginLeft: '30px' }}>
+                    {nuevaCitaForm.fecha < toYMD(new Date())
+                      ? '⚠️ Esta cita es de una fecha anterior: al guardarla se registrará como Completada y Pagada, sumando a los ingresos históricos y al contador de cortes del cliente.'
+                      : 'Permite registrar la cita inmediatamente pagada sin tener que pasar por la sala de espera.'}
+                  </div>
+
+                  {nuevaCitaForm.marcar_pagada && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '14px', paddingTop: '14px', borderTop: '1px dashed rgba(46, 204, 113, 0.3)' }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.8rem', color: '#ccc', marginBottom: '4px' }}>Método de Pago *</label>
+                        <select
+                          className="input-field"
+                          style={{ margin: 0 }}
+                          value={nuevaCitaForm.metodo_pago}
+                          onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, metodo_pago: e.target.value })}
+                        >
+                          <option value="Efectivo">💵 Efectivo</option>
+                          <option value="Transferencia">📲 Transferencia</option>
+                          <option value="Tarjeta de Débito">💳 Tarjeta de Débito</option>
+                          <option value="Tarjeta de Crédito">💳 Tarjeta de Crédito</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.8rem', color: '#ccc', marginBottom: '4px' }}>Descuento Aplicado ($)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="500"
+                          className="input-field"
+                          style={{ margin: 0 }}
+                          placeholder="0"
+                          value={nuevaCitaForm.descuento}
+                          onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, descuento: e.target.value })}
+                        />
+                      </div>
+
+                      <div style={{ gridColumn: 'span 2', background: 'rgba(46, 204, 113, 0.2)', border: '1px solid #2ecc71', borderRadius: '8px', padding: '10px 14px', textAlign: 'center', color: '#2ecc71', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                        💰 Total Neto a Registrar como Cobrado: ${Math.max(0, (Number(nuevaCitaForm.monto) || 0) - (Number(nuevaCitaForm.descuento) || 0)).toLocaleString('es-CL')} ({nuevaCitaForm.metodo_pago})
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Action Buttons */}
+                <div style={{ gridColumn: 'span 2', display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    {!nuevaCitaForm.marcar_pagada && (
+                      <button
+                        type="button"
+                        onClick={(e) => handleAgendarCita(e, true)}
+                        style={{
+                          flex: 1.2,
+                          padding: '12px',
+                          fontWeight: 'bold',
+                          fontSize: '0.95rem',
+                          background: 'linear-gradient(135deg, #2ecc71, #27ae60)',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          boxShadow: '0 4px 15px rgba(46, 204, 113, 0.35)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px'
+                        }}
+                      >
+                        ⚡ Agendar y Cobrar Ahora
+                      </button>
+                    )}
+                    <button
+                      type="submit"
+                      className="btn-primary"
+                      style={{ flex: 1, padding: '12px', fontWeight: 'bold', fontSize: '0.95rem' }}
+                    >
+                      💾 {nuevaCitaForm.marcar_pagada ? 'Guardar y Registrar como Cobrada' : 'Solo Agendar'}
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-outline-gold"
+                    style={{ width: '100%', padding: '10px', color: '#aaa', borderColor: '#555' }}
+                    onClick={() => setShowModalCita(false)}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal Detalle de Cita (Flotante Centrado en Raíz) */}
+        {citaDetalleModal && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)', backdropFilter: 'blur(5px)', zIndex: 1250, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '15px' }}>
+            <div style={{ background: '#181818', borderRadius: '16px', width: '100%', maxWidth: '480px', maxHeight: '90vh', overflowY: 'auto', border: '2px solid var(--gold-jewel)', padding: '24px', boxShadow: '0 20px 50px rgba(0,0,0,0.95)' }}>
+              
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '1.6rem' }}>💈</span>
+                  <div>
+                    <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.15rem' }}>
+                      Cita #{citaDetalleModal.id}
+                    </h3>
+                    <span style={{ fontSize: '0.78rem', color: '#aaa' }}>
+                      {citaDetalleModal.fecha} a las {citaDetalleModal.hora?.substring(0,5)} hrs
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setCitaDetalleModal(null)}
+                  style={{ background: 'transparent', border: 'none', color: '#fff', fontSize: '1.6rem', cursor: 'pointer' }}
+                >
+                  ×
+                </button>
+              </div>
+
+              {/* Cita Info Grid */}
+              <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: '10px', padding: '14px', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.85rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#aaa' }}>Cliente:</span>
+                  <strong style={{ color: '#fff' }}>👤 {citaDetalleModal.cliente}</strong>
+                </div>
+                {citaDetalleModal.cliente_rut && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#aaa' }}>RUT:</span>
+                    <span style={{ color: 'var(--gold-jewel)' }}>{citaDetalleModal.cliente_rut}</span>
+                  </div>
+                )}
+                {citaDetalleModal.cliente_telefono && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#aaa' }}>Teléfono:</span>
+                    <span>{citaDetalleModal.cliente_telefono}</span>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#aaa' }}>Barbero:</span>
+                  <strong style={{ color: '#fff' }}>💈 {citaDetalleModal.trabajador}</strong>
+                </div>
+                {citaDetalleModal.servicios_nombres && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#aaa' }}>Servicios:</span>
+                    <span style={{ color: '#ddd' }}>✂️ {citaDetalleModal.servicios_nombres}</span>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+                  <span style={{ color: '#aaa' }}>Estado:</span>
+                  <span style={{
+                    padding: '3px 10px',
+                    borderRadius: '10px',
+                    fontWeight: 'bold',
+                    fontSize: '0.78rem',
+                    background: citaDetalleModal.estado === 'Completada' ? 'rgba(46, 204, 113, 0.2)' : (citaDetalleModal.estado === 'Cancelada' ? 'rgba(231, 76, 60, 0.2)' : 'rgba(212, 175, 55, 0.2)'),
+                    color: citaDetalleModal.estado === 'Completada' ? '#2ecc71' : (citaDetalleModal.estado === 'Cancelada' ? '#e74c3c' : 'var(--gold-jewel)')
+                  }}>
+                    {citaDetalleModal.estado}
+                  </span>
+                </div>
+                {citaDetalleModal.metodo_pago && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#aaa' }}>Método de Pago:</span>
+                    <strong style={{ color: '#2ecc71' }}>{citaDetalleModal.metodo_pago}</strong>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1rem', marginTop: '6px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+                  <span style={{ fontWeight: 'bold' }}>Total Cobrado / Pagado:</span>
+                  <strong style={{ color: 'var(--gold-jewel)', fontSize: '1.15rem' }}>
+                    ${Number(citaDetalleModal.total_pagado || citaDetalleModal.subtotal || 14000).toLocaleString('es-CL')}
+                  </strong>
+                </div>
+              </div>
+
+              {/* Botones de Acción */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const subVal = Number(citaDetalleModal.subtotal) > 0 ? Number(citaDetalleModal.subtotal) : (Number(citaDetalleModal.total_pagado) > 0 ? Number(citaDetalleModal.total_pagado) : 14000);
+                    const descVal = Number(citaDetalleModal.descuento) || 0;
+                    const totVal = Number(citaDetalleModal.total_pagado) > 0 ? Number(citaDetalleModal.total_pagado) : Math.max(0, subVal - descVal);
+                    printThermalTicket({
+                      tipo: 'corte',
+                      folio: `LR-CITA-${String(citaDetalleModal.id).padStart(4, '0')}`,
+                      fecha: `${citaDetalleModal.fecha} ${citaDetalleModal.hora?.substring(0,5) || ''}`,
+                      cliente: citaDetalleModal.cliente,
+                      rut: citaDetalleModal.cliente_rut,
+                      telefono: citaDetalleModal.cliente_telefono,
+                      barbero: citaDetalleModal.trabajador,
+                      items: [
+                        {
+                          nombre: citaDetalleModal.servicios_nombres || 'Corte de Cabello / Barbería',
+                          cantidad: 1,
+                          precio: subVal,
+                          subtotal: subVal
+                        }
+                      ],
+                      subtotal: subVal,
+                      descuento: descVal,
+                      total: totVal,
+                      metodoPago: citaDetalleModal.metodo_pago || 'Efectivo',
+                      estado: citaDetalleModal.estado === 'Completada' ? 'PAGADO' : (citaDetalleModal.estado || 'REGISTRADO'),
+                      cortesAcumulados: citaDetalleModal.cortes_acumulados
+                    });
+                  }}
+                  className="btn-outline-gold"
+                  style={{ padding: '11px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: 'bold', fontSize: '0.9rem' }}
+                >
+                  🖨️ Imprimir Boleta / Ticket Térmico (POS-80)
+                </button>
+
+                {(citaDetalleModal.estado === 'Pendiente' || citaDetalleModal.estado === 'Terminado_Esperando_Pago') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const subVal = Number(citaDetalleModal.subtotal) > 0 ? Number(citaDetalleModal.subtotal) : (Number(citaDetalleModal.total_pagado) > 0 ? Number(citaDetalleModal.total_pagado) : 14000);
+                      setCobroActivo({
+                        ...citaDetalleModal,
+                        subtotal: subVal,
+                        barbero: citaDetalleModal.trabajador,
+                        descuento: Number(citaDetalleModal.descuento) || 0,
+                        metodo: citaDetalleModal.metodo_pago || 'Efectivo',
+                        decant_producto_id: ''
+                      });
+                      setCitaDetalleModal(null);
+                    }}
+                    className="btn-primary"
+                    style={{ padding: '12px', fontWeight: 'bold' }}
+                  >
+                    💰 Cobrar y Finalizar Cita Ahora
+                  </button>
+                )}
+
+                {citaDetalleModal.estado !== 'Cancelada' && (
+                  <button
+                    type="button"
+                    disabled={actualizandoCita}
+                    onClick={() => handleCambiarEstadoCita(citaDetalleModal.id, 'Cancelada')}
+                    style={{
+                      padding: '10px',
+                      background: 'rgba(231, 76, 60, 0.15)',
+                      border: '1px solid #e74c3c',
+                      color: '#e74c3c',
+                      borderRadius: '8px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ❌ Marcar como Cancelada
+                  </button>
+                )}
+
+                {citaDetalleModal.estado === 'Cancelada' && (
+                  <button
+                    type="button"
+                    disabled={actualizandoCita}
+                    onClick={() => handleCambiarEstadoCita(citaDetalleModal.id, 'Pendiente')}
+                    className="btn-outline-gold"
+                    style={{ padding: '10px' }}
+                  >
+                    🔄 Reactivar como Pendiente
+                  </button>
+                )}
+
+                <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                  <button
+                    type="button"
+                    disabled={actualizandoCita}
+                    onClick={() => handleEliminarCita(citaDetalleModal.id)}
+                    style={{
+                      flex: 1,
+                      padding: '8px',
+                      background: 'transparent',
+                      border: '1px solid #555',
+                      color: '#888',
+                      borderRadius: '6px',
+                      fontSize: '0.78rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    🗑️ Eliminar Cita
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-outline-gold"
+                    style={{ flex: 1, padding: '8px' }}
+                    onClick={() => setCitaDetalleModal(null)}
+                  >
+                    Cerrar
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )}
 
        {/* Modal Cobro */}
        {cobroActivo && (() => {

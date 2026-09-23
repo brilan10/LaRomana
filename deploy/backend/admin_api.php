@@ -433,15 +433,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
         // --- EQUIPO ---
         case 'get_trabajadores':
-            $stmt = $pdo->query("
-                SELECT t.id, t.nombre, t.email, t.foto_perfil, t.activo,
-                IFNULL(t.frecuencia_pago, 'quincenal') as frecuencia_pago,
-                (SELECT COUNT(*) FROM citas c WHERE c.trabajador_id = t.id AND c.fecha = CURDATE() AND c.estado = 'Completada') as cortes_hoy,
-                (SELECT COUNT(*) FROM citas c WHERE c.trabajador_id = t.id AND c.estado = 'Completada') as cortes_totales
-                FROM trabajadores t
-                ORDER BY t.activo DESC, t.nombre ASC
-            ");
-            echo json_encode($stmt->fetchAll());
+            try {
+                $stmt = $pdo->query("
+                    SELECT t.id, t.nombre, t.email, t.foto_perfil, t.activo,
+                    IFNULL(t.frecuencia_pago, 'quincenal') as frecuencia_pago,
+                    (SELECT COUNT(*) FROM citas c WHERE c.trabajador_id = t.id AND c.fecha = CURDATE() AND c.estado = 'Completada') as cortes_hoy,
+                    (SELECT COUNT(*) FROM citas c WHERE c.trabajador_id = t.id AND c.estado = 'Completada') as cortes_totales
+                    FROM trabajadores t
+                    ORDER BY t.activo DESC, t.nombre ASC
+                ");
+                echo json_encode($stmt->fetchAll());
+            } catch (Exception $e) {
+                $stmt = $pdo->query("
+                    SELECT t.id, t.nombre, t.email, t.foto_perfil, t.activo,
+                    'quincenal' as frecuencia_pago,
+                    (SELECT COUNT(*) FROM citas c WHERE c.trabajador_id = t.id AND c.fecha = CURDATE() AND c.estado = 'Completada') as cortes_hoy,
+                    (SELECT COUNT(*) FROM citas c WHERE c.trabajador_id = t.id AND c.estado = 'Completada') as cortes_totales
+                    FROM trabajadores t
+                    ORDER BY t.activo DESC, t.nombre ASC
+                ");
+                echo json_encode($stmt->fetchAll());
+            }
             break;
 
         // --- SERVICIOS ---

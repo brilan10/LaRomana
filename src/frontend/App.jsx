@@ -5,7 +5,7 @@ import AdminDashboard from './components/AdminDashboard';
 import Tienda from './components/Tienda';
 import ErrorBoundary from './components/ErrorBoundary';
 
-export const API_URL = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && window.location.hostname === 'localhost' ? 'http://localhost:8000' : '/backend');
+export const API_URL = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://127.0.0.1:8000' : '/backend');
 
 function App() {
   const [session, setSession] = useState(null);
