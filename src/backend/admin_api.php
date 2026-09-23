@@ -464,9 +464,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
         // --- LIQUIDACIÓN Y COMISIONES POR BARBERO ---
         case 'get_liquidacion_barberos':
-            $fecha_inicio = $_GET['inicio'] ?? date('Y-m-01');
-            $fecha_fin = $_GET['fin'] ?? date('Y-m-t');
-            $barbero_id = $_GET['barbero_id'] ?? '';
+            $fecha_inicio = !empty($_GET['inicio']) ? trim($_GET['inicio']) : date('Y-m-01');
+            $fecha_fin = !empty($_GET['fin']) ? trim($_GET['fin']) : date('Y-m-t');
+            $barbero_id = !empty($_GET['barbero_id']) ? trim($_GET['barbero_id']) : 'todos';
+
+            if ($fecha_inicio > $fecha_fin) {
+                $temp = $fecha_inicio;
+                $fecha_inicio = $fecha_fin;
+                $fecha_fin = $temp;
+            }
 
             $totalesGenerales = [
                 'total_cortes' => 0,
@@ -488,22 +494,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
             try {
                 $sql = "
-                    SELECT c.id, c.fecha, c.hora, c.descuento, c.total_pagado, c.metodo_pago,
-                           cl.id as cliente_id, cl.nombre as cliente_nombre, cl.rut as cliente_rut,
-                           t.id as barbero_id, t.nombre as barbero_nombre,
-                           (SELECT SUM(cd.precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id) as subtotal,
-                           (SELECT GROUP_CONCAT(s.nombre SEPARATOR ' + ') FROM cita_detalle cd JOIN servicios s ON cd.servicio_id = s.id WHERE cd.cita_id = c.id) as servicios_nombres,
+                    SELECT c.id, c.fecha, c.hora, c.descuento, c.total_pagado, c.metodo_pago, c.estado,
+                           cl.id as cliente_id, IFNULL(cl.nombre, 'Cliente General') as cliente_nombre, IFNULL(cl.rut, '-') as cliente_rut,
+                           t.id as barbero_id, IFNULL(t.nombre, 'Barbero') as barbero_nombre,
+                           IFNULL((SELECT SUM(cd.precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id), c.total_pagado) as subtotal,
+                           IFNULL((SELECT GROUP_CONCAT(s.nombre SEPARATOR ' + ') FROM cita_detalle cd JOIN servicios s ON cd.servicio_id = s.id WHERE cd.cita_id = c.id), 'Servicio de Barbería') as servicios_nombres,
                            IFNULL(cdi.porcentaje_barbero, 60.00) as porcentaje_barbero,
                            IFNULL(cdi.porcentaje_tienda, 40.00) as porcentaje_tienda
                     FROM citas c
-                    JOIN clientes cl ON c.cliente_id = cl.id
-                    JOIN trabajadores t ON c.trabajador_id = t.id
-                    LEFT JOIN cierres_diarios cdi ON c.fecha = cdi.fecha
-                    WHERE c.estado = 'Completada' AND c.fecha BETWEEN ? AND ?
+                    LEFT JOIN clientes cl ON c.cliente_id = cl.id
+                    LEFT JOIN trabajadores t ON c.trabajador_id = t.id
+                    LEFT JOIN (
+                        SELECT fecha, MAX(porcentaje_barbero) as porcentaje_barbero, MAX(porcentaje_tienda) as porcentaje_tienda 
+                        FROM cierres_diarios GROUP BY fecha
+                    ) cdi ON c.fecha = cdi.fecha
+                    WHERE (LOWER(c.estado) IN ('completada', 'completado', 'pagada', 'pagado', 'finalizada', 'finalizado'))
+                      AND c.fecha BETWEEN ? AND ?
                 ";
                 $params = [$fecha_inicio, $fecha_fin];
                 if (!empty($barbero_id) && $barbero_id !== 'todos') {
-                    $sql .= " AND t.id = ? ";
+                    $sql .= " AND (t.id = ? OR c.trabajador_id = ?) ";
+                    $params[] = $barbero_id;
                     $params[] = $barbero_id;
                 }
                 $sql .= " ORDER BY t.nombre ASC, c.fecha ASC, c.hora ASC ";
@@ -521,12 +532,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 $barberosMap = [];
 
                 foreach ($citas as $c) {
-                    $bId = $c['barbero_id'];
-                    $bNombre = $c['barbero_nombre'];
+                    $bId = $c['barbero_id'] ?? 0;
+                    $bNombre = $c['barbero_nombre'] ?? 'Barbero';
                     $fecha = $c['fecha'];
                     $subtotal = floatval($c['subtotal'] ?? 0);
+                    if ($subtotal <= 0) {
+                        $subtotal = floatval($c['total_pagado'] ?? 0);
+                    }
                     $descuento = floatval($c['descuento'] ?? 0);
                     $totalReal = max(0, $subtotal - $descuento);
+                    if ($totalReal <= 0 && floatval($c['total_pagado'] ?? 0) > 0) {
+                        $totalReal = floatval($c['total_pagado']);
+                        if ($subtotal <= 0) $subtotal = $totalReal;
+                    }
                     $pctB = floatval($c['porcentaje_barbero']);
                     $pctT = floatval($c['porcentaje_tienda']);
                     $comisionB = $totalReal * ($pctB / 100);
@@ -1467,42 +1485,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         case 'get_custom_analytics':
             $metric = $data['metric'] ?? 'ingresos_cortes';
             $groupBy = $data['groupBy'] ?? 'fecha';
-            $startDate = $data['startDate'] ?? date('Y-m-01');
-            $endDate = $data['endDate'] ?? date('Y-m-d');
+            $startDate = !empty($data['startDate']) ? trim($data['startDate']) : date('Y-m-01');
+            $endDate = !empty($data['endDate']) ? trim($data['endDate']) : date('Y-m-d');
+
+            if ($startDate > $endDate) {
+                $tmp = $startDate;
+                $startDate = $endDate;
+                $endDate = $tmp;
+            }
 
             $dataResp = [];
             $details = [];
 
             if ($metric === 'ingresos_cortes' || $metric === 'citas_atendidas') {
-                $selectMetric = ($metric === 'ingresos_cortes') ? "SUM(cd.precio_cobrado)" : "COUNT(DISTINCT c.id)";
+                $selectMetric = ($metric === 'ingresos_cortes') ? "SUM(IFNULL(cd.precio_cobrado, c.total_pagado))" : "COUNT(DISTINCT c.id)";
                 
                 if ($groupBy === 'barbero') {
                     $stmt = $pdo->prepare("
-                        SELECT t.nombre as label, $selectMetric as valor
+                        SELECT IFNULL(t.nombre, 'Sin Asignar') as label, $selectMetric as valor
                         FROM citas c
-                        JOIN trabajadores t ON c.trabajador_id = t.id
-                        JOIN cita_detalle cd ON cd.cita_id = c.id
-                        WHERE c.estado = 'Completada' AND c.fecha BETWEEN ? AND ?
+                        LEFT JOIN trabajadores t ON c.trabajador_id = t.id
+                        LEFT JOIN cita_detalle cd ON cd.cita_id = c.id
+                        WHERE (LOWER(c.estado) IN ('completada', 'completado', 'pagada', 'pagado', 'finalizada', 'finalizado'))
+                          AND c.fecha BETWEEN ? AND ?
                         GROUP BY t.id, t.nombre
                         ORDER BY valor DESC
                     ");
                 } elseif ($groupBy === 'servicio') {
                     $stmt = $pdo->prepare("
-                        SELECT s.nombre as label, $selectMetric as valor
+                        SELECT IFNULL(s.nombre, 'Servicio de Barbería') as label, $selectMetric as valor
                         FROM citas c
-                        JOIN cita_detalle cd ON cd.cita_id = c.id
-                        JOIN servicios s ON cd.servicio_id = s.id
-                        WHERE c.estado = 'Completada' AND c.fecha BETWEEN ? AND ?
+                        LEFT JOIN cita_detalle cd ON cd.cita_id = c.id
+                        LEFT JOIN servicios s ON cd.servicio_id = s.id
+                        WHERE (LOWER(c.estado) IN ('completada', 'completado', 'pagada', 'pagado', 'finalizada', 'finalizado'))
+                          AND c.fecha BETWEEN ? AND ?
                         GROUP BY s.id, s.nombre
                         ORDER BY valor DESC
                     ");
                 } elseif ($groupBy === 'cliente') {
                     $stmt = $pdo->prepare("
-                        SELECT cl.nombre as label, $selectMetric as valor
+                        SELECT IFNULL(cl.nombre, 'Cliente General') as label, $selectMetric as valor
                         FROM citas c
-                        JOIN clientes cl ON c.cliente_id = cl.id
-                        JOIN cita_detalle cd ON cd.cita_id = c.id
-                        WHERE c.estado = 'Completada' AND c.fecha BETWEEN ? AND ?
+                        LEFT JOIN clientes cl ON c.cliente_id = cl.id
+                        LEFT JOIN cita_detalle cd ON cd.cita_id = c.id
+                        WHERE (LOWER(c.estado) IN ('completada', 'completado', 'pagada', 'pagado', 'finalizada', 'finalizado'))
+                          AND c.fecha BETWEEN ? AND ?
                         GROUP BY cl.id, cl.nombre
                         ORDER BY valor DESC LIMIT 15
                     ");
@@ -1510,8 +1537,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                     $stmt = $pdo->prepare("
                         SELECT c.fecha as label, $selectMetric as valor
                         FROM citas c
-                        JOIN cita_detalle cd ON cd.cita_id = c.id
-                        WHERE c.estado = 'Completada' AND c.fecha BETWEEN ? AND ?
+                        LEFT JOIN cita_detalle cd ON cd.cita_id = c.id
+                        WHERE (LOWER(c.estado) IN ('completada', 'completado', 'pagada', 'pagado', 'finalizada', 'finalizado'))
+                          AND c.fecha BETWEEN ? AND ?
                         GROUP BY c.fecha
                         ORDER BY c.fecha ASC
                     ");
@@ -1521,13 +1549,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
                 // Obtener detalles reales
                 $stmtDet = $pdo->prepare("
-                    SELECT c.fecha, c.hora, cl.nombre as cliente, t.nombre as barbero, s.nombre as servicio, cd.precio_cobrado as monto, c.metodo_pago
+                    SELECT c.fecha, c.hora, IFNULL(cl.nombre, 'Cliente General') as cliente, IFNULL(t.nombre, 'Barbero') as barbero, IFNULL(s.nombre, 'Servicio de Barbería') as servicio, IFNULL(cd.precio_cobrado, c.total_pagado) as monto, c.metodo_pago
                     FROM citas c
-                    JOIN clientes cl ON c.cliente_id = cl.id
-                    JOIN trabajadores t ON c.trabajador_id = t.id
-                    JOIN cita_detalle cd ON cd.cita_id = c.id
-                    JOIN servicios s ON cd.servicio_id = s.id
-                    WHERE c.estado = 'Completada' AND c.fecha BETWEEN ? AND ?
+                    LEFT JOIN clientes cl ON c.cliente_id = cl.id
+                    LEFT JOIN trabajadores t ON c.trabajador_id = t.id
+                    LEFT JOIN cita_detalle cd ON cd.cita_id = c.id
+                    LEFT JOIN servicios s ON cd.servicio_id = s.id
+                    WHERE (LOWER(c.estado) IN ('completada', 'completado', 'pagada', 'pagado', 'finalizada', 'finalizado'))
+                      AND c.fecha BETWEEN ? AND ?
                     ORDER BY c.fecha ASC, c.hora ASC
                 ");
                 $stmtDet->execute([$startDate, $endDate]);
@@ -1538,21 +1567,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
                 if ($groupBy === 'producto') {
                     $stmt = $pdo->prepare("
-                        SELECT pr.nombre as label, $selectMetric as valor
+                        SELECT IFNULL(pr.nombre, 'Producto') as label, $selectMetric as valor
                         FROM pedidos p
-                        JOIN pedido_detalle pd ON pd.pedido_id = p.id
-                        JOIN productos pr ON pd.producto_id = pr.id
-                        WHERE p.estado IN ('Entregado', 'Pagado') AND DATE(p.fecha_creacion) BETWEEN ? AND ?
+                        LEFT JOIN pedido_detalle pd ON pd.pedido_id = p.id
+                        LEFT JOIN productos pr ON pd.producto_id = pr.id
+                        WHERE (LOWER(p.estado) IN ('entregado', 'pagado', 'completado')) AND DATE(p.fecha_creacion) BETWEEN ? AND ?
                         GROUP BY pr.id, pr.nombre
                         ORDER BY valor DESC
                     ");
                 } elseif ($groupBy === 'cliente') {
                     $stmt = $pdo->prepare("
-                        SELECT cl.nombre as label, $selectMetric as valor
+                        SELECT IFNULL(cl.nombre, 'Cliente General') as label, $selectMetric as valor
                         FROM pedidos p
-                        JOIN clientes cl ON p.cliente_id = cl.id
-                        JOIN pedido_detalle pd ON pd.pedido_id = p.id
-                        WHERE p.estado IN ('Entregado', 'Pagado') AND DATE(p.fecha_creacion) BETWEEN ? AND ?
+                        LEFT JOIN clientes cl ON p.cliente_id = cl.id
+                        LEFT JOIN pedido_detalle pd ON pd.pedido_id = p.id
+                        WHERE (LOWER(p.estado) IN ('entregado', 'pagado', 'completado')) AND DATE(p.fecha_creacion) BETWEEN ? AND ?
                         GROUP BY cl.id, cl.nombre
                         ORDER BY valor DESC LIMIT 15
                     ");
@@ -1560,8 +1589,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                     $stmt = $pdo->prepare("
                         SELECT DATE(p.fecha_creacion) as label, $selectMetric as valor
                         FROM pedidos p
-                        JOIN pedido_detalle pd ON pd.pedido_id = p.id
-                        WHERE p.estado IN ('Entregado', 'Pagado') AND DATE(p.fecha_creacion) BETWEEN ? AND ?
+                        LEFT JOIN pedido_detalle pd ON pd.pedido_id = p.id
+                        WHERE (LOWER(p.estado) IN ('entregado', 'pagado', 'completado')) AND DATE(p.fecha_creacion) BETWEEN ? AND ?
                         GROUP BY DATE(p.fecha_creacion)
                         ORDER BY label ASC
                     ");
@@ -1570,12 +1599,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 $dataResp = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
                 $stmtDet = $pdo->prepare("
-                    SELECT DATE(p.fecha_creacion) as fecha, cl.nombre as cliente, pr.nombre as producto, pd.cantidad, pd.precio_unitario, (pd.cantidad * pd.precio_unitario) as monto, p.estado
+                    SELECT DATE(p.fecha_creacion) as fecha, IFNULL(cl.nombre, 'Cliente General') as cliente, IFNULL(pr.nombre, 'Producto') as producto, pd.cantidad, pd.precio_unitario, (pd.cantidad * pd.precio_unitario) as monto, p.estado
                     FROM pedidos p
-                    JOIN clientes cl ON p.cliente_id = cl.id
-                    JOIN pedido_detalle pd ON pd.pedido_id = p.id
-                    JOIN productos pr ON pd.producto_id = pr.id
-                    WHERE p.estado IN ('Entregado', 'Pagado') AND DATE(p.fecha_creacion) BETWEEN ? AND ?
+                    LEFT JOIN clientes cl ON p.cliente_id = cl.id
+                    LEFT JOIN pedido_detalle pd ON pd.pedido_id = p.id
+                    LEFT JOIN productos pr ON pd.producto_id = pr.id
+                    WHERE (LOWER(p.estado) IN ('entregado', 'pagado', 'completado')) AND DATE(p.fecha_creacion) BETWEEN ? AND ?
                     ORDER BY p.fecha_creacion ASC
                 ");
                 $stmtDet->execute([$startDate, $endDate]);

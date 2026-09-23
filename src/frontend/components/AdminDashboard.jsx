@@ -386,6 +386,11 @@ export default function AdminDashboard({ session, logout }) {
     let inicio = '';
     let fin = formatDateYMD(hoy);
 
+    if (tipo === 'custom') {
+      cargarLiquidaciones(liqFechaInicio, liqFechaFin, liqBarberoId);
+      return;
+    }
+
     if (tipo === 'esta_quincena') {
       const dia = hoy.getDate();
       const mesStr = String(hoy.getMonth() + 1).padStart(2, '0');
@@ -478,10 +483,14 @@ export default function AdminDashboard({ session, logout }) {
   };
 
   const cargarLiquidaciones = async (
-    inicio = liqFiltrosRef.current.inicio,
-    fin = liqFiltrosRef.current.fin,
-    barbero = liqFiltrosRef.current.barbero
+    inicioParam,
+    finParam,
+    barberoParam
   ) => {
+    const inicio = inicioParam || liqFechaInicio || liqFiltrosRef.current?.inicio || formatDateYMD(new Date(new Date().setDate(1)));
+    const fin = finParam || liqFechaFin || liqFiltrosRef.current?.fin || formatDateYMD(new Date());
+    const barbero = (barberoParam !== undefined && barberoParam !== null) ? barberoParam : (liqBarberoId || liqFiltrosRef.current?.barbero || 'todos');
+
     // Sincronizar estados locales si se pasa un nuevo filtro
     if (inicio !== liqFechaInicio) setLiqFechaInicio(inicio);
     if (fin !== liqFechaFin) setLiqFechaFin(fin);
@@ -490,9 +499,11 @@ export default function AdminDashboard({ session, logout }) {
 
     setLoadingLiquidacion(true);
     try {
-      const res = await fetch(`${API_URL}/admin_api.php?action=get_liquidacion_barberos&inicio=${inicio}&fin=${fin}&barbero_id=${barbero}`);
-      const data = await res.json();
-      setLiquidacionData(data);
+      const res = await fetch(`${API_URL}/admin_api.php?action=get_liquidacion_barberos&inicio=${encodeURIComponent(inicio)}&fin=${encodeURIComponent(fin)}&barbero_id=${encodeURIComponent(barbero)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setLiquidacionData(data);
+      }
     } catch (err) {
       console.error("Error cargando liquidaciones:", err);
     } finally {
@@ -4832,11 +4843,13 @@ export default function AdminDashboard({ session, logout }) {
             </div>
             <div>
               <button 
+                type="button"
                 className="btn-primary" 
+                disabled={loadingLiquidacion}
                 onClick={() => cargarLiquidaciones(liqFechaInicio, liqFechaFin, liqBarberoId)}
-                style={{ width: '100%', padding: '10px' }}
+                style={{ width: '100%', padding: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
               >
-                Filtrar Resultados
+                {loadingLiquidacion ? '⏳ Filtrando...' : '🔍 Filtrar Resultados'}
               </button>
             </div>
           </div>
@@ -5057,10 +5070,25 @@ export default function AdminDashboard({ session, logout }) {
                 );
               })}
 
+              {loadingLiquidacion && (
+                <tr>
+                  <td colSpan="9" style={{ ...tableCellStyle, textAlign: 'center', padding: '35px', color: 'var(--gold-jewel)', fontSize: '0.95rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px' }}>
+                      <span className="spinner-border" style={{ display: 'inline-block', width: '20px', height: '20px', border: '3px solid rgba(212,175,55,0.3)', borderTopColor: 'var(--gold-jewel)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}></span>
+                      <span>Consultando y calculando liquidaciones del período...</span>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
               {barberosList.length === 0 && !loadingLiquidacion && (
                 <tr>
-                  <td colSpan="9" style={{ ...tableCellStyle, textAlign: 'center', padding: '30px', color: '#888' }}>
-                    No hay citas completadas en el rango de fechas seleccionado.
+                  <td colSpan="9" style={{ ...tableCellStyle, textAlign: 'center', padding: '35px', color: '#aaa' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '1.4rem' }}>📭</span>
+                      <strong style={{ color: '#ccc' }}>No se encontraron citas completadas en el período seleccionado ({rangoInicio} al {rangoFin})</strong>
+                      <span style={{ fontSize: '0.78rem', color: '#777' }}>Prueba seleccionando otro rango de fechas o eligiendo "Todos los Barberos" en el filtro.</span>
+                    </div>
                   </td>
                 </tr>
               )}
