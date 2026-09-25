@@ -403,6 +403,30 @@ h1, h2, h3, h4, h5, h6 {
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes zoomInLightbox {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.lightbox-modal {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.lightbox-content {
+  animation: zoomInLightbox 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.lightbox-nav-btn {
+  transition: all 0.15s ease-in-out;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.lightbox-nav-btn:active {
+  transform: translateY(-50%) scale(0.92);
+  background: rgba(212, 175, 55, 0.4) !important;
+}
+
 /* Scrollbars estilizados para Admin Sidebar y Contenedores */
 ::-webkit-scrollbar {
   width: 6px;

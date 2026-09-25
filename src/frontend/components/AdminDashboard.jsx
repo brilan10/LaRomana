@@ -48,6 +48,7 @@ export default function AdminDashboard({ session, logout }) {
   const [categorias, setCategorias] = useState([]);
   const [editingProd, setEditingProd] = useState(null);
   const [subiendoImagenProd, setSubiendoImagenProd] = useState(false);
+  const [previewGaleriaAdmin, setPreviewGaleriaAdmin] = useState(null);
 
   // Datos Equipo
   const [trabajadores, setTrabajadores] = useState([]);
@@ -4398,7 +4399,23 @@ export default function AdminDashboard({ session, logout }) {
               return (
                 <tr key={p.id} style={{ background: i % 2 === 0 ? '#161616' : 'transparent' }}>
                   <td style={{...tableCellStyle, width: '60px'}}>
-                    <div style={{ width: '45px', height: '45px', borderRadius: '6px', background: '#222', overflow: 'hidden', display: 'flex', justifyContent: 'center', alignItems: 'center', position: 'relative' }}>
+                    <div 
+                      onClick={() => pImages.length > 0 && setPreviewGaleriaAdmin({ images: pImages, index: 0, title: p.nombre })}
+                      style={{ 
+                        width: '45px', 
+                        height: '45px', 
+                        borderRadius: '6px', 
+                        background: '#222', 
+                        overflow: 'hidden', 
+                        display: 'flex', 
+                        justifyContent: 'center', 
+                        alignItems: 'center', 
+                        position: 'relative',
+                        cursor: pImages.length > 0 ? 'pointer' : 'default',
+                        border: pImages.length > 0 ? '1px solid rgba(212,175,55,0.3)' : '1px solid rgba(255,255,255,0.1)'
+                      }}
+                      title={pImages.length > 0 ? 'Toca para ver fotos en grande' : ''}
+                    >
                       {pImages.length > 0 ? (
                         <>
                           <img 
@@ -9375,6 +9392,261 @@ export default function AdminDashboard({ session, logout }) {
             </div>
           </div>
         )}
+
+        {/* --- MODAL PANTALLA COMPLETA / LIGHTBOX DE PRODUCTO EN ADMIN --- */}
+        {previewGaleriaAdmin && (() => {
+          const listImgs = previewGaleriaAdmin.images || [];
+          const currentIdx = previewGaleriaAdmin.index || 0;
+          const currentUrl = listImgs[currentIdx];
+          const hasMultiple = listImgs.length > 1;
+
+          const nextBigImg = (e) => {
+            if (e) e.stopPropagation();
+            if (hasMultiple) {
+              setPreviewGaleriaAdmin(prev => ({
+                ...prev,
+                index: (prev.index + 1) % listImgs.length
+              }));
+            }
+          };
+
+          const prevBigImg = (e) => {
+            if (e) e.stopPropagation();
+            if (hasMultiple) {
+              setPreviewGaleriaAdmin(prev => ({
+                ...prev,
+                index: (prev.index - 1 + listImgs.length) % listImgs.length
+              }));
+            }
+          };
+
+          return (
+            <div 
+              className="lightbox-modal"
+              style={{
+                position: 'fixed',
+                inset: 0,
+                backgroundColor: 'rgba(0, 0, 0, 0.96)',
+                backdropFilter: 'blur(14px)',
+                zIndex: 9999,
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '12px 10px',
+                userSelect: 'none',
+                touchAction: 'pan-y'
+              }}
+              onClick={() => setPreviewGaleriaAdmin(null)}
+            >
+              {/* Top Bar */}
+              <div 
+                style={{
+                  width: '100%',
+                  maxWidth: '900px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '10px 14px',
+                  background: 'rgba(20,20,20,0.85)',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  boxShadow: '0 4px 15px rgba(0,0,0,0.6)',
+                  zIndex: 10000
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ color: '#fff', fontWeight: 'bold', fontSize: '1rem' }}>
+                    {previewGaleriaAdmin.title || 'Foto de Producto'}
+                  </span>
+                  {hasMultiple && (
+                    <span style={{ 
+                      background: 'rgba(212, 175, 55, 0.2)', 
+                      color: 'var(--gold-jewel)', 
+                      border: '1px solid var(--gold-jewel)',
+                      padding: '2px 10px', 
+                      borderRadius: '12px', 
+                      fontSize: '0.8rem',
+                      fontWeight: 'bold'
+                    }}>
+                      📷 {currentIdx + 1} / {listImgs.length}
+                    </span>
+                  )}
+                </div>
+
+                <button 
+                  onClick={() => setPreviewGaleriaAdmin(null)}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.15)',
+                    border: '1px solid rgba(255, 255, 255, 0.3)',
+                    color: '#fff',
+                    width: '38px',
+                    height: '38px',
+                    borderRadius: '50%',
+                    fontSize: '1.3rem',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.5)'
+                  }}
+                  title="Cerrar"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Center Image */}
+              <div 
+                style={{
+                  position: 'relative',
+                  width: '100%',
+                  maxWidth: '960px',
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  margin: '10px 0',
+                  overflow: 'hidden'
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {currentUrl ? (
+                  <img 
+                    key={currentIdx}
+                    src={resolveImageUrl(currentUrl)} 
+                    alt={previewGaleriaAdmin.title || 'Foto'} 
+                    className="lightbox-content"
+                    style={{
+                      maxWidth: '100%',
+                      maxHeight: hasMultiple ? '66vh' : '74vh',
+                      objectFit: 'contain',
+                      borderRadius: '12px',
+                      boxShadow: '0 12px 40px rgba(0,0,0,0.95), 0 0 25px rgba(212,175,55,0.25)'
+                    }}
+                    onError={(e) => { e.target.src = '/icon-192.png'; }}
+                  />
+                ) : (
+                  <div style={{ fontSize: '5rem' }}>🛍️</div>
+                )}
+
+                {/* Botones de navegación */}
+                {hasMultiple && (
+                  <>
+                    <button 
+                      onClick={prevBigImg}
+                      className="lightbox-nav-btn"
+                      style={{
+                        position: 'absolute',
+                        left: '8px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        background: 'rgba(0,0,0,0.85)',
+                        border: '2px solid var(--gold-jewel)',
+                        color: 'var(--gold-jewel)',
+                        borderRadius: '50%',
+                        width: '52px',
+                        height: '52px',
+                        fontSize: '2rem',
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        boxShadow: '0 6px 20px rgba(0,0,0,0.9), 0 0 10px rgba(212,175,55,0.4)',
+                        zIndex: 10010
+                      }}
+                      title="Foto anterior"
+                    >
+                      ‹
+                    </button>
+                    <button 
+                      onClick={nextBigImg}
+                      className="lightbox-nav-btn"
+                      style={{
+                        position: 'absolute',
+                        right: '8px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        background: 'rgba(0,0,0,0.85)',
+                        border: '2px solid var(--gold-jewel)',
+                        color: 'var(--gold-jewel)',
+                        borderRadius: '50%',
+                        width: '52px',
+                        height: '52px',
+                        fontSize: '2rem',
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        boxShadow: '0 6px 20px rgba(0,0,0,0.9), 0 0 10px rgba(212,175,55,0.4)',
+                        zIndex: 10010
+                      }}
+                      title="Siguiente foto"
+                    >
+                      ›
+                    </button>
+                  </>
+                )}
+              </div>
+
+              {/* Bottom Strip */}
+              {hasMultiple && (
+                <div 
+                  style={{
+                    width: '100%',
+                    maxWidth: '900px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: '8px',
+                    zIndex: 10000
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div 
+                    style={{
+                      display: 'flex',
+                      gap: '8px',
+                      padding: '6px 12px',
+                      background: 'rgba(15,15,15,0.85)',
+                      borderRadius: '25px',
+                      border: '1px solid rgba(212,175,55,0.3)',
+                      maxWidth: '100%',
+                      overflowX: 'auto',
+                      boxShadow: '0 4px 15px rgba(0,0,0,0.7)'
+                    }}
+                  >
+                    {listImgs.map((img, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setPreviewGaleriaAdmin(prev => ({ ...prev, index: i }))}
+                        style={{
+                          width: '46px',
+                          height: '46px',
+                          borderRadius: '8px',
+                          overflow: 'hidden',
+                          padding: 0,
+                          border: i === currentIdx ? '2px solid var(--gold-jewel)' : '1px solid rgba(255,255,255,0.2)',
+                          background: '#111',
+                          cursor: 'pointer',
+                          boxShadow: i === currentIdx ? '0 0 10px rgba(212,175,55,0.8)' : 'none',
+                          flexShrink: 0,
+                          transform: i === currentIdx ? 'scale(1.08)' : 'scale(1)',
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <img src={resolveImageUrl(img)} alt={`Thumb ${i}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
     </div>
   );

@@ -3,22 +3,61 @@ import { API_URL } from '../App';
 import { formatRut } from '../utils/rut';
 import { resolveImageUrl } from '../utils/imageHelper';
 
-const ProductoCard = ({ p, agregarAlCarrito, onVerDetalle }) => {
+const ProductoCard = ({ p, agregarAlCarrito, onVerDetalle, onVerImagenGrande }) => {
   const images = p.imagen_url ? p.imagen_url.split(',').map(url => url.trim()).filter(Boolean) : [];
   const [imgIndex, setImgIndex] = useState(0);
   const [imgError, setImgError] = useState(false);
+  const [cardTouch, setCardTouch] = useState(null);
 
   const nextImg = (e) => {
-    e.stopPropagation();
+    if (e) e.stopPropagation();
     if (images.length > 1) {
       setImgIndex((prev) => (prev + 1) % images.length);
     }
   };
 
   const prevImg = (e) => {
-    e.stopPropagation();
+    if (e) e.stopPropagation();
     if (images.length > 1) {
       setImgIndex((prev) => (prev - 1 + images.length) % images.length);
+    }
+  };
+
+  const handleTouchStart = (e) => {
+    if (!e.touches || e.touches.length === 0) return;
+    setCardTouch({
+      x: e.touches[0].clientX,
+      y: e.touches[0].clientY
+    });
+  };
+
+  const handleTouchEnd = (e) => {
+    if (!cardTouch || !e.changedTouches || e.changedTouches.length === 0) return;
+    const diffX = cardTouch.x - e.changedTouches[0].clientX;
+    const diffY = cardTouch.y - e.changedTouches[0].clientY;
+    if (Math.abs(diffX) > 30 && Math.abs(diffX) > Math.abs(diffY)) {
+      e.stopPropagation();
+      if (diffX > 0) {
+        nextImg(e);
+      } else {
+        prevImg(e);
+      }
+    }
+    setCardTouch(null);
+  };
+
+  const handleImageClick = (e) => {
+    e.stopPropagation();
+    if (onVerImagenGrande && images.length > 0) {
+      onVerImagenGrande({
+        images,
+        index: imgIndex,
+        title: p.nombre,
+        precio: p.precio,
+        producto: p
+      });
+    } else if (onVerDetalle) {
+      onVerDetalle(p);
     }
   };
 
@@ -45,13 +84,53 @@ const ProductoCard = ({ p, agregarAlCarrito, onVerDetalle }) => {
       }}
     >
       {images.length > 0 && !imgError ? (
-        <div style={{ position: 'relative', width: '100%', height: '140px', marginBottom: '12px', borderRadius: '8px', overflow: 'hidden', backgroundColor: '#0a0a0a' }}>
+        <div 
+          style={{ 
+            position: 'relative', 
+            width: '100%', 
+            height: '140px', 
+            marginBottom: '12px', 
+            borderRadius: '8px', 
+            overflow: 'hidden', 
+            backgroundColor: '#0a0a0a',
+            cursor: 'zoom-in',
+            touchAction: 'pan-y'
+          }}
+          onClick={handleImageClick}
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+          title="Toca para ver en grande"
+        >
           <img 
             src={resolveImageUrl(images[imgIndex] || images[0])} 
             alt={p.nombre} 
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+            style={{ width: '100%', height: '100%', objectFit: 'cover', transition: 'opacity 0.2s ease' }} 
             onError={() => setImgError(true)}
           />
+
+          {/* Badge lupa zoom */}
+          <div 
+            style={{
+              position: 'absolute',
+              top: '5px',
+              left: '5px',
+              background: 'rgba(0,0,0,0.8)',
+              color: 'var(--gold-jewel)',
+              border: '1px solid rgba(212,175,55,0.4)',
+              borderRadius: '6px',
+              padding: '2px 6px',
+              fontSize: '0.65rem',
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '2px',
+              zIndex: 3,
+              boxShadow: '0 2px 4px rgba(0,0,0,0.7)'
+            }}
+          >
+            🔍 Grande
+          </div>
+
           {images.length > 1 && (
             <>
               <button 
@@ -61,7 +140,7 @@ const ProductoCard = ({ p, agregarAlCarrito, onVerDetalle }) => {
                   left: '4px', 
                   top: '50%', 
                   transform: 'translateY(-50%)', 
-                  background: 'rgba(0,0,0,0.8)', 
+                  background: 'rgba(0,0,0,0.85)', 
                   border: '1px solid var(--gold-jewel)', 
                   color: 'var(--gold-jewel)', 
                   borderRadius: '50%', 
@@ -71,11 +150,12 @@ const ProductoCard = ({ p, agregarAlCarrito, onVerDetalle }) => {
                   display: 'flex', 
                   justifyContent: 'center', 
                   alignItems: 'center', 
-                  zIndex: 2,
+                  zIndex: 4,
                   boxShadow: '0 2px 6px rgba(0,0,0,0.7)',
                   fontSize: '1rem',
                   fontWeight: 'bold'
                 }}
+                title="Foto anterior"
               >
                 ‹
               </button>
@@ -86,7 +166,7 @@ const ProductoCard = ({ p, agregarAlCarrito, onVerDetalle }) => {
                   right: '4px', 
                   top: '50%', 
                   transform: 'translateY(-50%)', 
-                  background: 'rgba(0,0,0,0.8)', 
+                  background: 'rgba(0,0,0,0.85)', 
                   border: '1px solid var(--gold-jewel)', 
                   color: 'var(--gold-jewel)', 
                   borderRadius: '50%', 
@@ -96,19 +176,31 @@ const ProductoCard = ({ p, agregarAlCarrito, onVerDetalle }) => {
                   display: 'flex', 
                   justifyContent: 'center', 
                   alignItems: 'center', 
-                  zIndex: 2,
+                  zIndex: 4,
                   boxShadow: '0 2px 6px rgba(0,0,0,0.7)',
                   fontSize: '1rem',
                   fontWeight: 'bold'
                 }}
+                title="Siguiente foto"
               >
                 ›
               </button>
-              <div style={{ position: 'absolute', bottom: '5px', left: '0', right: '0', display: 'flex', justifyContent: 'center', gap: '3px', zIndex: 2 }}>
-                {images.map((_, i) => <div key={i} style={{ width: '6px', height: '6px', borderRadius: '50%', background: i === imgIndex ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.5)' }} />)}
+              <div style={{ position: 'absolute', bottom: '5px', left: '0', right: '0', display: 'flex', justifyContent: 'center', gap: '3px', zIndex: 3 }}>
+                {images.map((_, i) => (
+                  <div 
+                    key={i} 
+                    style={{ 
+                      width: i === imgIndex ? '12px' : '5px', 
+                      height: '5px', 
+                      borderRadius: '3px', 
+                      background: i === imgIndex ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.6)',
+                      transition: 'all 0.2s ease'
+                    }} 
+                  />
+                ))}
               </div>
-              <div style={{ position: 'absolute', top: '5px', right: '5px', background: 'rgba(0,0,0,0.8)', color: 'var(--gold-jewel)', border: '1px solid rgba(212,175,55,0.4)', padding: '2px 6px', borderRadius: '6px', fontSize: '0.65rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '3px', zIndex: 2 }}>
-                📷 {images.length}
+              <div style={{ position: 'absolute', top: '5px', right: '5px', background: 'rgba(0,0,0,0.85)', color: 'var(--gold-jewel)', border: '1px solid rgba(212,175,55,0.4)', padding: '2px 6px', borderRadius: '6px', fontSize: '0.65rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '3px', zIndex: 3 }}>
+                📷 {imgIndex + 1}/{images.length}
               </div>
             </>
           )}
@@ -138,6 +230,7 @@ const ProductoCard = ({ p, agregarAlCarrito, onVerDetalle }) => {
 
 export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCitas }) {
   const [carrito, setCarrito] = useState([]);
+
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [pedidoConfirmado, setPedidoConfirmado] = useState(null);
 
@@ -168,24 +261,64 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
   const [agregadoFeedback, setAgregadoFeedback] = useState(false);
 
   // Modal Fullscreen / Lightbox para ver la imagen en grande
-  const [imagenEnGrande, setImagenEnGrande] = useState(null); // { images: [], index: 0, title: '' }
-  const [touchStartX, setTouchStartX] = useState(null);
+  const [imagenEnGrande, setImagenEnGrande] = useState(null); // { images: [], index: 0, title: '', precio: 0, producto: null }
+  const [globalTouch, setGlobalTouch] = useState(null);
 
-  const handleTouchStart = (e) => {
-    setTouchStartX(e.touches[0].clientX);
+  const handleGlobalTouchStart = (e) => {
+    if (!e.touches || e.touches.length === 0) return;
+    setGlobalTouch({
+      x: e.touches[0].clientX,
+      y: e.touches[0].clientY,
+      time: Date.now()
+    });
   };
 
-  const handleTouchEnd = (e, nextFn, prevFn) => {
-    if (touchStartX === null) return;
+  const handleGlobalTouchEnd = (e, nextFn, prevFn) => {
+    if (!globalTouch || !e.changedTouches || e.changedTouches.length === 0) return;
     const touchEndX = e.changedTouches[0].clientX;
-    const diff = touchStartX - touchEndX;
-    if (diff > 45) {
-      if (nextFn) nextFn();
-    } else if (diff < -45) {
-      if (prevFn) prevFn();
+    const touchEndY = e.changedTouches[0].clientY;
+    const diffX = globalTouch.x - touchEndX;
+    const diffY = globalTouch.y - touchEndY;
+
+    if (Math.abs(diffX) > 28 && Math.abs(diffX) > Math.abs(diffY)) {
+      if (diffX > 0) {
+        if (nextFn) nextFn();
+      } else {
+        if (prevFn) prevFn();
+      }
     }
-    setTouchStartX(null);
+    setGlobalTouch(null);
   };
+
+  // Bloquear scroll de fondo y escuchar teclado para Lightbox
+  useEffect(() => {
+    if (imagenEnGrande) {
+      const originalOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+
+      const handleKeyDown = (e) => {
+        if (e.key === 'Escape') {
+          setImagenEnGrande(null);
+        } else if (e.key === 'ArrowRight') {
+          setImagenEnGrande(prev => {
+            if (!prev || !prev.images || prev.images.length <= 1) return prev;
+            return { ...prev, index: (prev.index + 1) % prev.images.length };
+          });
+        } else if (e.key === 'ArrowLeft') {
+          setImagenEnGrande(prev => {
+            if (!prev || !prev.images || prev.images.length <= 1) return prev;
+            return { ...prev, index: (prev.index - 1 + prev.images.length) % prev.images.length };
+          });
+        }
+      };
+
+      window.addEventListener('keydown', handleKeyDown);
+      return () => {
+        document.body.style.overflow = originalOverflow;
+        window.removeEventListener('keydown', handleKeyDown);
+      };
+    }
+  }, [imagenEnGrande]);
 
   useEffect(() => {
     fetch(`${API_URL}/api.php?action=get_productos`)
@@ -523,7 +656,13 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
       {productos.length === 0 ? <p>Cargando catálogo...</p> : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '12px' }}>
           {productosMostrar.map(p => (
-            <ProductoCard key={p.id} p={p} agregarAlCarrito={agregarAlCarrito} onVerDetalle={abrirDetalleProducto} />
+            <ProductoCard 
+              key={p.id} 
+              p={p} 
+              agregarAlCarrito={agregarAlCarrito} 
+              onVerDetalle={abrirDetalleProducto} 
+              onVerImagenGrande={(imgData) => setImagenEnGrande(imgData)}
+            />
           ))}
         </div>
       )}
@@ -597,12 +736,15 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
           }, 2500);
         };
 
-        const openFullscreenZoom = (e) => {
-          e?.stopPropagation();
+        const openFullscreenZoom = (e, targetIdx = null) => {
+          if (e) e.stopPropagation();
+          const idx = targetIdx !== null ? targetIdx : imgDetalleIndex;
           setImagenEnGrande({
             images: pImages.length > 0 ? pImages : (currentImgUrl ? [currentImgUrl] : []),
-            index: imgDetalleIndex,
-            title: productoDetalle.nombre
+            index: idx,
+            title: productoDetalle.nombre,
+            precio: productoDetalle.precio,
+            producto: productoDetalle
           });
         };
 
@@ -689,11 +831,12 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
                   alignItems: 'center',
                   justifyContent: 'center',
                   border: '1px solid rgba(255,255,255,0.1)',
-                  cursor: 'zoom-in'
+                  cursor: 'zoom-in',
+                  touchAction: 'pan-y'
                 }}
-                onClick={openFullscreenZoom}
-                onTouchStart={handleTouchStart}
-                onTouchEnd={(e) => hasMultiple && handleTouchEnd(e, nextModalImg, prevModalImg)}
+                onClick={(e) => openFullscreenZoom(e)}
+                onTouchStart={handleGlobalTouchStart}
+                onTouchEnd={(e) => hasMultiple && handleGlobalTouchEnd(e, nextModalImg, prevModalImg)}
                 title="Toca para ver la imagen en pantalla completa"
               >
                 {currentImgUrl ? (
@@ -963,7 +1106,7 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
         const hasMultiple = listImgs.length > 1;
 
         const nextBigImg = (e) => {
-          e?.stopPropagation();
+          if (e) e.stopPropagation();
           if (hasMultiple) {
             setImagenEnGrande(prev => ({
               ...prev,
@@ -973,7 +1116,7 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
         };
 
         const prevBigImg = (e) => {
-          e?.stopPropagation();
+          if (e) e.stopPropagation();
           if (hasMultiple) {
             setImagenEnGrande(prev => ({
               ...prev,
@@ -982,218 +1125,310 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
           }
         };
 
+        const handleImageAreaClick = (e) => {
+          if (!hasMultiple) return;
+          const rect = e.currentTarget.getBoundingClientRect();
+          const clickX = e.clientX - rect.left;
+          if (clickX < rect.width / 2) {
+            prevBigImg(e);
+          } else {
+            nextBigImg(e);
+          }
+        };
+
+        const handleQuickAdd = () => {
+          if (imagenEnGrande.producto) {
+            agregarAlCarrito(imagenEnGrande.producto, 1);
+            setAgregadoFeedback(true);
+            setTimeout(() => setAgregadoFeedback(false), 2000);
+          }
+        };
+
         return (
           <div 
+            className="lightbox-modal"
             style={{
               position: 'fixed',
               inset: 0,
               backgroundColor: 'rgba(0, 0, 0, 0.96)',
-              backdropFilter: 'blur(12px)',
-              zIndex: 4000,
+              backdropFilter: 'blur(14px)',
+              zIndex: 5000,
               display: 'flex',
               flexDirection: 'column',
+              justifyContent: 'space-between',
               alignItems: 'center',
-              justifyContent: 'center',
-              padding: '12px',
-              animation: 'fadeIn 0.2s ease-out',
-              userSelect: 'none'
+              padding: '12px 10px',
+              userSelect: 'none',
+              touchAction: 'pan-y'
             }}
             onClick={() => setImagenEnGrande(null)}
-            onTouchStart={handleTouchStart}
-            onTouchEnd={(e) => hasMultiple && handleTouchEnd(e, nextBigImg, prevBigImg)}
+            onTouchStart={handleGlobalTouchStart}
+            onTouchEnd={(e) => hasMultiple && handleGlobalTouchEnd(e, nextBigImg, prevBigImg)}
           >
             {/* Barra superior del lightbox */}
             <div 
               style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                right: 0,
-                padding: '16px 20px',
+                width: '100%',
+                maxWidth: '900px',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
-                background: 'linear-gradient(to bottom, rgba(0,0,0,0.85), transparent)',
-                zIndex: 4010
+                padding: '8px 12px',
+                background: 'rgba(20,20,20,0.85)',
+                borderRadius: '12px',
+                border: '1px solid rgba(255,255,255,0.1)',
+                boxShadow: '0 4px 15px rgba(0,0,0,0.6)',
+                zIndex: 5010
               }}
               onClick={(e) => e.stopPropagation()}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span style={{ color: '#fff', fontWeight: 'bold', fontSize: '1rem', textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', overflow: 'hidden' }}>
+                <span style={{ color: '#fff', fontWeight: 'bold', fontSize: '1rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '240px' }}>
                   {imagenEnGrande.title || 'Foto de Producto'}
                 </span>
-                {hasMultiple && (
-                  <span style={{ 
-                    background: 'rgba(212, 175, 55, 0.25)', 
-                    color: 'var(--gold-jewel)', 
-                    border: '1px solid var(--gold-jewel)',
-                    padding: '2px 10px', 
-                    borderRadius: '12px', 
-                    fontSize: '0.8rem',
-                    fontWeight: 'bold'
-                  }}>
-                    {currentIdx + 1} / {listImgs.length}
+                {imagenEnGrande.precio && (
+                  <span style={{ color: 'var(--gold-jewel)', fontWeight: 'bold', fontSize: '0.9rem' }}>
+                    ${Number(imagenEnGrande.precio).toLocaleString('es-CL')}
                   </span>
                 )}
               </div>
 
-              <button 
-                onClick={() => setImagenEnGrande(null)}
-                style={{
-                  background: 'rgba(255, 255, 255, 0.2)',
-                  border: '1px solid rgba(255, 255, 255, 0.4)',
-                  color: '#fff',
-                  width: '42px',
-                  height: '42px',
-                  borderRadius: '50%',
-                  fontSize: '1.4rem',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.6)'
-                }}
-                title="Cerrar vista grande"
-              >
-                ✕
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                {hasMultiple && (
+                  <span style={{ 
+                    background: 'rgba(212, 175, 55, 0.2)', 
+                    color: 'var(--gold-jewel)', 
+                    border: '1px solid var(--gold-jewel)',
+                    padding: '3px 10px', 
+                    borderRadius: '14px', 
+                    fontSize: '0.8rem',
+                    fontWeight: 'bold',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    📷 {currentIdx + 1} / {listImgs.length}
+                  </span>
+                )}
+
+                <button 
+                  onClick={() => setImagenEnGrande(null)}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.15)',
+                    border: '1px solid rgba(255, 255, 255, 0.3)',
+                    color: '#fff',
+                    width: '38px',
+                    height: '38px',
+                    borderRadius: '50%',
+                    fontSize: '1.3rem',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Cerrar vista grande"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
-            {/* Contenedor central de la imagen */}
+            {/* Contenedor central de la imagen con flechas flotantes */}
             <div 
               style={{
                 position: 'relative',
                 width: '100%',
-                maxWidth: '900px',
-                maxHeight: '80vh',
+                maxWidth: '960px',
+                flex: 1,
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'center'
+                justifyContent: 'center',
+                margin: '10px 0',
+                overflow: 'hidden'
               }}
               onClick={(e) => e.stopPropagation()}
             >
               {currentUrl ? (
                 <img 
+                  key={currentIdx}
                   src={resolveImageUrl(currentUrl)} 
                   alt={imagenEnGrande.title || 'Foto'} 
+                  className="lightbox-content"
                   style={{
                     maxWidth: '100%',
-                    maxHeight: '78vh',
+                    maxHeight: hasMultiple ? '66vh' : '74vh',
                     objectFit: 'contain',
                     borderRadius: '12px',
-                    boxShadow: '0 10px 40px rgba(0,0,0,0.9), 0 0 20px rgba(212,175,55,0.2)'
+                    boxShadow: '0 12px 40px rgba(0,0,0,0.95), 0 0 25px rgba(212,175,55,0.25)',
+                    cursor: hasMultiple ? 'pointer' : 'default'
                   }}
+                  onClick={handleImageAreaClick}
                   onError={(e) => { e.target.src = '/icon-192.png'; }}
                 />
               ) : (
                 <div style={{ fontSize: '5rem' }}>🛍️</div>
               )}
 
-              {/* Flechas en pantalla completa (SOLO si hay más de 1 imagen) */}
+              {/* Botón flotante IZQUIERDO */}
               {hasMultiple && (
-                <>
-                  <button 
-                    onClick={prevBigImg}
-                    style={{
-                      position: 'absolute',
-                      left: '10px',
-                      top: '50%',
-                      transform: 'translateY(-50%)',
-                      background: 'rgba(0,0,0,0.8)',
-                      border: '2px solid var(--gold-jewel)',
-                      color: 'var(--gold-jewel)',
-                      borderRadius: '50%',
-                      width: '48px',
-                      height: '48px',
-                      fontSize: '1.8rem',
-                      fontWeight: 'bold',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      boxShadow: '0 4px 15px rgba(0,0,0,0.8)',
-                      zIndex: 4020
-                    }}
-                    title="Foto anterior"
-                  >
-                    ‹
-                  </button>
-                  <button 
-                    onClick={nextBigImg}
-                    style={{
-                      position: 'absolute',
-                      right: '10px',
-                      top: '50%',
-                      transform: 'translateY(-50%)',
-                      background: 'rgba(0,0,0,0.8)',
-                      border: '2px solid var(--gold-jewel)',
-                      color: 'var(--gold-jewel)',
-                      borderRadius: '50%',
-                      width: '48px',
-                      height: '48px',
-                      fontSize: '1.8rem',
-                      fontWeight: 'bold',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      boxShadow: '0 4px 15px rgba(0,0,0,0.8)',
-                      zIndex: 4020
-                    }}
-                    title="Siguiente foto"
-                  >
-                    ›
-                  </button>
-                </>
+                <button 
+                  onClick={prevBigImg}
+                  className="lightbox-nav-btn"
+                  style={{
+                    position: 'absolute',
+                    left: '8px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'rgba(0,0,0,0.85)',
+                    border: '2px solid var(--gold-jewel)',
+                    color: 'var(--gold-jewel)',
+                    borderRadius: '50%',
+                    width: '52px',
+                    height: '52px',
+                    fontSize: '2rem',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 6px 20px rgba(0,0,0,0.9), 0 0 10px rgba(212,175,55,0.4)',
+                    zIndex: 5020
+                  }}
+                  title="Foto anterior"
+                >
+                  ‹
+                </button>
+              )}
+
+              {/* Botón flotante DERECHO */}
+              {hasMultiple && (
+                <button 
+                  onClick={nextBigImg}
+                  className="lightbox-nav-btn"
+                  style={{
+                    position: 'absolute',
+                    right: '8px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'rgba(0,0,0,0.85)',
+                    border: '2px solid var(--gold-jewel)',
+                    color: 'var(--gold-jewel)',
+                    borderRadius: '50%',
+                    width: '52px',
+                    height: '52px',
+                    fontSize: '2rem',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 6px 20px rgba(0,0,0,0.9), 0 0 10px rgba(212,175,55,0.4)',
+                    zIndex: 5020
+                  }}
+                  title="Siguiente foto"
+                >
+                  ›
+                </button>
               )}
             </div>
 
-            {/* Barra inferior con miniaturas en lightbox (SOLO si hay más de 1 imagen) */}
-            {hasMultiple ? (
-              <div 
-                style={{
-                  position: 'absolute',
-                  bottom: '15px',
-                  left: '50%',
-                  transform: 'translateX(-50%)',
-                  display: 'flex',
-                  gap: '8px',
-                  padding: '6px 14px',
-                  background: 'rgba(0,0,0,0.8)',
-                  borderRadius: '30px',
-                  border: '1px solid rgba(212,175,55,0.4)',
-                  maxWidth: '90%',
-                  overflowX: 'auto',
-                  zIndex: 4010
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                {listImgs.map((img, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setImagenEnGrande(prev => ({ ...prev, index: i }))}
-                    style={{
-                      width: '44px',
-                      height: '44px',
-                      borderRadius: '8px',
-                      overflow: 'hidden',
-                      padding: 0,
-                      border: i === currentIdx ? '2px solid var(--gold-jewel)' : '1px solid rgba(255,255,255,0.2)',
-                      background: '#111',
-                      cursor: 'pointer',
-                      boxShadow: i === currentIdx ? '0 0 10px rgba(212,175,55,0.8)' : 'none',
-                      flexShrink: 0
-                    }}
-                  >
-                    <img src={resolveImageUrl(img)} alt={`Thumb ${i}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div style={{ position: 'absolute', bottom: '20px', color: '#aaa', fontSize: '0.85rem' }}>
-                Toca la pantalla para cerrar
-              </div>
-            )}
+            {/* Barra inferior del lightbox con indicadores y miniaturas */}
+            <div 
+              style={{
+                width: '100%',
+                maxWidth: '900px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '8px',
+                zIndex: 5010
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Indicadores de puntos y texto de ayuda táctil */}
+              {hasMultiple && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    {listImgs.map((_, i) => (
+                      <div 
+                        key={i}
+                        onClick={() => setImagenEnGrande(prev => ({ ...prev, index: i }))}
+                        style={{
+                          width: i === currentIdx ? '20px' : '6px',
+                          height: '6px',
+                          borderRadius: '3px',
+                          background: i === currentIdx ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.4)',
+                          cursor: 'pointer',
+                          transition: 'all 0.25s ease'
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <span style={{ color: '#aaa', fontSize: '0.72rem', letterSpacing: '0.3px' }}>
+                    👆 Desliza con el dedo hacia los lados para ver más fotos
+                  </span>
+                </div>
+              )}
+
+              {/* Tira de Miniaturas */}
+              {hasMultiple && (
+                <div 
+                  style={{
+                    display: 'flex',
+                    gap: '8px',
+                    padding: '6px 12px',
+                    background: 'rgba(15,15,15,0.85)',
+                    borderRadius: '25px',
+                    border: '1px solid rgba(212,175,55,0.3)',
+                    maxWidth: '100%',
+                    overflowX: 'auto',
+                    boxShadow: '0 4px 15px rgba(0,0,0,0.7)'
+                  }}
+                >
+                  {listImgs.map((img, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setImagenEnGrande(prev => ({ ...prev, index: i }))}
+                      style={{
+                        width: '46px',
+                        height: '46px',
+                        borderRadius: '8px',
+                        overflow: 'hidden',
+                        padding: 0,
+                        border: i === currentIdx ? '2px solid var(--gold-jewel)' : '1px solid rgba(255,255,255,0.2)',
+                        background: '#111',
+                        cursor: 'pointer',
+                        boxShadow: i === currentIdx ? '0 0 10px rgba(212,175,55,0.8)' : 'none',
+                        flexShrink: 0,
+                        transform: i === currentIdx ? 'scale(1.08)' : 'scale(1)',
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <img src={resolveImageUrl(img)} alt={`Thumb ${i}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Botón rápido de añadir al carrito o cerrar */}
+              {imagenEnGrande.producto && imagenEnGrande.producto.stock > 0 && (
+                <button
+                  className="btn-primary"
+                  onClick={handleQuickAdd}
+                  style={{
+                    padding: '8px 20px',
+                    fontSize: '0.9rem',
+                    borderRadius: '25px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    boxShadow: '0 4px 15px rgba(39, 174, 96, 0.4)'
+                  }}
+                >
+                  🛒 {agregadoFeedback ? '✅ ¡Añadido al Carrito!' : 'Añadir al Carrito'}
+                </button>
+              )}
+            </div>
           </div>
         );
       })()}
