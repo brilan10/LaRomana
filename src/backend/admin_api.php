@@ -493,29 +493,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $barberosResumen = [];
 
             try {
+                // 1. Obtener cierres diarios del rango para porcentajes específicos de forma instantánea
+                $cierresMap = [];
+                try {
+                    $stmtCierres = $pdo->prepare("
+                        SELECT fecha, MAX(porcentaje_barbero) as porcentaje_barbero, MAX(porcentaje_tienda) as porcentaje_tienda 
+                        FROM cierres_diarios 
+                        WHERE fecha BETWEEN ? AND ? 
+                        GROUP BY fecha
+                    ");
+                    $stmtCierres->execute([$fecha_inicio, $fecha_fin]);
+                    $filasCierres = $stmtCierres->fetchAll(PDO::FETCH_ASSOC);
+                    foreach ($filasCierres as $cdi) {
+                        $cierresMap[$cdi['fecha']] = [
+                            'pct_b' => floatval($cdi['porcentaje_barbero']) > 0 ? floatval($cdi['porcentaje_barbero']) : 60.0,
+                            'pct_t' => floatval($cdi['porcentaje_tienda']) > 0 ? floatval($cdi['porcentaje_tienda']) : 40.0
+                        ];
+                    }
+                } catch (\Exception $exC) {}
+
+                // 2. Consulta indexada de citas (filtrando por fecha y trabajador sin subconsultas por fila)
                 $sql = "
-                    SELECT c.id, c.fecha, c.hora, c.descuento, c.total_pagado, c.metodo_pago, c.estado,
+                    SELECT c.id, c.fecha, c.hora, c.descuento, c.total_pagado, c.metodo_pago, c.estado, c.trabajador_id,
                            cl.id as cliente_id, IFNULL(cl.nombre, 'Cliente General') as cliente_nombre, IFNULL(cl.rut, '-') as cliente_rut,
-                           t.id as barbero_id, IFNULL(t.nombre, 'Barbero') as barbero_nombre,
-                           IFNULL((SELECT SUM(cd.precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id), c.total_pagado) as subtotal,
-                           IFNULL((SELECT GROUP_CONCAT(s.nombre SEPARATOR ' + ') FROM cita_detalle cd JOIN servicios s ON cd.servicio_id = s.id WHERE cd.cita_id = c.id), 'Servicio de Barbería') as servicios_nombres,
-                           IFNULL(NULLIF(cdi.porcentaje_barbero, 0), 60.00) as porcentaje_barbero,
-                           IFNULL(NULLIF(cdi.porcentaje_tienda, 0), 40.00) as porcentaje_tienda
+                           t.id as barbero_id, IFNULL(t.nombre, 'Barbero') as barbero_nombre
                     FROM citas c
                     LEFT JOIN clientes cl ON c.cliente_id = cl.id
                     LEFT JOIN trabajadores t ON c.trabajador_id = t.id
-                    LEFT JOIN (
-                        SELECT fecha, MAX(porcentaje_barbero) as porcentaje_barbero, MAX(porcentaje_tienda) as porcentaje_tienda 
-                        FROM cierres_diarios GROUP BY fecha
-                    ) cdi ON c.fecha = cdi.fecha
-                    WHERE (LOWER(c.estado) IN ('completada', 'completado', 'pagada', 'pagado', 'finalizada', 'finalizado')
-                           OR (c.fecha < CURDATE() AND LOWER(c.estado) NOT IN ('cancelada', 'cancelado')))
-                      AND c.fecha BETWEEN ? AND ?
+                    WHERE c.fecha BETWEEN ? AND ?
+                      AND (c.estado IN ('completada', 'completado', 'pagada', 'pagado', 'finalizada', 'finalizado', 'Confirmada', 'confirmada', 'Pendiente', 'pendiente')
+                           OR c.fecha < CURDATE())
+                      AND c.estado NOT IN ('cancelada', 'cancelado')
                 ";
                 $params = [$fecha_inicio, $fecha_fin];
                 if (!empty($barbero_id) && $barbero_id !== 'todos') {
-                    $sql .= " AND (t.id = ? OR c.trabajador_id = ?) ";
-                    $params[] = $barbero_id;
+                    $sql .= " AND c.trabajador_id = ? ";
                     $params[] = $barbero_id;
                 }
                 $sql .= " ORDER BY t.nombre ASC, c.fecha ASC, c.hora ASC ";
@@ -523,6 +535,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 $stmt = $pdo->prepare($sql);
                 $stmt->execute($params);
                 $citas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+                // 3. Obtener detalles de servicios de forma masiva en 1 sola consulta batch
+                $detallesMap = [];
+                if (!empty($citas)) {
+                    $citaIds = array_column($citas, 'id');
+                    $chunks = array_chunk($citaIds, 500);
+                    foreach ($chunks as $chunk) {
+                        $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+                        $stmtDet = $pdo->prepare("
+                            SELECT cd.cita_id, cd.precio_cobrado, s.nombre as servicio_nombre
+                            FROM cita_detalle cd
+                            LEFT JOIN servicios s ON cd.servicio_id = s.id
+                            WHERE cd.cita_id IN ($placeholders)
+                        ");
+                        $stmtDet->execute($chunk);
+                        $detalles = $stmtDet->fetchAll(PDO::FETCH_ASSOC);
+                        foreach ($detalles as $d) {
+                            $cid = $d['cita_id'];
+                            if (!isset($detallesMap[$cid])) {
+                                $detallesMap[$cid] = ['subtotal' => 0, 'nombres' => []];
+                            }
+                            $detallesMap[$cid]['subtotal'] += floatval($d['precio_cobrado']);
+                            if (!empty($d['servicio_nombre'])) {
+                                $detallesMap[$cid]['nombres'][] = $d['servicio_nombre'];
+                            }
+                        }
+                    }
+                }
 
                 // Nombres de días en español
                 $diasSemana = [
@@ -533,26 +573,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 $barberosMap = [];
 
                 foreach ($citas as $c) {
-                    $bId = $c['barbero_id'] ?? 0;
+                    $cid = $c['id'];
+                    $bId = $c['barbero_id'] ?? $c['trabajador_id'] ?? 0;
                     $bNombre = $c['barbero_nombre'] ?? 'Barbero';
                     $fecha = $c['fecha'];
-                    $subtotal = floatval($c['subtotal'] ?? 0);
+
+                    // Subtotal calculado a partir de los detalles de servicios
+                    $subtotal = 0;
+                    $serviciosNombres = 'Servicio de Barbería';
+                    if (isset($detallesMap[$cid])) {
+                        $subtotal = floatval($detallesMap[$cid]['subtotal']);
+                        if (!empty($detallesMap[$cid]['nombres'])) {
+                            $serviciosNombres = implode(' + ', $detallesMap[$cid]['nombres']);
+                        }
+                    }
+
                     if ($subtotal <= 0) {
                         $subtotal = floatval($c['total_pagado'] ?? 0);
                     }
                     if ($subtotal <= 0) {
                         $subtotal = 14000;
                     }
+
                     $descuento = floatval($c['descuento'] ?? 0);
                     $totalReal = max(0, $subtotal - $descuento);
                     if ($totalReal <= 0 && floatval($c['total_pagado'] ?? 0) > 0) {
                         $totalReal = floatval($c['total_pagado']);
                         if ($subtotal <= 0) $subtotal = $totalReal;
                     }
-                    $pctB = floatval($c['porcentaje_barbero']);
-                    if ($pctB <= 0) $pctB = 60.0;
-                    $pctT = floatval($c['porcentaje_tienda']);
-                    if ($pctT <= 0) $pctT = 40.0;
+
+                    $pctB = isset($cierresMap[$fecha]) ? $cierresMap[$fecha]['pct_b'] : 60.0;
+                    $pctT = isset($cierresMap[$fecha]) ? $cierresMap[$fecha]['pct_t'] : 40.0;
+
                     $comisionB = $totalReal * ($pctB / 100);
                     $comisionT = $totalReal * ($pctT / 100);
 
@@ -616,6 +668,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
                     // Cita individual
                     $c['subtotal'] = $subtotal;
+                    $c['servicios_nombres'] = $serviciosNombres;
+                    $c['porcentaje_barbero'] = $pctB;
+                    $c['porcentaje_tienda'] = $pctT;
                     $c['descuento'] = $descuento;
                     $c['total_neto'] = $totalReal;
                     $c['comision_barbero'] = $comisionB;

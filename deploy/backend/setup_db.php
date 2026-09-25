@@ -146,6 +146,12 @@ try {
     }
 
     try {
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_citas_fecha_trabajador ON citas(fecha, trabajador_id)");
+    } catch (Exception $e) {
+        try { $pdo->exec("CREATE INDEX idx_citas_fecha_trabajador ON citas(fecha, trabajador_id)"); } catch (Exception $ex) {}
+    }
+
+    try {
         $pdo->exec("CREATE INDEX IF NOT EXISTS idx_citas_estado ON citas(estado)");
     } catch (Exception $e) {
         try { $pdo->exec("CREATE INDEX idx_citas_estado ON citas(estado)"); } catch (Exception $ex) {}
@@ -155,6 +161,18 @@ try {
         $pdo->exec("CREATE INDEX IF NOT EXISTS idx_cita_detalle_cita ON cita_detalle(cita_id)");
     } catch (Exception $e) {
         try { $pdo->exec("CREATE INDEX idx_cita_detalle_cita ON cita_detalle(cita_id)"); } catch (Exception $ex) {}
+    }
+
+    try {
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_pagos_periodo ON pagos_trabajadores(periodo_inicio, periodo_fin, trabajador_id)");
+    } catch (Exception $e) {
+        try { $pdo->exec("CREATE INDEX idx_pagos_periodo ON pagos_trabajadores(periodo_inicio, periodo_fin, trabajador_id)"); } catch (Exception $ex) {}
+    }
+
+    try {
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_cierres_fecha ON cierres_diarios(fecha)");
+    } catch (Exception $e) {
+        try { $pdo->exec("CREATE INDEX idx_cierres_fecha ON cierres_diarios(fecha)"); } catch (Exception $ex) {}
     }
 
     echo "Base de datos actualizada con exito.\n";

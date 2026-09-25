@@ -94,6 +94,8 @@ export default function AdminDashboard({ session, logout }) {
   const [barberoDetalleModal, setBarberoDetalleModal] = useState(null);
 
   // Mantener filtros de analítica protegidos frente a actualizaciones
+  const liqAbortControllerRef = useRef(null);
+  const liqReqIdRef = useRef(0);
   const liqFiltrosRef = useRef({
     inicio: liqFechaInicio,
     fin: liqFechaFin,
@@ -487,27 +489,44 @@ export default function AdminDashboard({ session, logout }) {
     finParam,
     barberoParam
   ) => {
-    const inicio = inicioParam || liqFechaInicio || liqFiltrosRef.current?.inicio || formatDateYMD(new Date(new Date().setDate(1)));
-    const fin = finParam || liqFechaFin || liqFiltrosRef.current?.fin || formatDateYMD(new Date());
+    const inicio = (inicioParam !== undefined && inicioParam !== null && inicioParam !== '') ? inicioParam : (liqFechaInicio || liqFiltrosRef.current?.inicio || formatDateYMD(new Date(new Date().setDate(1))));
+    const fin = (finParam !== undefined && finParam !== null && finParam !== '') ? finParam : (liqFechaFin || liqFiltrosRef.current?.fin || formatDateYMD(new Date()));
     const barbero = (barberoParam !== undefined && barberoParam !== null) ? barberoParam : (liqBarberoId || liqFiltrosRef.current?.barbero || 'todos');
 
-    // Sincronizar estados locales si se pasa un nuevo filtro
-    if (inicio !== liqFechaInicio) setLiqFechaInicio(inicio);
-    if (fin !== liqFechaFin) setLiqFechaFin(fin);
-    if (barbero !== liqBarberoId) setLiqBarberoId(barbero);
+    // Sincronizar estados locales inmediatamente
+    setLiqFechaInicio(inicio);
+    setLiqFechaFin(fin);
+    setLiqBarberoId(barbero);
     liqFiltrosRef.current = { inicio, fin, barbero };
+
+    // Cancelar cualquier petición previa en curso
+    if (liqAbortControllerRef.current) {
+      try { liqAbortControllerRef.current.abort(); } catch (e) {}
+    }
+    const controller = new AbortController();
+    liqAbortControllerRef.current = controller;
+    const reqId = ++liqReqIdRef.current;
 
     setLoadingLiquidacion(true);
     try {
-      const res = await fetch(`${API_URL}/admin_api.php?action=get_liquidacion_barberos&inicio=${encodeURIComponent(inicio)}&fin=${encodeURIComponent(fin)}&barbero_id=${encodeURIComponent(barbero)}`);
+      const res = await fetch(
+        `${API_URL}/admin_api.php?action=get_liquidacion_barberos&inicio=${encodeURIComponent(inicio)}&fin=${encodeURIComponent(fin)}&barbero_id=${encodeURIComponent(barbero)}`,
+        { signal: controller.signal }
+      );
       if (res.ok) {
         const data = await res.json();
-        setLiquidacionData(data);
+        if (liqReqIdRef.current === reqId) {
+          setLiquidacionData(data);
+        }
       }
     } catch (err) {
-      console.error("Error cargando liquidaciones:", err);
+      if (err.name !== 'AbortError') {
+        console.error("Error cargando liquidaciones:", err);
+      }
     } finally {
-      setLoadingLiquidacion(false);
+      if (liqReqIdRef.current === reqId) {
+        setLoadingLiquidacion(false);
+      }
     }
   };
 
@@ -4891,8 +4910,9 @@ export default function AdminDashboard({ session, logout }) {
                 className="input-field" 
                 value={liqBarberoId} 
                 onChange={e => {
-                  setLiqBarberoId(e.target.value);
-                  cargarLiquidaciones(liqFechaInicio, liqFechaFin, e.target.value);
+                  const val = e.target.value;
+                  setLiqBarberoId(val);
+                  cargarLiquidaciones(liqFechaInicio, liqFechaFin, val);
                 }} 
                 style={{ margin: 0 }}
               >
@@ -4910,7 +4930,14 @@ export default function AdminDashboard({ session, logout }) {
                 onClick={() => cargarLiquidaciones(liqFechaInicio, liqFechaFin, liqBarberoId)}
                 style={{ width: '100%', padding: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
               >
-                {loadingLiquidacion ? '⏳ Filtrando...' : '🔍 Filtrar Resultados'}
+                {loadingLiquidacion ? (
+                  <>
+                    <span className="spinner-border" style={{ display: 'inline-block', width: '14px', height: '14px', border: '2px solid rgba(0,0,0,0.3)', borderTopColor: '#000', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}></span>
+                    <span>Filtrando...</span>
+                  </>
+                ) : (
+                  '🔍 Filtrar Resultados'
+                )}
               </button>
             </div>
           </div>
@@ -4918,7 +4945,14 @@ export default function AdminDashboard({ session, logout }) {
 
 
         {/* Tarjetas KPI de Resumen del Período */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px' }}>
+        <div style={{ 
+          display: 'grid', 
+          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', 
+          gap: '15px',
+          opacity: loadingLiquidacion ? 0.65 : 1,
+          transition: 'opacity 0.2s ease',
+          pointerEvents: loadingLiquidacion ? 'none' : 'auto'
+        }}>
           <div className="stat-card-badge">
             <span style={{ fontSize: '0.78rem', color: '#aaa' }}>💈 Cortes Realizados</span>
             <strong style={{ fontSize: '1.4rem', color: '#fff' }}>{tot.total_cortes || 0} citas</strong>
@@ -4975,7 +5009,7 @@ export default function AdminDashboard({ session, logout }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <span style={{ fontSize: '1.3rem' }}>💳</span>
             <span style={{ fontSize: '0.84rem', color: '#ddd' }}>
-              <strong>Control y Registro de Pagos:</strong> Puedes marcar como pagada la liquidación de cada barbero con el botón <strong>"💰 Registrar Pago"</strong>. Quedará guardado el monto, método y número de transferencia.
+              <strong>Control y Registro de Pagos:</strong> Puedes marcar como pagada la liquidación de cada barbero con el botón <strong>"💰 Pagar Barbero"</strong>. Quedará guardado el monto, método y número de transferencia.
             </span>
           </div>
           <span style={{ fontSize: '0.78rem', color: 'var(--gold-jewel)', fontStyle: 'italic' }}>
@@ -4986,10 +5020,18 @@ export default function AdminDashboard({ session, logout }) {
         {/* Tabla de Liquidación por Barbero */}
         <div style={{ background: 'rgba(26, 26, 26, 0.6)', backdropFilter: 'blur(10px)', borderRadius: '12px', border: '1px solid #333', overflowX: 'auto', boxShadow: '0 8px 25px rgba(0,0,0,0.5)' }}>
           <div style={{ padding: '16px 20px', borderBottom: '1px solid #333', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-            <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.1rem' }}>
-              📋 Liquidación Consolidada por Barbero ({rangoInicio} al {rangoFin})
+            <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>📋 Liquidación Consolidada por Barbero ({rangoInicio} al {rangoFin})</span>
+              {loadingLiquidacion && (
+                <span style={{ fontSize: '0.78rem', color: 'var(--gold-jewel)', display: 'inline-flex', alignItems: 'center', gap: '5px', marginLeft: '10px' }}>
+                  <span className="spinner-border" style={{ display: 'inline-block', width: '12px', height: '12px', border: '2px solid rgba(212,175,55,0.3)', borderTopColor: 'var(--gold-jewel)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}></span>
+                  Actualizando...
+                </span>
+              )}
             </h3>
-            <span style={{ fontSize: '0.8rem', color: '#aaa' }}>Haz clic en Registrar Pago para liquidar o en Desglose para ver el día a día</span>
+            <span style={{ fontSize: '0.8rem', color: '#aaa' }}>
+              {barberosList.length} {barberosList.length === 1 ? 'barbero con actividad' : 'barberos con actividad'}
+            </span>
           </div>
 
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
@@ -5007,151 +5049,154 @@ export default function AdminDashboard({ session, logout }) {
               </tr>
             </thead>
             <tbody>
-              {barberosList.map((b, i) => {
-                const estaPagado = b.estado_pago === 'Pagado' || !!b.pago_info;
+              {loadingLiquidacion ? (
+                <tr>
+                  <td colSpan="9" style={{ ...tableCellStyle, textAlign: 'center', padding: '45px', color: 'var(--gold-jewel)', fontSize: '0.95rem' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '12px' }}>
+                      <span className="spinner-border" style={{ display: 'inline-block', width: '30px', height: '30px', border: '3px solid rgba(212,175,55,0.3)', borderTopColor: 'var(--gold-jewel)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}></span>
+                      <strong style={{ color: 'var(--gold-jewel)' }}>Consultando y calculando liquidaciones en tiempo real...</strong>
+                      <span style={{ fontSize: '0.78rem', color: '#aaa' }}>Filtrando datos de barbería para el período seleccionado</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                <>
+                  {barberosList.map((b, i) => {
+                    const estaPagado = b.estado_pago === 'Pagado' || !!b.pago_info;
 
-                return (
-                  <tr 
-                    key={b.barbero_id || i} 
-                    style={{ background: i % 2 === 0 ? 'rgba(20, 20, 20, 0.7)' : 'transparent', borderBottom: '1px solid rgba(255,255,255,0.05)' }}
-                  >
-                    {/* Barbero */}
-                    <td style={{ ...tableCellStyle, fontWeight: 'bold' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ fontSize: '1.2rem' }}>💈</span>
-                        <div>
-                          <div>{b.barbero_nombre}</div>
-                          {estaPagado && b.pago_info?.numero_comprobante && (
-                            <div style={{ fontSize: '0.72rem', color: '#aaa', fontWeight: 'normal' }}>
-                              Comprobante: {b.pago_info.numero_comprobante}
+                    return (
+                      <tr 
+                        key={b.barbero_id || i} 
+                        style={{ background: i % 2 === 0 ? 'rgba(20, 20, 20, 0.7)' : 'transparent', borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+                      >
+                        {/* Barbero */}
+                        <td style={{ ...tableCellStyle, fontWeight: 'bold' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '1.2rem' }}>💈</span>
+                            <div>
+                              <div>{b.barbero_nombre}</div>
+                              {estaPagado && b.pago_info?.numero_comprobante && (
+                                <div style={{ fontSize: '0.72rem', color: '#aaa', fontWeight: 'normal' }}>
+                                  Comprobante: {b.pago_info.numero_comprobante}
+                                </div>
+                              )}
                             </div>
+                          </div>
+                        </td>
+
+                        {/* Días y Cortes */}
+                        <td style={{ ...tableCellStyle, textAlign: 'center' }}>{b.dias_trabajados || 0}</td>
+                        <td style={{ ...tableCellStyle, textAlign: 'center', fontWeight: 'bold' }}>{b.total_cortes || 0}</td>
+
+                        {/* Total Bruto */}
+                        <td style={{ ...tableCellStyle, textAlign: 'right', fontWeight: 'bold' }}>
+                          ${Number(b.total_bruto || 0).toLocaleString('es-CL')}
+                        </td>
+
+                        {/* Comisión Barbero */}
+                        <td style={{ ...tableCellStyle, textAlign: 'right', color: '#3498db', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                          ${Number(b.total_comision_barbero || 0).toLocaleString('es-CL')}
+                        </td>
+
+                        {/* Estado de Pago Badge */}
+                        <td style={{ ...tableCellStyle, textAlign: 'center' }}>
+                          {estaPagado ? (
+                            <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                              <span style={{
+                                background: 'rgba(46, 204, 113, 0.15)',
+                                color: '#2ecc71',
+                                border: '1px solid #2ecc71',
+                                padding: '3px 10px',
+                                borderRadius: '12px',
+                                fontWeight: 'bold',
+                                fontSize: '0.78rem',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}>
+                                ✅ Pagado
+                              </span>
+                              <span style={{ fontSize: '0.72rem', color: '#aaa' }}>
+                                {b.pago_info?.fecha_pago} ({b.pago_info?.metodo_pago || 'Transferencia'})
+                              </span>
+                            </div>
+                          ) : (
+                            <span style={{
+                              background: 'rgba(241, 196, 15, 0.15)',
+                              color: '#f1c40f',
+                              border: '1px solid #f1c40f',
+                              padding: '3px 10px',
+                              borderRadius: '12px',
+                              fontWeight: 'bold',
+                              fontSize: '0.78rem',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}>
+                              🟡 Pendiente
+                            </span>
                           )}
+                        </td>
+
+                        {/* Ganancia Tienda */}
+                        <td style={{ ...tableCellStyle, textAlign: 'right', color: 'var(--gold-jewel)', fontWeight: 'bold' }}>
+                          ${Number(b.total_ganancia_tienda || 0).toLocaleString('es-CL')}
+                        </td>
+
+                        {/* Promedio Diario */}
+                        <td style={{ ...tableCellStyle, textAlign: 'right', color: '#ccc' }}>
+                          ${Number(b.promedio_diario_bruto || 0).toLocaleString('es-CL')}
+                        </td>
+
+                        {/* Acciones */}
+                        <td style={{ ...tableCellStyle, textAlign: 'center' }}>
+                          <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'nowrap' }}>
+                            {estaPagado ? (
+                              <button 
+                                className="btn-primary" 
+                                onClick={() => abrirModalPago(b)}
+                                style={{ padding: '4px 10px', fontSize: '0.75rem', whiteSpace: 'nowrap', background: '#27ae60', borderColor: '#27ae60' }}
+                                title="Ver detalles del comprobante o modificar registro de pago"
+                              >
+                                ✏️ Editar Pago
+                              </button>
+                            ) : (
+                              <button 
+                                className="btn-primary" 
+                                onClick={() => abrirModalPago(b)}
+                                style={{ padding: '4px 10px', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+                                title="Marcar como pagado y registrar transferencia o efectivo"
+                              >
+                                💰 Pagar Barbero
+                              </button>
+                            )}
+                            
+                            <button 
+                              className="btn-outline-gold" 
+                              onClick={() => setBarberoDetalleModal(b)}
+                              style={{ padding: '4px 10px', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+                              title="Ver desglose de cortes y porcentajes día por día"
+                            >
+                              👁️ Desglose
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {barberosList.length === 0 && (
+                    <tr>
+                      <td colSpan="9" style={{ ...tableCellStyle, textAlign: 'center', padding: '35px', color: '#aaa' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontSize: '1.4rem' }}>📭</span>
+                          <strong style={{ color: '#ccc' }}>No se encontraron citas completadas en el período seleccionado ({rangoInicio} al {rangoFin})</strong>
+                          <span style={{ fontSize: '0.78rem', color: '#777' }}>Prueba seleccionando otro rango de fechas o eligiendo "Todos los Barberos" en el filtro.</span>
                         </div>
-                      </div>
-                    </td>
-
-                    {/* Días y Cortes */}
-                    <td style={{ ...tableCellStyle, textAlign: 'center' }}>{b.dias_trabajados || 0}</td>
-                    <td style={{ ...tableCellStyle, textAlign: 'center', fontWeight: 'bold' }}>{b.total_cortes || 0}</td>
-
-                    {/* Total Bruto */}
-                    <td style={{ ...tableCellStyle, textAlign: 'right', fontWeight: 'bold' }}>
-                      ${Number(b.total_bruto || 0).toLocaleString('es-CL')}
-                    </td>
-
-                    {/* Comisión Barbero */}
-                    <td style={{ ...tableCellStyle, textAlign: 'right', color: '#3498db', fontWeight: 'bold', fontSize: '0.95rem' }}>
-                      ${Number(b.total_comision_barbero || 0).toLocaleString('es-CL')}
-                    </td>
-
-                    {/* Estado de Pago Badge */}
-                    <td style={{ ...tableCellStyle, textAlign: 'center' }}>
-                      {estaPagado ? (
-                        <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-                          <span style={{
-                            background: 'rgba(46, 204, 113, 0.15)',
-                            color: '#2ecc71',
-                            border: '1px solid #2ecc71',
-                            padding: '3px 10px',
-                            borderRadius: '12px',
-                            fontWeight: 'bold',
-                            fontSize: '0.78rem',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px'
-                          }}>
-                            ✅ Pagado
-                          </span>
-                          <span style={{ fontSize: '0.72rem', color: '#aaa' }}>
-                            {b.pago_info?.fecha_pago} ({b.pago_info?.metodo_pago || 'Transferencia'})
-                          </span>
-                        </div>
-                      ) : (
-                        <span style={{
-                          background: 'rgba(241, 196, 15, 0.15)',
-                          color: '#f1c40f',
-                          border: '1px solid #f1c40f',
-                          padding: '3px 10px',
-                          borderRadius: '12px',
-                          fontWeight: 'bold',
-                          fontSize: '0.78rem',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '4px'
-                        }}>
-                          🟡 Pendiente
-                        </span>
-                      )}
-                    </td>
-
-                    {/* Ganancia Tienda */}
-                    <td style={{ ...tableCellStyle, textAlign: 'right', color: 'var(--gold-jewel)', fontWeight: 'bold' }}>
-                      ${Number(b.total_ganancia_tienda || 0).toLocaleString('es-CL')}
-                    </td>
-
-                    {/* Promedio Diario */}
-                    <td style={{ ...tableCellStyle, textAlign: 'right', color: '#ccc' }}>
-                      ${Number(b.promedio_diario_bruto || 0).toLocaleString('es-CL')}
-                    </td>
-
-                    {/* Acciones */}
-                    <td style={{ ...tableCellStyle, textAlign: 'center' }}>
-                      <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'nowrap' }}>
-                        {estaPagado ? (
-                          <button 
-                            className="btn-primary" 
-                            onClick={() => abrirModalPago(b)}
-                            style={{ padding: '4px 10px', fontSize: '0.75rem', whiteSpace: 'nowrap', background: '#27ae60', borderColor: '#27ae60' }}
-                            title="Ver detalles del comprobante o modificar registro de pago"
-                          >
-                            ✏️ Editar Pago
-                          </button>
-                        ) : (
-                          <button 
-                            className="btn-primary" 
-                            onClick={() => abrirModalPago(b)}
-                            style={{ padding: '4px 10px', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
-                            title="Marcar como pagado y registrar transferencia o efectivo"
-                          >
-                            💰 Pagar Barbero
-                          </button>
-                        )}
-                        
-                        <button 
-                          className="btn-outline-gold" 
-                          onClick={() => setBarberoDetalleModal(b)}
-                          style={{ padding: '4px 10px', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
-                          title="Ver desglose de cortes y porcentajes día por día"
-                        >
-                          👁️ Desglose
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-
-              {loadingLiquidacion && (
-                <tr>
-                  <td colSpan="9" style={{ ...tableCellStyle, textAlign: 'center', padding: '35px', color: 'var(--gold-jewel)', fontSize: '0.95rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px' }}>
-                      <span className="spinner-border" style={{ display: 'inline-block', width: '20px', height: '20px', border: '3px solid rgba(212,175,55,0.3)', borderTopColor: 'var(--gold-jewel)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}></span>
-                      <span>Consultando y calculando liquidaciones del período...</span>
-                    </div>
-                  </td>
-                </tr>
-              )}
-
-              {barberosList.length === 0 && !loadingLiquidacion && (
-                <tr>
-                  <td colSpan="9" style={{ ...tableCellStyle, textAlign: 'center', padding: '35px', color: '#aaa' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
-                      <span style={{ fontSize: '1.4rem' }}>📭</span>
-                      <strong style={{ color: '#ccc' }}>No se encontraron citas completadas en el período seleccionado ({rangoInicio} al {rangoFin})</strong>
-                      <span style={{ fontSize: '0.78rem', color: '#777' }}>Prueba seleccionando otro rango de fechas o eligiendo "Todos los Barberos" en el filtro.</span>
-                    </div>
-                  </td>
-                </tr>
+                      </td>
+                    </tr>
+                  )}
+                </>
               )}
             </tbody>
           </table>
