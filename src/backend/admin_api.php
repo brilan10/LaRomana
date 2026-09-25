@@ -527,8 +527,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 ";
                 $params = [$fecha_inicio, $fecha_fin];
                 if (!empty($barbero_id) && $barbero_id !== 'todos') {
-                    $sql .= " AND c.trabajador_id = ? ";
-                    $params[] = $barbero_id;
+                    if (is_numeric($barbero_id)) {
+                        $sql .= " AND (c.trabajador_id = ? OR t.id = ?) ";
+                        $params[] = intval($barbero_id);
+                        $params[] = intval($barbero_id);
+                    } else {
+                        $sql .= " AND (t.nombre LIKE ? OR c.trabajador_id = ?) ";
+                        $params[] = '%' . $barbero_id . '%';
+                        $params[] = $barbero_id;
+                    }
                 }
                 $sql .= " ORDER BY t.nombre ASC, c.fecha ASC, c.hora ASC ";
 
@@ -690,11 +697,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 // Consultar pagos registrados para este período exacto
                 $pagosMap = [];
                 try {
-                    $stmtPagos = $pdo->prepare("
-                        SELECT * FROM pagos_trabajadores 
-                        WHERE periodo_inicio = ? AND periodo_fin = ?
-                    ");
-                    $stmtPagos->execute([$fecha_inicio, $fecha_fin]);
+                    $sqlPagos = "SELECT * FROM pagos_trabajadores WHERE periodo_inicio = ? AND periodo_fin = ?";
+                    $paramsPagos = [$fecha_inicio, $fecha_fin];
+                    if (!empty($barbero_id) && $barbero_id !== 'todos' && is_numeric($barbero_id)) {
+                        $sqlPagos .= " AND trabajador_id = ?";
+                        $paramsPagos[] = intval($barbero_id);
+                    }
+                    $stmtPagos = $pdo->prepare($sqlPagos);
+                    $stmtPagos->execute($paramsPagos);
                     $pagosRegistrados = $stmtPagos->fetchAll(PDO::FETCH_ASSOC);
                     foreach ($pagosRegistrados as $p) {
                         $pagosMap[$p['trabajador_id']] = $p;
