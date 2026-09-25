@@ -387,9 +387,10 @@ export default function AdminDashboard({ session, logout }) {
     const hoy = new Date();
     let inicio = '';
     let fin = formatDateYMD(hoy);
+    const barberoActual = liqBarberoId || liqFiltrosRef.current?.barbero || 'todos';
 
     if (tipo === 'custom') {
-      cargarLiquidaciones(liqFechaInicio, liqFechaFin, liqBarberoId);
+      cargarLiquidaciones(liqFechaInicio, liqFechaFin, barberoActual);
       return;
     }
 
@@ -459,7 +460,7 @@ export default function AdminDashboard({ session, logout }) {
     if (inicio) {
       setLiqFechaInicio(inicio);
       setLiqFechaFin(fin);
-      cargarLiquidaciones(inicio, fin, liqBarberoId);
+      cargarLiquidaciones(inicio, fin, barberoActual);
     }
   };
 
@@ -4890,7 +4891,14 @@ export default function AdminDashboard({ session, logout }) {
                 type="date" 
                 className="input-field" 
                 value={liqFechaInicio} 
-                onChange={e => { setLiqFechaInicio(e.target.value); setLiqPeriodo('custom'); }} 
+                onChange={e => { 
+                  const newIni = e.target.value;
+                  setLiqFechaInicio(newIni); 
+                  setLiqPeriodo('custom'); 
+                  if (newIni && liqFechaFin) {
+                    cargarLiquidaciones(newIni, liqFechaFin, liqBarberoId);
+                  }
+                }} 
                 style={{ margin: 0 }} 
               />
             </div>
@@ -4900,7 +4908,14 @@ export default function AdminDashboard({ session, logout }) {
                 type="date" 
                 className="input-field" 
                 value={liqFechaFin} 
-                onChange={e => { setLiqFechaFin(e.target.value); setLiqPeriodo('custom'); }} 
+                onChange={e => { 
+                  const newFin = e.target.value;
+                  setLiqFechaFin(newFin); 
+                  setLiqPeriodo('custom'); 
+                  if (liqFechaInicio && newFin) {
+                    cargarLiquidaciones(liqFechaInicio, newFin, liqBarberoId);
+                  }
+                }} 
                 style={{ margin: 0 }} 
               />
             </div>
