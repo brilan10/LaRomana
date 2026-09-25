@@ -1489,6 +1489,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             }
 
             try {
+                // Si el pedido se cancela, devolver stock a inventario
+                if ($nuevoEstado === 'Cancelado') {
+                    $stmtPrev = $pdo->prepare("SELECT estado FROM pedidos WHERE id = ?");
+                    $stmtPrev->execute([$pedidoId]);
+                    $estadoPrev = $stmtPrev->fetchColumn();
+
+                    if ($estadoPrev !== 'Cancelado') {
+                        $stmtDet = $pdo->prepare("SELECT producto_id, cantidad FROM pedido_detalle WHERE pedido_id = ?");
+                        $stmtDet->execute([$pedidoId]);
+                        $itemsDet = $stmtDet->fetchAll(PDO::FETCH_ASSOC);
+
+                        $stmtRest = $pdo->prepare("UPDATE productos SET stock = stock + ?, ventas = GREATEST(0, ventas - ?) WHERE id = ?");
+                        foreach ($itemsDet as $it) {
+                            $pId = intval($it['producto_id']);
+                            $cant = intval($it['cantidad']);
+                            if ($pId > 0 && $cant > 0) {
+                                $stmtRest->execute([$cant, $cant, $pId]);
+                            }
+                        }
+                    }
+                }
+
                 $stmt = $pdo->prepare("UPDATE pedidos SET estado=? WHERE id=?");
                 $stmt->execute([$nuevoEstado, $pedidoId]);
                 echo json_encode(["status" => "success", "id" => $pedidoId, "estado" => $nuevoEstado]);
@@ -1502,6 +1524,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                     http_response_code(500);
                     echo json_encode(["status" => "error", "message" => $ex->getMessage()]);
                 }
+            }
+            break;
+
+        case 'eliminar_venta_caja':
+        case 'eliminar_pedido':
+            $tipo = !empty($data['tipo']) ? trim($data['tipo']) : 'producto'; // 'producto' | 'corte'
+            $id = intval($data['id'] ?? ($data['pedido_id'] ?? 0));
+            $accion = !empty($data['accion']) ? trim($data['accion']) : 'eliminar'; // 'eliminar' | 'cancelar'
+
+            if ($id <= 0) {
+                http_response_code(400);
+                echo json_encode(["status" => "error", "message" => "ID de venta o pedido inválido."]);
+                break;
+            }
+
+            try {
+                $pdo->beginTransaction();
+
+                if ($tipo === 'producto') {
+                    // 1. Obtener detalles para devolver stock a inventario
+                    $stmtDet = $pdo->prepare("SELECT producto_id, cantidad FROM pedido_detalle WHERE pedido_id = ?");
+                    $stmtDet->execute([$id]);
+                    $items = $stmtDet->fetchAll(PDO::FETCH_ASSOC);
+
+                    $stmtStock = $pdo->prepare("UPDATE productos SET stock = stock + ?, ventas = GREATEST(0, ventas - ?) WHERE id = ?");
+                    foreach ($items as $it) {
+                        $prodId = intval($it['producto_id']);
+                        $cant = intval($it['cantidad']);
+                        if ($prodId > 0 && $cant > 0) {
+                            $stmtStock->execute([$cant, $cant, $prodId]);
+                        }
+                    }
+
+                    if ($accion === 'cancelar') {
+                        $pdo->prepare("UPDATE pedidos SET estado = 'Cancelado' WHERE id = ?")->execute([$id]);
+                        $msg = "Venta cancelada exitosamente y stock devuelto a inventario.";
+                    } else {
+                        // Eliminar completamente
+                        $pdo->prepare("DELETE FROM pedido_detalle WHERE pedido_id = ?")->execute([$id]);
+                        $pdo->prepare("DELETE FROM pedidos WHERE id = ?")->execute([$id]);
+                        $msg = "Venta eliminada permanentemente y stock devuelto a bodega.";
+                    }
+                } elseif ($tipo === 'corte') {
+                    if ($accion === 'cancelar') {
+                        // Anular cobro: devolver cita a estado Pendiente
+                        $pdo->prepare("UPDATE citas SET estado = 'Pendiente', total_pagado = NULL, metodo_pago = NULL WHERE id = ?")->execute([$id]);
+                        $msg = "Cobro de cita anulado y devuelto a pendientes.";
+                    } else {
+                        // Eliminar cita
+                        $pdo->prepare("DELETE FROM cita_detalle WHERE cita_id = ?")->execute([$id]);
+                        $pdo->prepare("DELETE FROM citas WHERE id = ?")->execute([$id]);
+                        $msg = "Cita eliminada de la caja correctamente.";
+                    }
+                }
+
+                $pdo->commit();
+                echo json_encode(["status" => "success", "message" => $msg]);
+            } catch (\Exception $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                http_response_code(500);
+                echo json_encode(["status" => "error", "message" => "Error al eliminar: " . $e->getMessage()]);
             }
             break;
 

@@ -681,6 +681,42 @@ export default function AdminDashboard({ session, logout }) {
     }
   };
 
+  const handleEliminarVentaCaja = async (v, accion = 'eliminar') => {
+    if (!v || !v.id) return;
+    const esProducto = v.tipo === 'producto';
+    const folioTexto = v.folio || `LR-${String(v.id).padStart(4, '0')}`;
+    const clienteTexto = v.cliente || 'Cliente Mostrador';
+    
+    const confirmMsg = esProducto
+      ? `¿Estás seguro de ELIMINAR la venta ${folioTexto} (${clienteTexto})?\n\n⚠️ Los productos vendidos se reintegrarán automáticamente al inventario/stock y se eliminará el registro de la caja.`
+      : `¿Estás seguro de ELIMINAR / ANULAR el cobro ${folioTexto} (${clienteTexto})?\n\n⚠️ Esta acción anulará el cobro en caja.`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      const res = await fetch(`${API_URL}/admin_api.php?action=eliminar_venta_caja`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: v.id, tipo: v.tipo || 'producto', accion })
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        showToast(data.message || 'Venta eliminada y stock reintegrado con éxito', 'success');
+        if (ticketDetalleModal && ticketDetalleModal.id === v.id) {
+          setTicketDetalleModal(null);
+        }
+        await cargarCaja();
+        await cargarDashboard();
+        await cargarPedidosAdmin();
+      } else {
+        showToast(data.message || 'Error al eliminar la venta', 'error');
+      }
+    } catch (err) {
+      console.error("Error al eliminar venta:", err);
+      showToast('Error de conexión al eliminar la venta', 'error');
+    }
+  };
+
   const cargarDashboard = async () => {
     try {
       const resM = await fetch(`${API_URL}/admin_api.php?action=get_dashboard_metrics`);
@@ -2827,6 +2863,27 @@ export default function AdminDashboard({ session, logout }) {
                                 title="Imprimir boleta térmica POS-80 inmediatamente"
                               >
                                 🖨️ Imprimir
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleEliminarVentaCaja(v)}
+                                style={{
+                                  padding: '5px 8px',
+                                  fontSize: '0.78rem',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  fontWeight: 'bold',
+                                  borderRadius: '6px',
+                                  background: 'rgba(231, 76, 60, 0.15)',
+                                  border: '1px solid rgba(231, 76, 60, 0.4)',
+                                  color: '#e74c3c',
+                                  cursor: 'pointer'
+                                }}
+                                title={v.tipo === 'producto' ? "Eliminar venta y devolver productos a stock" : "Anular cobro de servicio"}
+                              >
+                                🗑️ Eliminar
                               </button>
                             </div>
                           </td>
@@ -5883,6 +5940,26 @@ export default function AdminDashboard({ session, logout }) {
                         >
                           🖨️ Imprimir
                         </button>
+                        <button 
+                          type="button"
+                          onClick={() => handleEliminarVentaCaja({ id: p.id, tipo: 'producto', folio: `LR-${String(p.id).padStart(4, '0')}`, cliente: p.cliente })}
+                          style={{ 
+                            padding: '5px 8px', 
+                            fontSize: '0.78rem', 
+                            whiteSpace: 'nowrap', 
+                            display: 'inline-flex', 
+                            alignItems: 'center', 
+                            gap: '3px',
+                            background: 'rgba(231, 76, 60, 0.15)',
+                            border: '1px solid rgba(231, 76, 60, 0.4)',
+                            color: '#e74c3c',
+                            borderRadius: '6px',
+                            cursor: 'pointer'
+                          }}
+                          title="Eliminar ticket y devolver artículos a inventario"
+                        >
+                          🗑️
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -7712,6 +7789,34 @@ export default function AdminDashboard({ session, logout }) {
                   </a>
                 )}
                 
+                <button
+                  type="button"
+                  onClick={() => handleEliminarVentaCaja({
+                    id: ticketDetalleModal.id,
+                    tipo: ticketDetalleModal.tipo || 'producto',
+                    folio: ticketDetalleModal.folio || `LR-${String(ticketDetalleModal.id).padStart(4, '0')}`,
+                    cliente: ticketDetalleModal.cliente || 'Cliente'
+                  })}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    background: 'rgba(231, 76, 60, 0.15)',
+                    border: '1px solid #e74c3c',
+                    color: '#e74c3c',
+                    borderRadius: '8px',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    fontSize: '0.88rem'
+                  }}
+                  title="Eliminar este ticket permanentemente y reintegrar productos al stock"
+                >
+                  🗑️ Eliminar Venta y Devolver Productos a Inventario
+                </button>
+
                 <button 
                   type="button"
                   onClick={() => setTicketDetalleModal(null)} 
