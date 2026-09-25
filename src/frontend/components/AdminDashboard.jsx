@@ -783,22 +783,27 @@ export default function AdminDashboard({ session, logout }) {
   };
 
   const handleCobrarCaja = async (cita_id, subtotal, descuento, metodo_pago, decant_producto_id = null) => {
-    const res = await fetch(`${API_URL}/api.php?action=finalizar_cita`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cita_id, subtotal, descuento, metodo_pago, decant_producto_id })
-    });
-    const data = await res.json();
-    if (data.status === 'success') {
-      setCobroActivo(null);
-      cargarCalendario();
-      cargarCaja();
-      cargarDashboard();
-      cargarBodega(); // Refrescar stock de decants si se usó
-      cargarCRM();
-      showToast('Cobro finalizado con éxito.', 'success');
-    } else {
-      showToast(data.error || 'Error al procesar cobro', 'error');
+    try {
+      const res = await fetch(`${API_URL}/api.php?action=finalizar_cita`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cita_id, subtotal, descuento, metodo_pago, decant_producto_id })
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        setCobroActivo(null);
+        cargarCalendario();
+        cargarCaja();
+        cargarDashboard();
+        cargarBodega(); // Refrescar stock de decants si se usó
+        cargarCRM();
+        showToast('Cobro finalizado con éxito.', 'success');
+      } else {
+        showToast(data.error || data.message || 'Error al procesar cobro', 'error');
+      }
+    } catch (err) {
+      console.error("Error al procesar cobro:", err);
+      showToast('Error de conexión al procesar cobro', 'error');
     }
   };
 
@@ -1437,7 +1442,9 @@ export default function AdminDashboard({ session, logout }) {
     }
     
     const fechaUso = nuevaCitaForm.fecha || fechaCalendario;
-    const esPagada = Boolean(nuevaCitaForm.marcar_pagada);
+    const hoyActual = toYMD(new Date());
+    const esFechaPasada = fechaUso < hoyActual;
+    const esPagada = Boolean(nuevaCitaForm.marcar_pagada) || esFechaPasada || abrirCobroInmediato;
     const subtotalCalculado = nuevaCitaForm.monto !== '' && nuevaCitaForm.monto !== null ? Number(nuevaCitaForm.monto) : 14000;
     const descVal = Number(nuevaCitaForm.descuento) || 0;
 
@@ -1492,10 +1499,8 @@ export default function AdminDashboard({ session, logout }) {
             descuento: 0 
           });
 
-          cargarCalendario(fechaCalendario, vistaCalendario);
-          cargarDashboard();
-          cargarCRM();
-          cargarCaja();
+          // Actualizar calendario de inmediato de forma rápida
+          cargarCalendario(fechaUso, vistaCalendario);
 
           // Si el usuario pidió agendar y cobrar inmediatamente (y la cita no estaba ya pagada)
           if (abrirCobroInmediato && !esPagada) {
@@ -1525,7 +1530,11 @@ export default function AdminDashboard({ session, logout }) {
   };
 
   const handleCambiarEstadoCita = async (citaId, nuevoEstado) => {
+    // 1. Actualización optimista inmediata en UI (0ms de espera visual)
+    setCitasCalendario(prev => prev.map(c => c.id === citaId ? { ...c, estado: nuevoEstado } : c));
+    setCitaDetalleModal(null);
     setActualizandoCita(true);
+
     try {
       const res = await fetch(`${API_URL}/admin_api.php?action=cambiar_estado_cita`, {
         method: 'POST',
@@ -1535,15 +1544,14 @@ export default function AdminDashboard({ session, logout }) {
       const data = await res.json();
       if (data.status === 'success') {
         showToast(data.message || `Estado actualizado a ${nuevoEstado}`, 'success');
-        setCitaDetalleModal(null);
-        cargarCalendario();
-        cargarDashboard();
-        cargarCaja();
+        cargarCalendario(fechaCalendario, vistaCalendario);
       } else {
         showToast(data.message || 'Error al actualizar cita', 'error');
+        cargarCalendario(fechaCalendario, vistaCalendario);
       }
     } catch (err) {
       showToast('Error de conexión', 'error');
+      cargarCalendario(fechaCalendario, vistaCalendario);
     } finally {
       setActualizandoCita(false);
     }
@@ -1551,7 +1559,12 @@ export default function AdminDashboard({ session, logout }) {
 
   const handleEliminarCita = async (citaId) => {
     if (!window.confirm("¿Estás seguro de eliminar esta cita del sistema? Esta acción no se puede deshacer.")) return;
+    
+    // 1. Actualización optimista inmediata en UI (0ms de espera visual)
+    setCitasCalendario(prev => prev.filter(c => c.id !== citaId));
+    setCitaDetalleModal(null);
     setActualizandoCita(true);
+
     try {
       const res = await fetch(`${API_URL}/admin_api.php?action=eliminar_cita`, {
         method: 'POST',
@@ -1561,14 +1574,14 @@ export default function AdminDashboard({ session, logout }) {
       const data = await res.json();
       if (data.status === 'success') {
         showToast(data.message || 'Cita eliminada correctamente', 'success');
-        setCitaDetalleModal(null);
-        cargarCalendario();
-        cargarDashboard();
+        cargarCalendario(fechaCalendario, vistaCalendario);
       } else {
         showToast(data.message || 'Error al eliminar', 'error');
+        cargarCalendario(fechaCalendario, vistaCalendario);
       }
     } catch (err) {
       showToast('Error de conexión', 'error');
+      cargarCalendario(fechaCalendario, vistaCalendario);
     } finally {
       setActualizandoCita(false);
     }
@@ -3132,83 +3145,131 @@ export default function AdminDashboard({ session, logout }) {
                 {hora}
               </div>
               {trabajadoresFiltrados.map(barbero => {
-                const cita = getCitaParaFechaHora(fechaCalendario, barbero.id, hora);
-                const esCompletada = cita?.estado === 'Completada';
-                const esEsperandoPago = cita?.estado === 'Terminado_Esperando_Pago';
-                const esCancelada = cita?.estado === 'Cancelada';
-                const esPendiente = cita && !esCompletada && !esEsperandoPago && !esCancelada;
-
-                let cardBg = 'rgba(255,255,255,0.02)';
-                let cardBorder = '1px dashed #333';
-                if (esCompletada) {
-                  cardBg = 'linear-gradient(135deg, rgba(46, 204, 113, 0.15), rgba(0, 0, 0, 0.6))';
-                  cardBorder = '1px solid #2ecc71';
-                } else if (esEsperandoPago) {
-                  cardBg = 'linear-gradient(135deg, rgba(243, 156, 18, 0.25), rgba(0, 0, 0, 0.6))';
-                  cardBorder = '1px solid #f39c12';
-                } else if (esPendiente) {
-                  cardBg = esPasadoDia ? 'rgba(231, 76, 60, 0.1)' : 'rgba(212, 175, 55, 0.12)';
-                  cardBorder = esPasadoDia ? '1px solid #e74c3c' : '1px solid var(--gold-jewel)';
-                } else if (esCancelada) {
-                  cardBg = 'rgba(100, 100, 100, 0.1)';
-                  cardBorder = '1px solid #555';
-                }
+                const citasSlot = citasCalendario.filter(c => 
+                  c.fecha === fechaCalendario && 
+                  (String(c.trabajador_id) === String(barbero.id) || c.trabajador === barbero.nombre) && 
+                  c.hora.startsWith(hora)
+                );
 
                 return (
                   <div
                     key={`${barbero.id}-${hora}`}
                     style={{
                       minHeight: '75px',
-                      background: cardBg,
-                      border: cardBorder,
+                      background: citasSlot.length > 0 ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.01)',
+                      border: citasSlot.length > 0 ? '1px solid rgba(212,175,55,0.3)' : '1px dashed #282828',
                       borderRadius: '10px',
-                      padding: '8px 10px',
+                      padding: '6px',
                       display: 'flex',
                       flexDirection: 'column',
+                      gap: '5px',
                       justifyContent: 'center',
                       position: 'relative',
                       cursor: 'pointer',
                       transition: 'transform 0.15s ease, box-shadow 0.15s ease'
                     }}
-                    onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; }}
                     onClick={() => {
-                      if (!cita) {
+                      if (citasSlot.length === 0) {
                         abrirModalNuevaCita(fechaCalendario, hora, barbero.id);
-                      } else {
-                        setCitaDetalleModal(cita);
                       }
                     }}
                   >
-                    {cita ? (
-                      <>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '2px' }}>
-                          <strong style={{ fontSize: '0.85rem', color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            👤 {cita.cliente}
-                          </strong>
-                        </div>
-                        {cita.servicios_nombres && (
-                          <div style={{ fontSize: '0.72rem', color: '#bbb', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            ✂️ {cita.servicios_nombres}
+                    {citasSlot.map((cita, idx) => {
+                      const esCompletada = cita?.estado === 'Completada';
+                      const esEsperandoPago = cita?.estado === 'Terminado_Esperando_Pago';
+                      const esCancelada = cita?.estado === 'Cancelada';
+                      const esPendiente = cita && !esCompletada && !esEsperandoPago && !esCancelada;
+
+                      let itemBg = 'rgba(212, 175, 55, 0.12)';
+                      let itemBorder = '1px solid var(--gold-jewel)';
+                      if (esCompletada) {
+                        itemBg = 'rgba(46, 204, 113, 0.15)';
+                        itemBorder = '1px solid #2ecc71';
+                      } else if (esEsperandoPago) {
+                        itemBg = 'rgba(243, 156, 18, 0.2)';
+                        itemBorder = '1px solid #f39c12';
+                      } else if (esCancelada) {
+                        itemBg = 'rgba(100, 100, 100, 0.15)';
+                        itemBorder = '1px solid #555';
+                      } else if (esPasadoDia) {
+                        itemBg = 'rgba(231, 76, 60, 0.12)';
+                        itemBorder = '1px solid #e74c3c';
+                      }
+
+                      return (
+                        <div
+                          key={cita.id || idx}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCitaDetalleModal(cita);
+                          }}
+                          style={{
+                            background: itemBg,
+                            border: itemBorder,
+                            borderRadius: '8px',
+                            padding: '6px 8px',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease'
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
+                            <strong style={{ fontSize: '0.82rem', color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              👤 {cita.cliente}
+                            </strong>
+                            <span style={{ fontSize: '0.72rem', fontWeight: 'bold', color: esCompletada ? '#2ecc71' : 'var(--gold-jewel)' }}>
+                              ${Number(cita.total_pagado || cita.subtotal || 14000).toLocaleString('es-CL')}
+                            </span>
                           </div>
-                        )}
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '4px', flexWrap: 'wrap', gap: '4px' }}>
-                          <span style={{
-                            fontSize: '0.7rem',
-                            padding: '2px 6px',
-                            borderRadius: '6px',
-                            fontWeight: 'bold',
-                            background: esCompletada ? 'rgba(46, 204, 113, 0.2)' : (esEsperandoPago ? 'rgba(243, 156, 18, 0.2)' : (esCancelada ? 'rgba(100,100,100,0.3)' : (esPasadoDia ? 'rgba(231,76,60,0.2)' : 'rgba(212,175,55,0.2)'))),
-                            color: esCompletada ? '#2ecc71' : (esEsperandoPago ? '#f39c12' : (esCancelada ? '#888' : (esPasadoDia ? '#e74c3c' : 'var(--gold-jewel)')))
-                          }}>
-                            {esCompletada ? `✅ Pagada (${cita.metodo_pago || 'Efectivo'})` : (esEsperandoPago ? '🔔 Esperando Pago' : (esCancelada ? '❌ Cancelada' : (esPasadoDia ? '⚠️ Pasada (Sin Cobrar)' : '⏳ Pendiente')))}
-                          </span>
-                          <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: esCompletada ? '#2ecc71' : 'var(--gold-jewel)' }}>
-                            ${Number(cita.total_pagado || cita.subtotal || 14000).toLocaleString('es-CL')}
-                          </span>
+                          {cita.servicios_nombres && (
+                            <div style={{ fontSize: '0.7rem', color: '#bbb', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              ✂️ {cita.servicios_nombres}
+                            </div>
+                          )}
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '3px' }}>
+                            <span style={{
+                              fontSize: '0.68rem',
+                              padding: '1px 5px',
+                              borderRadius: '4px',
+                              fontWeight: 'bold',
+                              background: esCompletada ? 'rgba(46, 204, 113, 0.2)' : (esEsperandoPago ? 'rgba(243, 156, 18, 0.2)' : (esCancelada ? 'rgba(100,100,100,0.3)' : (esPasadoDia ? 'rgba(231,76,60,0.2)' : 'rgba(212,175,55,0.2)'))),
+                              color: esCompletada ? '#2ecc71' : (esEsperandoPago ? '#f39c12' : (esCancelada ? '#888' : (esPasadoDia ? '#e74c3c' : 'var(--gold-jewel)')))
+                            }}>
+                              {esCompletada ? `✅ ${cita.metodo_pago || 'Pagada'}` : (esEsperandoPago ? '🔔 Esperando' : (esCancelada ? '❌ Cancelada' : '⏳ Pendiente'))}
+                            </span>
+                            <span style={{ fontSize: '0.68rem', color: '#aaa' }}>{cita.hora?.slice(0, 5)}</span>
+                          </div>
                         </div>
-                      </>
-                    ) : (
+                      );
+                    })}
+
+                    {citasSlot.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          abrirModalNuevaCita(fechaCalendario, hora, barbero.id);
+                        }}
+                        style={{
+                          background: 'transparent',
+                          border: '1px dashed rgba(255,255,255,0.15)',
+                          color: '#888',
+                          fontSize: '0.68rem',
+                          borderRadius: '4px',
+                          padding: '2px',
+                          cursor: 'pointer',
+                          textAlign: 'center',
+                          marginTop: '2px'
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--gold-jewel)'; e.currentTarget.style.color = 'var(--gold-jewel)'; }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'; e.currentTarget.style.color = '#888'; }}
+                      >
+                        + Agregar otra
+                      </button>
+                    )}
+
+                    {citasSlot.length === 0 && (
                       <div style={{ textAlign: 'center', color: '#555', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
                         <span>+</span>
                         <span>{esPasadoDia ? 'Registrar Cita Pasada' : 'Agendar'}</span>
@@ -5052,7 +5113,7 @@ export default function AdminDashboard({ session, logout }) {
                             style={{ padding: '4px 10px', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
                             title="Marcar como pagado y registrar transferencia o efectivo"
                           >
-                            💰 Registrar Pago
+                            💰 Pagar Barbero
                           </button>
                         )}
                         
@@ -6575,20 +6636,24 @@ export default function AdminDashboard({ session, logout }) {
                       });
                     }
 
-                    printThermalTicket({
-                      tipo: 'corte',
-                      folio: `LR-CITA-${String(cobroActivo.id).padStart(4, '0')}`,
-                      cliente: cobroActivo.cliente,
-                      rut: cobroActivo.cliente_rut,
-                      telefono: cobroActivo.cliente_telefono,
-                      barbero: cobroActivo.barbero || cobroActivo.trabajador,
-                      items: ticketItems,
-                      subtotal: subVal + prodExtraVal,
-                      descuento: descVal,
-                      total: totVal,
-                      metodoPago: cobroActivo.metodo,
-                      estado: 'PAGADO'
-                    });
+                    try {
+                      printThermalTicket({
+                        tipo: 'corte',
+                        folio: `LR-CITA-${String(cobroActivo.id).padStart(4, '0')}`,
+                        cliente: cobroActivo.cliente,
+                        rut: cobroActivo.cliente_rut,
+                        telefono: cobroActivo.cliente_telefono,
+                        barbero: cobroActivo.barbero || cobroActivo.trabajador,
+                        items: ticketItems,
+                        subtotal: subVal + prodExtraVal,
+                        descuento: descVal,
+                        total: totVal,
+                        metodoPago: cobroActivo.metodo,
+                        estado: 'PAGADO'
+                      });
+                    } catch (ePrint) {
+                      console.warn("Impresión térmica omitida:", ePrint);
+                    }
                     handleCobrarCaja(cobroActivo.id, subVal + prodExtraVal, descVal, cobroActivo.metodo, cobroActivo.decant_producto_id);
                   }}
                 >
@@ -7429,6 +7494,7 @@ export default function AdminDashboard({ session, logout }) {
                 )}
                 
                 <button 
+                  type="button"
                   onClick={() => setTicketDetalleModal(null)} 
                   className="btn-outline-gold" 
                   style={{ width: '100%', padding: '10px' }}
@@ -7443,10 +7509,10 @@ export default function AdminDashboard({ session, logout }) {
         {/* Modal Detalle Día a Día de Barbero */}
         {barberoDetalleModal && (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1200, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '15px' }}>
-            <div style={{ background: '#181818', borderRadius: '14px', width: '100%', maxWidth: '850px', maxHeight: '90vh', overflowY: 'auto', border: '2px solid var(--gold-jewel)', padding: '25px', boxShadow: '0 15px 40px rgba(0,0,0,0.9)' }}>
+            <div style={{ background: '#181818', borderRadius: '16px', width: '100%', maxWidth: '900px', maxHeight: '90vh', overflowY: 'auto', border: '2px solid var(--gold-jewel)', padding: '25px', boxShadow: '0 20px 50px rgba(0,0,0,0.95)' }}>
               
               {/* Header Modal */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '15px', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '15px', marginBottom: '18px', flexWrap: 'wrap', gap: '10px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <span style={{ fontSize: '2rem' }}>💈</span>
                   <div>
@@ -7454,217 +7520,359 @@ export default function AdminDashboard({ session, logout }) {
                       Liquidación Detallada: {barberoDetalleModal.barbero_nombre}
                     </h3>
                     <span style={{ fontSize: '0.8rem', color: '#aaa' }}>
-                      Período del {liquidacionData?.rango?.inicio} al {liquidacionData?.rango?.fin}
+                      Período: {liquidacionData?.rango?.inicio || liqFechaInicio} al {liquidacionData?.rango?.fin || liqFechaFin}
+                    </span>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  {barberoDetalleModal.pago_info ? (
+                    <button 
+                      type="button"
+                      className="btn-primary" 
+                      onClick={() => abrirModalPago(barberoDetalleModal)}
+                      style={{ padding: '7px 14px', fontSize: '0.82rem', background: '#27ae60', borderColor: '#27ae60' }}
+                    >
+                      ✏️ Editar Pago Registrado
+                    </button>
+                  ) : (
+                    <button 
+                      type="button"
+                      className="btn-primary" 
+                      onClick={() => abrirModalPago(barberoDetalleModal)}
+                      style={{ padding: '7px 14px', fontSize: '0.82rem' }}
+                    >
+                      💰 Pagar a este Barbero (${Number(barberoDetalleModal.total_comision_barbero || 0).toLocaleString('es-CL')})
+                    </button>
+                  )}
+
+                  <button 
+                    type="button"
+                    onClick={() => setBarberoDetalleModal(null)} 
+                    style={{ background: 'transparent', border: 'none', color: '#fff', fontSize: '1.6rem', cursor: 'pointer' }}
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+
+              {/* Resumen KPIs del Barbero */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px', marginBottom: '20px' }}>
+                <div className="stat-card-badge">
+                  <span style={{ fontSize: '0.72rem', color: '#aaa' }}>Cortes Totales</span>
+                  <strong style={{ fontSize: '1.15rem', color: '#fff' }}>✂️ {barberoDetalleModal.total_cortes || 0}</strong>
+                </div>
+                <div className="stat-card-badge">
+                  <span style={{ fontSize: '0.72rem', color: '#aaa' }}>Días Trabajados</span>
+                  <strong style={{ fontSize: '1.15rem', color: '#fff' }}>📅 {barberoDetalleModal.dias_trabajados || 0}</strong>
+                </div>
+                <div className="stat-card-badge">
+                  <span style={{ fontSize: '0.72rem', color: '#aaa' }}>Total Bruto</span>
+                  <strong style={{ fontSize: '1.15rem', color: 'var(--gold-jewel)' }}>${Number(barberoDetalleModal.total_bruto || 0).toLocaleString('es-CL')}</strong>
+                </div>
+                <div className="stat-card-badge" style={{ borderLeft: '3px solid #2ecc71' }}>
+                  <span style={{ fontSize: '0.72rem', color: '#aaa' }}>Comisión Barbero</span>
+                  <strong style={{ fontSize: '1.15rem', color: '#2ecc71' }}>${Number(barberoDetalleModal.total_comision_barbero || 0).toLocaleString('es-CL')}</strong>
+                </div>
+                <div className="stat-card-badge" style={{ borderLeft: '3px solid var(--gold-jewel)' }}>
+                  <span style={{ fontSize: '0.72rem', color: '#aaa' }}>Ganancia Tienda</span>
+                  <strong style={{ fontSize: '1.15rem', color: 'var(--gold-jewel)' }}>${Number(barberoDetalleModal.total_ganancia_tienda || 0).toLocaleString('es-CL')}</strong>
+                </div>
+                <div className="stat-card-badge">
+                  <span style={{ fontSize: '0.72rem', color: '#aaa' }}>Estado de Pago</span>
+                  <strong style={{ fontSize: '0.9rem', color: barberoDetalleModal.pago_info ? '#2ecc71' : '#f1c40f' }}>
+                    {barberoDetalleModal.pago_info ? '🟢 Pagado' : '🟡 Pendiente'}
+                  </strong>
+                </div>
+              </div>
+
+              {/* Tabla de Desglose Día por Día */}
+              <div style={{ marginBottom: '22px' }}>
+                <h4 style={{ color: 'var(--gold-jewel)', margin: '0 0 10px 0', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  📅 Desglose Diario de Producción y Comisiones
+                </h4>
+                <div style={{ background: 'rgba(0,0,0,0.35)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.08)', overflowX: 'auto' }}>
+                  <table style={{ width: '100%', fontSize: '0.82rem', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ background: 'rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                        <th style={tableHeaderStyle}>Fecha</th>
+                        <th style={{ ...tableHeaderStyle, textAlign: 'center' }}>Cortes</th>
+                        <th style={{ ...tableHeaderStyle, textAlign: 'right' }}>Total Facturado ($)</th>
+                        <th style={{ ...tableHeaderStyle, textAlign: 'right', color: '#2ecc71' }}>Comisión Barbero ($)</th>
+                        <th style={{ ...tableHeaderStyle, textAlign: 'right', color: 'var(--gold-jewel)' }}>Ganancia Salón ($)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(barberoDetalleModal.detalle_dias || []).map((d, idx) => (
+                        <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', background: idx % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent' }}>
+                          <td style={{ ...tableCellStyle, fontWeight: 'bold', color: '#fff' }}>📅 {d.fecha} {d.dia_nombre ? `(${d.dia_nombre})` : ''}</td>
+                          <td style={{ ...tableCellStyle, textAlign: 'center', fontWeight: 'bold' }}>{d.cortes_dia ?? d.cortes ?? 0}</td>
+                          <td style={{ ...tableCellStyle, textAlign: 'right', fontWeight: 'bold' }}>${Number(d.total_bruto_dia ?? d.bruto ?? 0).toLocaleString('es-CL')}</td>
+                          <td style={{ ...tableCellStyle, textAlign: 'right', color: '#2ecc71', fontWeight: 'bold' }}>${Number(d.comision_barbero_dia ?? d.comision_barbero ?? 0).toLocaleString('es-CL')}</td>
+                          <td style={{ ...tableCellStyle, textAlign: 'right', color: 'var(--gold-jewel)', fontWeight: 'bold' }}>${Number(d.ganancia_tienda_dia ?? d.ganancia_tienda ?? 0).toLocaleString('es-CL')}</td>
+                        </tr>
+                      ))}
+                      {(barberoDetalleModal.detalle_dias || []).length === 0 && (
+                        <tr>
+                          <td colSpan="5" style={{ ...tableCellStyle, textAlign: 'center', padding: '20px', color: '#888' }}>
+                            No hay cortes registrados en este período para este barbero.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Tabla de Citas / Cortes Individuales */}
+              {Array.isArray(barberoDetalleModal.citas) && barberoDetalleModal.citas.length > 0 && (
+                <div style={{ marginBottom: '20px' }}>
+                  <h4 style={{ color: '#ccc', margin: '0 0 10px 0', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    ✂️ Detalle de Citas Atendidas ({barberoDetalleModal.citas.length} servicios)
+                  </h4>
+                  <div style={{ background: 'rgba(0,0,0,0.25)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)', maxHeight: '220px', overflowY: 'auto' }}>
+                    <table style={{ width: '100%', fontSize: '0.78rem', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ background: 'rgba(255,255,255,0.04)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                          <th style={tableHeaderStyle}>Hora / Fecha</th>
+                          <th style={tableHeaderStyle}>Cliente</th>
+                          <th style={tableHeaderStyle}>Servicio</th>
+                          <th style={{ ...tableHeaderStyle, textAlign: 'right' }}>Monto Cobrado</th>
+                          <th style={{ ...tableHeaderStyle, textAlign: 'right', color: '#2ecc71' }}>Comisión</th>
+                          <th style={{ ...tableHeaderStyle, textAlign: 'center' }}>Método</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {barberoDetalleModal.citas.map((c, idx) => (
+                          <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                            <td style={tableCellStyle}>{c.fecha} {c.hora ? c.hora.slice(0, 5) : ''}</td>
+                            <td style={{ ...tableCellStyle, color: '#fff', fontWeight: 'bold' }}>{c.cliente_nombre || c.cliente || 'Cliente'}</td>
+                            <td style={tableCellStyle}>{c.servicio_nombre || c.servicios_nombres || 'Corte'}</td>
+                            <td style={{ ...tableCellStyle, textAlign: 'right' }}>${Number(c.total_neto || c.total_pagado || c.subtotal || 0).toLocaleString('es-CL')}</td>
+                            <td style={{ ...tableCellStyle, textAlign: 'right', color: '#2ecc71', fontWeight: 'bold' }}>${Number(c.comision_barbero || 0).toLocaleString('es-CL')}</td>
+                            <td style={{ ...tableCellStyle, textAlign: 'center' }}>
+                              <span style={{ fontSize: '0.72rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255,255,255,0.08)' }}>
+                                {c.metodo_pago || 'Efectivo'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Footer Acciones */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '20px', flexWrap: 'wrap', gap: '10px' }}>
+                <button 
+                  type="button" 
+                  className="btn-primary"
+                  onClick={() => abrirModalPago(barberoDetalleModal)}
+                  style={{ padding: '10px 22px', fontWeight: 'bold', fontSize: '0.9rem' }}
+                >
+                  {barberoDetalleModal.pago_info ? '✏️ Modificar Pago Registrado' : `💰 Registrar Pago a ${barberoDetalleModal.barbero_nombre}`}
+                </button>
+
+                <button 
+                  type="button" 
+                  className="btn-outline-gold" 
+                  onClick={() => setBarberoDetalleModal(null)} 
+                  style={{ padding: '10px 22px' }}
+                >
+                  Cerrar
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* Modal Registrar / Modificar Pago de Liquidación a Barbero */}
+        {pagoModalData && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1300, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '15px' }}>
+            <div style={{ background: '#181818', borderRadius: '16px', width: '100%', maxWidth: '540px', maxHeight: '90vh', overflowY: 'auto', border: '2px solid var(--gold-jewel)', padding: '26px', boxShadow: '0 20px 50px rgba(0,0,0,0.95)' }}>
+              
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '14px', marginBottom: '18px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '1.8rem' }}>{pagoModalData.es_edicion ? '✏️' : '💰'}</span>
+                  <div>
+                    <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.2rem' }}>
+                      {pagoModalData.es_edicion ? 'Modificar Registro de Pago' : 'Registrar Pago de Liquidación'}
+                    </h3>
+                    <span style={{ fontSize: '0.8rem', color: '#aaa' }}>
+                      {pagoModalData.es_edicion ? 'Actualizar detalles del pago registrado' : 'Marcar comisión como pagada y registrar comprobante'}
                     </span>
                   </div>
                 </div>
                 <button 
-                  onClick={() => setBarberoDetalleModal(null)} 
+                  type="button"
+                  onClick={() => setPagoModalData(null)} 
                   style={{ background: 'transparent', border: 'none', color: '#fff', fontSize: '1.6rem', cursor: 'pointer' }}
                 >
                   ×
                 </button>
               </div>
 
-              {/* Resumen KPIs del Barbero */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px', marginBottom: '20px' }}>
-                <div className="stat-card-badge">
-                  <span style={{ fontSize: '0.72rem', color: '#aaa' }}>Cortes Totales</span>
-                  <strong style={{ fontSize: '1.15rem', color: '#fff' }}>{barberoDetalleModal.total_cortes}</strong>
+              {/* Ficha Resumen del Barbero y Período */}
+              <div style={{ background: 'rgba(212, 175, 55, 0.08)', border: '1px solid rgba(212, 175, 55, 0.3)', borderRadius: '10px', padding: '14px', marginBottom: '18px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '0.85rem', color: '#ccc' }}>💈 Barbero:</span>
+                  <strong style={{ color: '#fff', fontSize: '1rem' }}>{pagoModalData.barbero_nombre}</strong>
                 </div>
-                <div className="stat-card-badge">
-                  <span style={{ fontSize: '0.72rem', color: '#aaa' }}>Días Trabajados</span>
-                  <strong style={{ fontSize: '1.15rem', color: '#fff' }}>{barberoDetalleModal.dias_trabajados}</strong>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '0.85rem', color: '#ccc' }}>📅 Período:</span>
+                  <strong style={{ color: 'var(--gold-jewel)', fontSize: '0.9rem' }}>{pagoModalData.periodo_inicio} al {pagoModalData.periodo_fin}</strong>
                 </div>
-                <div className="stat-card-badge">
-                  <span style={{ fontSize: '0.72rem', color: '#aaa' }}>Total Bruto</span>
-                  <strong style={{ fontSize: '1.15rem', color: 'var(--gold-jewel)' }}>${Number(barberoDetalleModal.total_bruto).toLocaleString('es-CL')}</strong>
-                </div>
-                <div className="stat-card-badge" style={{ borderLeft: '3px solid #2ecc71' }}>
-                  <span style={{ fontSize: '0.72rem', color: '#aaa' }}>Pago Barbero</span>
-                  <strong style={{ fontSize: '1.15rem', color: '#2ecc71' }}>${Number(barberoDetalleModal.total_comision_barbero).toLocaleString('es-CL')}</strong>
-                </div>
-                <div className="stat-card-badge" style={{ borderLeft: '3px solid var(--gold-jewel)' }}>
-                  <span style={{ fontSize: '0.72rem', color: '#aaa' }}>Ganancia Tienda</span>
-                  <strong style={{ fontSize: '1.15rem', color: 'var(--gold-jewel)' }}>${Number(barberoDetalleModal.total_ganancia_tienda).toLocaleString('es-CL')}</strong>
-                </div>
-                <div className="stat-card-badge">
-                  <span style={{ fontSize: '0.72rem', color: '#aaa' }}>Promedio Diario</span>
-                  <strong style={{ fontSize: '1.15rem', color: '#3498db' }}>${Number(barberoDetalleModal.promedio_diario_bruto).toLocaleString('es-CL')}</strong>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '8px', marginTop: '6px' }}>
+                  <div>
+                    <span style={{ fontSize: '0.75rem', color: '#aaa', display: 'block' }}>Cortes Realizados:</span>
+                    <strong style={{ color: '#fff', fontSize: '0.9rem' }}>✂️ {pagoModalData.total_cortes || 0} cortes</strong>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <span style={{ fontSize: '0.75rem', color: '#aaa', display: 'block' }}>Comisión Calculada:</span>
+                    <strong style={{ color: '#2ecc71', fontSize: '0.95rem' }}>${Number(pagoModalData.comision_calculada || 0).toLocaleString('es-CL')}</strong>
+                  </div>
                 </div>
               </div>
 
-              <form onSubmit={handleEntregarPremio} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                {/* Selector de Tipo de Regalo (3 Pestañas Claras) */}
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    type="button"
-                    onClick={() => setPremioModalTipo('decant')}
-                    style={{
-                      flex: 1,
-                      padding: '8px 10px',
-                      borderRadius: '8px',
-                      fontSize: '0.8rem',
-                      fontWeight: 'bold',
-                      cursor: 'pointer',
-                      background: premioModalTipo === 'decant' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.06)',
-                      color: premioModalTipo === 'decant' ? '#000' : '#ccc',
-                      border: '1px solid ' + (premioModalTipo === 'decant' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.15)')
-                    }}
-                  >
-                    💎 Decants VIP
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPremioModalTipo('producto')}
-                    style={{
-                      flex: 1,
-                      padding: '8px 10px',
-                      borderRadius: '8px',
-                      fontSize: '0.8rem',
-                      fontWeight: 'bold',
-                      cursor: 'pointer',
-                      background: premioModalTipo === 'producto' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.06)',
-                      color: premioModalTipo === 'producto' ? '#000' : '#ccc',
-                      border: '1px solid ' + (premioModalTipo === 'producto' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.15)')
-                    }}
-                  >
-                    📦 De Bodega
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPremioModalTipo('personalizado')}
-                    style={{
-                      flex: 1,
-                      padding: '8px 10px',
-                      borderRadius: '8px',
-                      fontSize: '0.8rem',
-                      fontWeight: 'bold',
-                      cursor: 'pointer',
-                      background: premioModalTipo === 'personalizado' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.06)',
-                      color: premioModalTipo === 'personalizado' ? '#000' : '#ccc',
-                      border: '1px solid ' + (premioModalTipo === 'personalizado' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.15)')
-                    }}
-                  >
-                    ✨ Personalizado
-                  </button>
+              <form onSubmit={handleGuardarPago} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                
+                {/* Monto a Pagar */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <label style={{ fontSize: '0.82rem', color: 'var(--gold-jewel)', fontWeight: 'bold' }}>
+                      Monto a Transferir / Pagar ($ CLP) *
+                    </label>
+                    {Number(pagoModalData.monto) !== Number(pagoModalData.comision_calculada) && (
+                      <button 
+                        type="button" 
+                        onClick={() => setPagoModalData({ ...pagoModalData, monto: Number(pagoModalData.comision_calculada) })}
+                        style={{ background: 'transparent', border: 'none', color: '#3498db', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline' }}
+                      >
+                        Restablecer a ${Number(pagoModalData.comision_calculada).toLocaleString('es-CL')}
+                      </button>
+                    )}
+                  </div>
+                  <input 
+                    type="number" 
+                    required 
+                    min="0" 
+                    step="100" 
+                    className="input-field" 
+                    style={{ margin: 0, fontSize: '1.1rem', fontWeight: 'bold', color: 'var(--gold-jewel)' }}
+                    value={pagoModalData.monto !== undefined && pagoModalData.monto !== null ? pagoModalData.monto : ''} 
+                    onChange={e => setPagoModalData({ ...pagoModalData, monto: Number(e.target.value) || 0 })} 
+                  />
                 </div>
 
-                {premioModalTipo === 'decant' && (
+                {/* Fecha y Método */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '8px' }}>
-                      Selecciona el Decant de 10ml entregado:
+                    <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px', fontWeight: 'bold' }}>
+                      Fecha de Pago *
                     </label>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '10px' }}>
-                      {[
-                        'Decant Creed Aventus 10ml',
-                        'Decant Tom Ford Oud Wood 10ml',
-                        'Decant Dior Sauvage Elixir 10ml',
-                        'Decant Bleu de Chanel 10ml',
-                        'Decant Jean Paul Gaultier 10ml',
-                        'Decant VIP de Cortesía 10ml'
-                      ].map((decName) => {
-                        const isSelected = premioDecantRapido === decName;
-                        return (
-                          <button
-                            key={decName}
-                            type="button"
-                            onClick={() => setPremioDecantRapido(decName)}
-                            style={{
-                              padding: '10px 8px',
-                              borderRadius: '8px',
-                              fontSize: '0.78rem',
-                              fontWeight: 'bold',
-                              textAlign: 'left',
-                              cursor: 'pointer',
-                              background: isSelected ? 'rgba(212, 175, 55, 0.2)' : 'rgba(255,255,255,0.04)',
-                              color: isSelected ? 'var(--gold-jewel)' : '#ccc',
-                              border: isSelected ? '2px solid var(--gold-jewel)' : '1px solid rgba(255,255,255,0.1)',
-                              transition: 'all 0.15s'
-                            }}
-                          >
-                            💎 {decName.replace('Decant ', '')}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <span style={{ fontSize: '0.72rem', color: 'var(--gold-jewel)', display: 'block' }}>
-                      ✅ Seleccionado: <strong>{premioDecantRapido}</strong>
-                    </span>
+                    <input 
+                      type="date" 
+                      required 
+                      className="input-field" 
+                      style={{ margin: 0 }}
+                      value={pagoModalData.fecha_pago} 
+                      onChange={e => setPagoModalData({ ...pagoModalData, fecha_pago: e.target.value })} 
+                    />
                   </div>
-                )}
 
-                {premioModalTipo === 'producto' && (
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '5px' }}>
-                      Seleccionar Producto de Regalo (Bodega / Inventario):
+                    <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px', fontWeight: 'bold' }}>
+                      Método de Pago *
                     </label>
                     <select 
                       className="input-field" 
                       style={{ margin: 0 }}
-                      value={premioProductoId}
-                      onChange={e => setPremioProductoId(e.target.value)}
+                      value={pagoModalData.metodo_pago} 
+                      onChange={e => setPagoModalData({ ...pagoModalData, metodo_pago: e.target.value })}
                     >
-                      <option value="">-- Seleccionar Producto de Bodega --</option>
-                      {productos.map(p => (
-                        <option key={p.id} value={p.id} style={{ color: '#000' }}>
-                          {p.nombre} (Stock: {p.stock} unid. | ${Number(p.precio).toLocaleString('es-CL')})
-                        </option>
-                      ))}
+                      <option value="Transferencia" style={{ color: '#000' }}>📱 Transferencia Bancaria</option>
+                      <option value="Efectivo" style={{ color: '#000' }}>💵 Efectivo</option>
+                      <option value="Cheque" style={{ color: '#000' }}>📄 Cheque</option>
+                      <option value="Otro" style={{ color: '#000' }}>🔄 Otro</option>
                     </select>
-                    <span style={{ fontSize: '0.72rem', color: '#888', marginTop: '4px', display: 'block' }}>
-                      Se descontará automáticamente 1 unidad del stock de bodega si hay unidades disponibles.
-                    </span>
                   </div>
-                )}
+                </div>
 
-                {premioModalTipo === 'personalizado' && (
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '5px' }}>
-                      Nombre o Detalle del Regalo:
-                    </label>
-                    <input 
-                      type="text" 
-                      className="input-field" 
-                      style={{ margin: 0 }}
-                      placeholder="Ej: Decant Tom Ford 10ml, Limpieza Facial de Cortesía..."
-                      value={premioPersonalizadoTexto}
-                      onChange={e => setPremioPersonalizadoTexto(e.target.value)}
-                    />
-                    <span style={{ fontSize: '0.72rem', color: '#888', marginTop: '4px', display: 'block' }}>
-                      Quedará registrado permanentemente en el historial VIP del cliente.
-                    </span>
-                  </div>
-                )}
+                {/* N° de Comprobante / Transacción */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px', fontWeight: 'bold' }}>
+                    N° de Comprobante / Operación de Transferencia:
+                  </label>
+                  <input 
+                    type="text" 
+                    placeholder="Ej: Transf. Banco Estado #12345678" 
+                    className="input-field" 
+                    style={{ margin: 0 }}
+                    value={pagoModalData.numero_comprobante} 
+                    onChange={e => setPagoModalData({ ...pagoModalData, numero_comprobante: e.target.value })} 
+                  />
+                </div>
 
-                <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                {/* Notas / Observaciones */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', color: '#aaa', marginBottom: '4px', fontWeight: 'bold' }}>
+                    Notas u Observaciones (Opcional):
+                  </label>
+                  <textarea 
+                    rows="2" 
+                    placeholder="Ej: Descuento por anticipo de insumos, bono especial, etc." 
+                    className="input-field" 
+                    style={{ margin: 0, resize: 'vertical' }}
+                    value={pagoModalData.notas} 
+                    onChange={e => setPagoModalData({ ...pagoModalData, notas: e.target.value })} 
+                  />
+                </div>
+
+                {/* Botones de Acción */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
                   <button 
                     type="submit" 
                     className="btn-primary" 
-                    disabled={isSubmittingPremio}
+                    disabled={guardandoPago}
                     style={{ 
-                      flex: 2, 
-                      padding: '12px', 
-                      fontWeight: 'bold',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
+                      padding: '13px', 
+                      fontWeight: 'bold', 
+                      fontSize: '0.95rem',
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center', 
                       gap: '8px',
-                      opacity: isSubmittingPremio ? 0.7 : 1,
-                      cursor: isSubmittingPremio ? 'not-allowed' : 'pointer'
+                      opacity: guardandoPago ? 0.7 : 1,
+                      cursor: guardandoPago ? 'not-allowed' : 'pointer'
                     }}
                   >
-                    {isSubmittingPremio ? '⏳ Registrando entrega...' : '🎁 Confirmar y Entregar Regalo'}
+                    {guardandoPago ? '⏳ Procesando Pago...' : (pagoModalData.es_edicion ? '💾 Guardar Cambios de Pago' : '💰 Confirmar y Registrar Pago')}
                   </button>
-                  <button 
-                    type="button" 
-                    className="btn-outline-gold" 
-                    style={{ flex: 1, padding: '12px' }} 
-                    onClick={() => { setShowPremioModal(false); setClientePremio(null); }}
-                  >
-                    Cancelar
-                  </button>
+
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    {pagoModalData.es_edicion && pagoModalData.pago_id && (
+                      <button 
+                        type="button" 
+                        onClick={() => handleEliminarPago(pagoModalData.pago_id)}
+                        style={{ flex: 1, padding: '10px', background: 'rgba(231, 76, 60, 0.15)', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '8px', fontSize: '0.85rem', cursor: 'pointer', fontWeight: 'bold' }}
+                      >
+                        🗑️ Anular Pago
+                      </button>
+                    )}
+                    <button 
+                      type="button" 
+                      className="btn-outline-gold" 
+                      style={{ flex: 1, padding: '10px', color: '#aaa', borderColor: '#555' }} 
+                      onClick={() => setPagoModalData(null)}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
                 </div>
+
               </form>
 
             </div>

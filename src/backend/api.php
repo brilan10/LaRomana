@@ -162,8 +162,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $rut = isset($data['rut']) ? trim($data['rut']) : null;
             $telefono = isset($data['telefono']) ? trim($data['telefono']) : null;
             $montoCustom = (isset($data['monto']) && $data['monto'] !== null && $data['monto'] !== '') ? (float)$data['monto'] : null;
-            $marcarPagada = !empty($data['marcar_pagada']) || !empty($data['ya_pagada']) || (($data['estado'] ?? '') === 'Completada');
-            $metodoPago = $data['metodo_pago'] ?? 'Efectivo';
+            $fechaCita = !empty($data['fecha']) ? trim($data['fecha']) : date('Y-m-d');
+            $hoyActual = date('Y-m-d');
+            $esPasado = ($fechaCita < $hoyActual);
+            $marcarPagada = !empty($data['marcar_pagada']) || !empty($data['ya_pagada']) || (($data['estado'] ?? '') === 'Completada') || $esPasado;
+            $metodoPago = !empty($data['metodo_pago']) ? trim($data['metodo_pago']) : 'Efectivo';
             $descuento = isset($data['descuento']) ? (float)$data['descuento'] : 0;
             $estadoCita = $marcarPagada ? 'Completada' : ($data['estado'] ?? 'Pendiente');
             
@@ -195,43 +198,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             // Calcular monto o servicios
             $servicios = !empty($data['servicios']) && is_array($data['servicios']) ? $data['servicios'] : [];
             $subtotalCalc = 0;
+            $detallesParaInsertar = [];
+
             if (!empty($servicios)) {
                 foreach ($servicios as $servId) {
-                    $s = $pdo->prepare("SELECT precio FROM servicios WHERE id = ?");
+                    $s = $pdo->prepare("SELECT id, precio FROM servicios WHERE id = ?");
                     $s->execute([$servId]);
-                    $precioDb = $s->fetchColumn();
+                    $rowS = $s->fetch(PDO::FETCH_ASSOC);
+                    $precioDb = $rowS ? (float)$rowS['precio'] : 0;
                     $precioFinal = ($montoCustom !== null && count($servicios) === 1) ? $montoCustom : ($precioDb ?: 0);
+                    if ($precioFinal <= 0 && $montoCustom !== null && $montoCustom > 0) {
+                        $precioFinal = $montoCustom;
+                    }
+                    if ($precioFinal <= 0) $precioFinal = 14000;
                     $subtotalCalc += $precioFinal;
+                    $detallesParaInsertar[] = ['servicio_id' => $servId, 'precio' => $precioFinal];
                 }
             } else {
-                $sDefault = $pdo->query("SELECT id, precio FROM servicios ORDER BY es_corte DESC, id ASC LIMIT 1")->fetch();
-                $precioFinal = ($montoCustom !== null) ? $montoCustom : ($sDefault ? ($sDefault['precio'] ?: 14000) : 14000);
+                $sDefault = $pdo->query("SELECT id, precio FROM servicios ORDER BY es_corte DESC, id ASC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+                $servId = $sDefault ? $sDefault['id'] : 1;
+                $precioFinal = ($montoCustom !== null && $montoCustom > 0) ? $montoCustom : ($sDefault ? (float)($sDefault['precio'] ?: 14000) : 14000);
+                if ($precioFinal <= 0) $precioFinal = 14000;
                 $subtotalCalc = $precioFinal;
+                $detallesParaInsertar[] = ['servicio_id' => $servId, 'precio' => $precioFinal];
             }
 
             $totalPagado = $marcarPagada ? max(0, $subtotalCalc - $descuento) : null;
             $metodoPagoFinal = $marcarPagada ? $metodoPago : null;
 
             $stmt = $pdo->prepare("INSERT INTO citas (cliente_id, trabajador_id, fecha, hora, estado, metodo_pago, descuento, total_pagado) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([$cliente_id, $data['trabajador_id'], $data['fecha'], $data['hora'], $estadoCita, $metodoPagoFinal, $descuento, $totalPagado]);
+            $stmt->execute([$cliente_id, $data['trabajador_id'], $fechaCita, $data['hora'], $estadoCita, $metodoPagoFinal, $descuento, $totalPagado]);
             $citaId = $pdo->lastInsertId();
             
-            // Insertar detalles
+            // Insertar detalles garantizados
             $stmtDet = $pdo->prepare("INSERT INTO cita_detalle (cita_id, servicio_id, precio_cobrado) VALUES (?, ?, ?)");
-            if (!empty($servicios)) {
-                foreach ($servicios as $servId) {
-                    $s = $pdo->prepare("SELECT precio FROM servicios WHERE id = ?");
-                    $s->execute([$servId]);
-                    $precioDb = $s->fetchColumn();
-                    $precioFinal = ($montoCustom !== null && count($servicios) === 1) ? $montoCustom : ($precioDb ?: 0);
-                    $stmtDet->execute([$citaId, $servId, $precioFinal]);
-                }
-            } else {
-                $sDefault = $pdo->query("SELECT id, precio FROM servicios ORDER BY es_corte DESC, id ASC LIMIT 1")->fetch();
-                if ($sDefault) {
-                    $precioFinal = ($montoCustom !== null) ? $montoCustom : ($sDefault['precio'] ?: 14000);
-                    $stmtDet->execute([$citaId, $sDefault['id'], $precioFinal]);
-                }
+            foreach ($detallesParaInsertar as $det) {
+                $stmtDet->execute([$citaId, $det['servicio_id'], $det['precio']]);
             }
 
             // Si fue marcada como completada y pagada, sumamos el corte acumulado al cliente
@@ -245,6 +247,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 "cliente_id" => $cliente_id,
                 "marcar_pagada" => $marcarPagada,
                 "estado" => $estadoCita,
+                "subtotal" => $subtotalCalc,
                 "total_pagado" => $totalPagado
             ]);
             break;

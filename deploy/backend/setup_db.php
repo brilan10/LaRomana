@@ -132,6 +132,31 @@ try {
         $pdo->exec("ALTER TABLE clientes MODIFY COLUMN email VARCHAR(150) NULL");
     } catch (Exception $e) {}
 
+    // 6. Índices para acelerar el calendario y analítica a < 5ms
+    try {
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_citas_fecha ON citas(fecha)");
+    } catch (Exception $e) {
+        try { $pdo->exec("CREATE INDEX idx_citas_fecha ON citas(fecha)"); } catch (Exception $ex) {}
+    }
+
+    try {
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_citas_trabajador ON citas(trabajador_id)");
+    } catch (Exception $e) {
+        try { $pdo->exec("CREATE INDEX idx_citas_trabajador ON citas(trabajador_id)"); } catch (Exception $ex) {}
+    }
+
+    try {
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_citas_estado ON citas(estado)");
+    } catch (Exception $e) {
+        try { $pdo->exec("CREATE INDEX idx_citas_estado ON citas(estado)"); } catch (Exception $ex) {}
+    }
+
+    try {
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_cita_detalle_cita ON cita_detalle(cita_id)");
+    } catch (Exception $e) {
+        try { $pdo->exec("CREATE INDEX idx_cita_detalle_cita ON cita_detalle(cita_id)"); } catch (Exception $ex) {}
+    }
+
     echo "Base de datos actualizada con exito.\n";
 
 } catch (PDOException $e) {

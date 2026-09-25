@@ -22,15 +22,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $mes_actual = $pdo->query("SELECT DATE_FORMAT(CURDATE(), '%Y-%m-01')")->fetchColumn();
 
             // Citas Atendidas Hoy (Completadas)
-            $stmtCitasHoy = $pdo->prepare("SELECT COUNT(*) FROM citas WHERE fecha = ? AND estado = 'Completada'");
+            $stmtCitasHoy = $pdo->prepare("SELECT COUNT(*) FROM citas WHERE fecha = ? AND LOWER(estado) IN ('completada', 'completado', 'pagada', 'pagado', 'finalizada', 'finalizado')");
             $stmtCitasHoy->execute([$hoy]);
             $metrics['citas_atendidas'] = $stmtCitasHoy->fetchColumn() ?: 0;
 
-            // Ingresos Cortes Hoy (Total cobrado en cita_detalle)
+            // Ingresos Cortes Hoy (Total cobrado en cita_detalle o total_pagado)
             $stmtIngresosCortes = $pdo->prepare("
-                SELECT SUM(cd.precio_cobrado) FROM cita_detalle cd 
-                JOIN citas c ON cd.cita_id = c.id 
-                WHERE c.fecha = ? AND c.estado = 'Completada'
+                SELECT SUM(COALESCE((SELECT SUM(cd.precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id), c.total_pagado, 0)) 
+                FROM citas c 
+                WHERE c.fecha = ? AND LOWER(c.estado) IN ('completada', 'completado', 'pagada', 'pagado', 'finalizada', 'finalizado')
             ");
             $stmtIngresosCortes->execute([$hoy]);
             $ingresos_cortes = $stmtIngresosCortes->fetchColumn() ?: 0;
@@ -46,9 +46,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
             // Ingresos del mes
             $stmtIngMes = $pdo->prepare("
-                SELECT SUM(cd.precio_cobrado) FROM cita_detalle cd 
-                JOIN citas c ON cd.cita_id = c.id 
-                WHERE c.fecha >= ? AND c.estado = 'Completada'
+                SELECT SUM(COALESCE((SELECT SUM(cd.precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id), c.total_pagado, 0)) 
+                FROM citas c 
+                WHERE c.fecha >= ? AND LOWER(c.estado) IN ('completada', 'completado', 'pagada', 'pagado', 'finalizada', 'finalizado')
             ");
             $stmtIngMes->execute([$mes_actual]);
             $ingresos_cortes_mes = $stmtIngMes->fetchColumn() ?: 0;
@@ -63,7 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $stmtTopB = $pdo->prepare("
                 SELECT t.nombre, COUNT(c.id) as cortes 
                 FROM citas c JOIN trabajadores t ON c.trabajador_id = t.id 
-                WHERE c.fecha >= ? AND c.estado = 'Completada' 
+                WHERE c.fecha >= ? AND LOWER(c.estado) IN ('completada', 'completado', 'pagada', 'pagado', 'finalizada', 'finalizado')
                 GROUP BY t.id ORDER BY cortes DESC LIMIT 1
             ");
             $stmtTopB->execute([$mes_actual]);
@@ -77,7 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $stmtTopC = $pdo->prepare("
                 SELECT cl.nombre, COUNT(c.id) as citas 
                 FROM citas c JOIN clientes cl ON c.cliente_id = cl.id 
-                WHERE c.fecha >= ? AND c.estado = 'Completada' 
+                WHERE c.fecha >= ? AND LOWER(c.estado) IN ('completada', 'completado', 'pagada', 'pagado', 'finalizada', 'finalizado')
                 GROUP BY cl.id ORDER BY citas DESC LIMIT 1
             ");
             $stmtTopC->execute([$mes_actual]);
@@ -101,9 +101,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 $fecha = date('Y-m-d', strtotime("-$i days"));
                 
                 $stmtC = $pdo->prepare("
-                    SELECT SUM(cd.precio_cobrado) FROM cita_detalle cd 
-                    JOIN citas c ON cd.cita_id = c.id 
-                    WHERE c.fecha = ? AND c.estado = 'Completada'
+                    SELECT SUM(COALESCE((SELECT SUM(cd.precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id), c.total_pagado, 0)) 
+                    FROM citas c 
+                    WHERE c.fecha = ? AND LOWER(c.estado) IN ('completada', 'completado', 'pagada', 'pagado', 'finalizada', 'finalizado')
                 ");
                 $stmtC->execute([$fecha]);
                 $c = (float)($stmtC->fetchColumn() ?: 0);
@@ -499,8 +499,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                            t.id as barbero_id, IFNULL(t.nombre, 'Barbero') as barbero_nombre,
                            IFNULL((SELECT SUM(cd.precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id), c.total_pagado) as subtotal,
                            IFNULL((SELECT GROUP_CONCAT(s.nombre SEPARATOR ' + ') FROM cita_detalle cd JOIN servicios s ON cd.servicio_id = s.id WHERE cd.cita_id = c.id), 'Servicio de Barbería') as servicios_nombres,
-                           IFNULL(cdi.porcentaje_barbero, 60.00) as porcentaje_barbero,
-                           IFNULL(cdi.porcentaje_tienda, 40.00) as porcentaje_tienda
+                           IFNULL(NULLIF(cdi.porcentaje_barbero, 0), 60.00) as porcentaje_barbero,
+                           IFNULL(NULLIF(cdi.porcentaje_tienda, 0), 40.00) as porcentaje_tienda
                     FROM citas c
                     LEFT JOIN clientes cl ON c.cliente_id = cl.id
                     LEFT JOIN trabajadores t ON c.trabajador_id = t.id
@@ -508,7 +508,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                         SELECT fecha, MAX(porcentaje_barbero) as porcentaje_barbero, MAX(porcentaje_tienda) as porcentaje_tienda 
                         FROM cierres_diarios GROUP BY fecha
                     ) cdi ON c.fecha = cdi.fecha
-                    WHERE (LOWER(c.estado) IN ('completada', 'completado', 'pagada', 'pagado', 'finalizada', 'finalizado'))
+                    WHERE (LOWER(c.estado) IN ('completada', 'completado', 'pagada', 'pagado', 'finalizada', 'finalizado')
+                           OR (c.fecha < CURDATE() AND LOWER(c.estado) NOT IN ('cancelada', 'cancelado')))
                       AND c.fecha BETWEEN ? AND ?
                 ";
                 $params = [$fecha_inicio, $fecha_fin];
@@ -539,6 +540,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                     if ($subtotal <= 0) {
                         $subtotal = floatval($c['total_pagado'] ?? 0);
                     }
+                    if ($subtotal <= 0) {
+                        $subtotal = 14000;
+                    }
                     $descuento = floatval($c['descuento'] ?? 0);
                     $totalReal = max(0, $subtotal - $descuento);
                     if ($totalReal <= 0 && floatval($c['total_pagado'] ?? 0) > 0) {
@@ -546,7 +550,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                         if ($subtotal <= 0) $subtotal = $totalReal;
                     }
                     $pctB = floatval($c['porcentaje_barbero']);
+                    if ($pctB <= 0) $pctB = 60.0;
                     $pctT = floatval($c['porcentaje_tienda']);
+                    if ($pctT <= 0) $pctT = 40.0;
                     $comisionB = $totalReal * ($pctB / 100);
                     $comisionT = $totalReal * ($pctT / 100);
 
@@ -579,22 +585,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                             'fecha' => $fecha,
                             'dia_nombre' => $diasSemana[$dayNameEn] ?? $dayNameEn,
                             'cortes_dia' => 0,
+                            'cortes' => 0,
                             'total_bruto_dia' => 0,
+                            'bruto' => 0,
                             'descuento_dia' => 0,
+                            'descuento' => 0,
                             'total_neto_dia' => 0,
+                            'neto' => 0,
                             'porcentaje_barbero' => $pctB,
                             'porcentaje_tienda' => $pctT,
                             'comision_barbero_dia' => 0,
-                            'ganancia_tienda_dia' => 0
+                            'comision_barbero' => 0,
+                            'ganancia_tienda_dia' => 0,
+                            'ganancia_tienda' => 0
                         ];
                     }
 
                     $barberosMap[$bId]['dias_map'][$fecha]['cortes_dia']++;
+                    $barberosMap[$bId]['dias_map'][$fecha]['cortes']++;
                     $barberosMap[$bId]['dias_map'][$fecha]['total_bruto_dia'] += $subtotal;
+                    $barberosMap[$bId]['dias_map'][$fecha]['bruto'] += $subtotal;
                     $barberosMap[$bId]['dias_map'][$fecha]['descuento_dia'] += $descuento;
+                    $barberosMap[$bId]['dias_map'][$fecha]['descuento'] += $descuento;
                     $barberosMap[$bId]['dias_map'][$fecha]['total_neto_dia'] += $totalReal;
+                    $barberosMap[$bId]['dias_map'][$fecha]['neto'] += $totalReal;
                     $barberosMap[$bId]['dias_map'][$fecha]['comision_barbero_dia'] += $comisionB;
+                    $barberosMap[$bId]['dias_map'][$fecha]['comision_barbero'] += $comisionB;
                     $barberosMap[$bId]['dias_map'][$fecha]['ganancia_tienda_dia'] += $comisionT;
+                    $barberosMap[$bId]['dias_map'][$fecha]['ganancia_tienda'] += $comisionT;
 
                     // Cita individual
                     $c['subtotal'] = $subtotal;
@@ -722,16 +740,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $fecha_inicio = $_GET['inicio'] ?? date('Y-m-01');
             $fecha_fin = $_GET['fin'] ?? date('Y-m-t');
             $stmt = $pdo->prepare("
-                SELECT c.id, c.fecha, c.hora, c.descuento, c.metodo_pago, cl.nombre as cliente, t.nombre as barbero,
-                (SELECT SUM(precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id) as subtotal,
-                (SELECT GROUP_CONCAT(s.nombre SEPARATOR ' + ') FROM cita_detalle cd JOIN servicios s ON cd.servicio_id = s.id WHERE cd.cita_id = c.id) as servicios_nombres,
-                IFNULL(cdi.porcentaje_barbero, 60.00) as porcentaje_barbero,
-                IFNULL(cdi.porcentaje_tienda, 40.00) as porcentaje_tienda
+                SELECT c.id, c.fecha, c.hora, c.descuento, c.total_pagado, c.metodo_pago, cl.nombre as cliente, t.nombre as barbero,
+                COALESCE((SELECT SUM(precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id), c.total_pagado, 14000) as subtotal,
+                IFNULL((SELECT GROUP_CONCAT(s.nombre SEPARATOR ' + ') FROM cita_detalle cd JOIN servicios s ON cd.servicio_id = s.id WHERE cd.cita_id = c.id), 'Servicio de Barbería') as servicios_nombres,
+                IFNULL(NULLIF(cdi.porcentaje_barbero, 0), 60.00) as porcentaje_barbero,
+                IFNULL(NULLIF(cdi.porcentaje_tienda, 0), 40.00) as porcentaje_tienda
                 FROM citas c
                 JOIN clientes cl ON c.cliente_id = cl.id
                 JOIN trabajadores t ON c.trabajador_id = t.id
-                LEFT JOIN cierres_diarios cdi ON c.fecha = cdi.fecha
-                WHERE c.estado = 'Completada' AND c.fecha BETWEEN ? AND ?
+                LEFT JOIN (
+                    SELECT fecha, MAX(porcentaje_barbero) as porcentaje_barbero, MAX(porcentaje_tienda) as porcentaje_tienda 
+                    FROM cierres_diarios GROUP BY fecha
+                ) cdi ON c.fecha = cdi.fecha
+                WHERE (LOWER(c.estado) IN ('completada', 'completado', 'pagada', 'pagado', 'finalizada', 'finalizado')
+                       OR (c.fecha < CURDATE() AND LOWER(c.estado) NOT IN ('cancelada', 'cancelado')))
+                  AND c.fecha BETWEEN ? AND ?
                 ORDER BY t.nombre, c.fecha, c.hora
             ");
             $stmt->execute([$fecha_inicio, $fecha_fin]);
@@ -1679,8 +1702,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 echo json_encode(["status" => "error", "message" => "ID de cita inválido."]);
                 break;
             }
-            $stmt = $pdo->prepare("UPDATE citas SET estado = ? WHERE id = ?");
-            $stmt->execute([$nuevo_estado, $cita_id]);
+            if (in_array(strtolower($nuevo_estado), ['completada', 'completado', 'pagada', 'pagado', 'finalizada', 'finalizado'])) {
+                $stmtCitaInfo = $pdo->prepare("SELECT total_pagado, (SELECT SUM(precio_cobrado) FROM cita_detalle WHERE cita_id = ?) as sub FROM citas WHERE id = ?");
+                $stmtCitaInfo->execute([$cita_id, $cita_id]);
+                $cInfo = $stmtCitaInfo->fetch(PDO::FETCH_ASSOC);
+                $sub = floatval($cInfo['sub'] ?? 0);
+                if ($sub <= 0) $sub = floatval($cInfo['total_pagado'] ?? 14000);
+                $pdo->prepare("UPDATE citas SET estado = ?, total_pagado = IFNULL(total_pagado, ?) WHERE id = ?")->execute([$nuevo_estado, $sub, $cita_id]);
+            } else {
+                $stmt = $pdo->prepare("UPDATE citas SET estado = ? WHERE id = ?");
+                $stmt->execute([$nuevo_estado, $cita_id]);
+            }
             echo json_encode(["status" => "success", "message" => "Estado de la cita actualizado a $nuevo_estado."]);
             break;
 
