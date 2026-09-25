@@ -5,7 +5,7 @@ import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import ErrorBoundary from './ErrorBoundary';
 import { resolveImageUrl } from '../utils/imageHelper';
-import { printThermalTicket } from '../utils/printTicket';
+import { printThermalTicket, printLiquidacionTicket } from '../utils/printTicket';
 import { formatRut } from '../utils/rut';
 
 const formatDateYMD = (d = new Date()) => {
@@ -545,6 +545,9 @@ export default function AdminDashboard({ session, logout }) {
       comision_calculada: Number(barbero.total_comision_barbero),
       total_cortes: barbero.total_cortes,
       dias_trabajados: barbero.dias_trabajados,
+      total_bruto: Number(barbero.total_bruto || 0),
+      total_ganancia_tienda: Number(barbero.total_ganancia_tienda || 0),
+      detalle_dias: barbero.detalle_dias || [],
       fecha_pago: yaPagado ? barbero.pago_info.fecha_pago : new Date().toISOString().split('T')[0],
       metodo_pago: yaPagado ? barbero.pago_info.metodo_pago : 'Transferencia',
       numero_comprobante: yaPagado ? (barbero.pago_info.numero_comprobante || '') : '',
@@ -554,8 +557,8 @@ export default function AdminDashboard({ session, logout }) {
     });
   };
 
-  const handleGuardarPago = async (e) => {
-    e.preventDefault();
+  const handleGuardarPago = async (e, autoPrint = false) => {
+    if (e && e.preventDefault) e.preventDefault();
     if (!pagoModalData) return;
     setGuardandoPago(true);
     try {
@@ -567,6 +570,29 @@ export default function AdminDashboard({ session, logout }) {
       const data = await res.json();
       if (data.status === 'success') {
         showToast(data.message || 'Pago registrado exitosamente', 'success');
+
+        if (autoPrint) {
+          try {
+            printLiquidacionTicket({
+              barberoNombre: pagoModalData.barbero_nombre,
+              periodoInicio: pagoModalData.periodo_inicio,
+              periodoFin: pagoModalData.periodo_fin,
+              fechaPago: pagoModalData.fecha_pago,
+              totalCortes: pagoModalData.total_cortes,
+              diasTrabajados: pagoModalData.dias_trabajados,
+              totalBruto: pagoModalData.total_bruto,
+              comisionMonto: pagoModalData.monto,
+              gananciaTienda: pagoModalData.total_ganancia_tienda,
+              metodoPago: pagoModalData.metodo_pago,
+              numeroComprobante: pagoModalData.numero_comprobante,
+              notas: pagoModalData.notas,
+              detalleDias: pagoModalData.detalle_dias
+            });
+          } catch (ePrint) {
+            console.warn("Error al imprimir ticket de liquidación:", ePrint);
+          }
+        }
+
         setPagoModalData(null);
         cargarLiquidaciones(liqFechaInicio, liqFechaFin, liqBarberoId);
         if (historialPagosModal) {
@@ -2723,44 +2749,86 @@ export default function AdminDashboard({ session, logout }) {
 
                           {/* Acciones */}
                           <td style={{ ...tableCellStyle, textAlign: 'center' }}>
-                            <button
-                              type="button"
-                              className="btn-outline-gold"
-                              onClick={() => {
-                                setTicketDetalleModal({
-                                  id: v.id,
-                                  tipo: v.tipo,
-                                  folio: v.folio,
-                                  fecha_creacion: v.hora ? `${formatDateYMD()} ${v.hora}` : formatDateYMD(),
-                                  cliente: v.cliente || 'Cliente Mostrador',
-                                  cliente_rut: v.cliente_rut || '',
-                                  cliente_telefono: v.cliente_telefono || '',
-                                  cliente_email: v.cliente_email || '',
-                                  barbero: v.barbero || '',
-                                  detalles: (v.items || []).map(it => ({
-                                    producto: it.nombre || 'Artículo / Servicio',
-                                    cantidad: Number(it.cantidad) || 1,
-                                    precio_unitario: Number(it.precio_unitario || it.precio || 0)
-                                  })),
-                                  subtotal: Number(v.subtotal || v.total || 0),
-                                  descuento: Number(v.descuento || 0),
-                                  total: Number(v.total || 0),
-                                  metodo_pago: v.metodo_pago || 'Efectivo',
-                                  estado: v.estado || 'Pagado'
-                                });
-                              }}
-                              style={{
-                                padding: '5px 10px',
-                                fontSize: '0.78rem',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '4px',
-                                fontWeight: 'bold',
-                                borderRadius: '6px'
-                              }}
-                            >
-                              <span>👁️</span> Boleta
-                            </button>
+                            <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                              <button
+                                type="button"
+                                className="btn-outline-gold"
+                                onClick={() => {
+                                  setTicketDetalleModal({
+                                    id: v.id,
+                                    tipo: v.tipo,
+                                    folio: v.folio,
+                                    fecha_creacion: v.hora ? `${formatDateYMD()} ${v.hora}` : formatDateYMD(),
+                                    cliente: v.cliente || 'Cliente Mostrador',
+                                    cliente_rut: v.cliente_rut || '',
+                                    cliente_telefono: v.cliente_telefono || '',
+                                    cliente_email: v.cliente_email || '',
+                                    barbero: v.barbero || '',
+                                    detalles: (v.items || []).map(it => ({
+                                      producto: it.nombre || 'Artículo / Servicio',
+                                      cantidad: Number(it.cantidad) || 1,
+                                      precio_unitario: Number(it.precio_unitario || it.precio || 0)
+                                    })),
+                                    subtotal: Number(v.subtotal || v.total || 0),
+                                    descuento: Number(v.descuento || 0),
+                                    total: Number(v.total || 0),
+                                    metodo_pago: v.metodo_pago || 'Efectivo',
+                                    estado: v.estado || 'Pagado'
+                                  });
+                                }}
+                                style={{
+                                  padding: '5px 8px',
+                                  fontSize: '0.78rem',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  fontWeight: 'bold',
+                                  borderRadius: '6px'
+                                }}
+                                title="Ver detalles y vista previa del comprobante"
+                              >
+                                👁️ Ver
+                              </button>
+
+                              <button
+                                type="button"
+                                className="btn-outline-gold"
+                                onClick={() => {
+                                  printThermalTicket({
+                                    tipo: v.tipo || 'producto',
+                                    folio: v.folio || `LR-${String(v.id).padStart(4, '0')}`,
+                                    fecha: v.hora ? `${formatDateYMD()} ${v.hora}` : formatDateYMD(),
+                                    cliente: v.cliente || 'Cliente Mostrador',
+                                    rut: v.cliente_rut || '',
+                                    telefono: v.cliente_telefono || '',
+                                    barbero: v.barbero || 'Caja / Local',
+                                    items: (v.items || []).map(it => ({
+                                      nombre: it.nombre || 'Artículo / Servicio',
+                                      cantidad: Number(it.cantidad) || 1,
+                                      precio: Number(it.precio_unitario || it.precio || 0),
+                                      subtotal: (Number(it.precio_unitario || it.precio || 0)) * (Number(it.cantidad) || 1)
+                                    })),
+                                    subtotal: Number(v.subtotal || v.total || 0),
+                                    descuento: Number(v.descuento || 0),
+                                    total: Number(v.total || 0),
+                                    metodoPago: v.metodo_pago || 'Efectivo',
+                                    estado: v.estado || 'PAGADO'
+                                  });
+                                }}
+                                style={{
+                                  padding: '5px 8px',
+                                  fontSize: '0.78rem',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  fontWeight: 'bold',
+                                  borderRadius: '6px'
+                                }}
+                                title="Imprimir boleta térmica POS-80 inmediatamente"
+                              >
+                                🖨️ Imprimir
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -5185,6 +5253,32 @@ export default function AdminDashboard({ session, logout }) {
                                 💰 Pagar Barbero
                               </button>
                             )}
+
+                            <button 
+                              type="button"
+                              className="btn-outline-gold" 
+                              onClick={() => {
+                                printLiquidacionTicket({
+                                  barberoNombre: b.barbero_nombre,
+                                  periodoInicio: liquidacionData?.rango?.inicio || liqFechaInicio,
+                                  periodoFin: liquidacionData?.rango?.fin || liqFechaFin,
+                                  fechaPago: b.pago_info ? b.pago_info.fecha_pago : new Date().toISOString().split('T')[0],
+                                  totalCortes: b.total_cortes || 0,
+                                  diasTrabajados: b.dias_trabajados || (b.detalle_dias?.length || 0),
+                                  totalBruto: Number(b.total_bruto || 0),
+                                  comisionMonto: b.pago_info ? Number(b.pago_info.monto) : Number(b.total_comision_barbero || 0),
+                                  gananciaTienda: Number(b.total_ganancia_tienda || 0),
+                                  metodoPago: b.pago_info ? b.pago_info.metodo_pago : 'Transferencia',
+                                  numeroComprobante: b.pago_info?.numero_comprobante || '',
+                                  notas: b.pago_info?.notas || '',
+                                  detalleDias: b.detalle_dias || []
+                                });
+                              }}
+                              style={{ padding: '4px 8px', fontSize: '0.75rem', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+                              title="Imprimir comprobante térmico de liquidación (POS-80)"
+                            >
+                              🖨️ Voucher
+                            </button>
                             
                             <button 
                               className="btn-outline-gold" 
@@ -5751,14 +5845,45 @@ export default function AdminDashboard({ session, logout }) {
 
                     {/* Acciones */}
                     <td style={{ ...tableCellStyle, verticalAlign: 'top', textAlign: 'center' }}>
-                      <button 
-                        onClick={() => setTicketDetalleModal(p)}
-                        className="btn-outline-gold"
-                        style={{ padding: '5px 10px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
-                        title="Ver comprobante y detalle completo"
-                      >
-                        👁️ Ver Boleta
-                      </button>
+                      <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                        <button 
+                          onClick={() => setTicketDetalleModal(p)}
+                          className="btn-outline-gold"
+                          style={{ padding: '5px 8px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
+                          title="Ver comprobante y detalle completo"
+                        >
+                          👁️ Ver
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            printThermalTicket({
+                              tipo: 'producto',
+                              folio: `LR-${String(p.id).padStart(4, '0')}`,
+                              fecha: p.fecha_creacion,
+                              cliente: p.cliente || 'Cliente Tienda',
+                              rut: p.cliente_rut,
+                              telefono: p.cliente_telefono,
+                              items: (p.detalles || []).map(d => ({
+                                nombre: d.producto || 'Producto',
+                                cantidad: Number(d.cantidad) || 1,
+                                precio: Number(d.precio_unitario) || 0,
+                                subtotal: (Number(d.precio_unitario) || 0) * (Number(d.cantidad) || 1)
+                              })),
+                              subtotal: Number(p.total) || 0,
+                              descuento: 0,
+                              total: Number(p.total) || 0,
+                              metodoPago: p.metodo_pago || 'Tienda / Local',
+                              estado: p.estado || 'Pagado'
+                            });
+                          }}
+                          className="btn-outline-gold"
+                          style={{ padding: '5px 8px', fontSize: '0.78rem', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+                          title="Imprimir boleta térmica POS-80 inmediatamente"
+                        >
+                          🖨️ Imprimir
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -6900,17 +7025,51 @@ export default function AdminDashboard({ session, logout }) {
                               )}
                             </div>
 
-                            <div style={{ textAlign: 'right' }}>
+                            <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
                               {c.total_pagado && (
                                 <div style={{ color: '#2ecc71', fontWeight: 'bold', fontSize: '0.9rem' }}>
-                                  $${Number(c.total_pagado).toLocaleString('es-CL')}
+                                  ${Number(c.total_pagado).toLocaleString('es-CL')}
                                 </div>
                               )}
                               {c.decant_entregado && (
-                                <div style={{ marginTop: '4px', fontSize: '0.75rem', background: 'rgba(155, 89, 182, 0.2)', color: '#bb86fc', padding: '2px 8px', borderRadius: '6px', border: '1px solid rgba(155, 89, 182, 0.4)' }}>
+                                <div style={{ fontSize: '0.75rem', background: 'rgba(155, 89, 182, 0.2)', color: '#bb86fc', padding: '2px 8px', borderRadius: '6px', border: '1px solid rgba(155, 89, 182, 0.4)' }}>
                                   🎁 Decant: {c.decant_entregado}
                                 </div>
                               )}
+                              <button
+                                type="button"
+                                className="btn-outline-gold"
+                                onClick={() => {
+                                  const subVal = Number(c.total_pagado) > 0 ? Number(c.total_pagado) : 14000;
+                                  printThermalTicket({
+                                    tipo: 'corte',
+                                    folio: c.id ? `LR-CITA-${String(c.id).padStart(4, '0')}` : 'LR-CITA',
+                                    fecha: `${c.fecha} ${c.hora?.substring(0,5) || ''}`,
+                                    cliente: historialCRMActivo.nombre,
+                                    rut: historialCRMActivo.rut,
+                                    telefono: historialCRMActivo.telefono,
+                                    barbero: c.barbero,
+                                    items: [
+                                      {
+                                        nombre: c.servicios || 'Corte de Cabello / Barbería',
+                                        cantidad: 1,
+                                        precio: subVal,
+                                        subtotal: subVal
+                                      }
+                                    ],
+                                    subtotal: subVal,
+                                    descuento: 0,
+                                    total: subVal,
+                                    metodoPago: c.metodo_pago || 'Efectivo',
+                                    estado: c.estado === 'Completada' ? 'PAGADO' : (c.estado || 'REGISTRADO'),
+                                    cortesAcumulados: c.cortes_acumulados
+                                  });
+                                }}
+                                style={{ padding: '3px 8px', fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: '3px', marginTop: '2px' }}
+                                title="Reimprimir boleta térmica de este corte"
+                              >
+                                🖨️ Boleta
+                              </button>
                             </div>
                           </div>
                         ))}
@@ -7585,7 +7744,33 @@ export default function AdminDashboard({ session, logout }) {
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  <button 
+                    type="button"
+                    className="btn-outline-gold" 
+                    onClick={() => {
+                      printLiquidacionTicket({
+                        barberoNombre: barberoDetalleModal.barbero_nombre,
+                        periodoInicio: liquidacionData?.rango?.inicio || liqFechaInicio,
+                        periodoFin: liquidacionData?.rango?.fin || liqFechaFin,
+                        fechaPago: barberoDetalleModal.pago_info ? barberoDetalleModal.pago_info.fecha_pago : new Date().toISOString().split('T')[0],
+                        totalCortes: barberoDetalleModal.total_cortes || 0,
+                        diasTrabajados: barberoDetalleModal.dias_trabajados || (barberoDetalleModal.detalle_dias?.length || 0),
+                        totalBruto: Number(barberoDetalleModal.total_bruto || 0),
+                        comisionMonto: barberoDetalleModal.pago_info ? Number(barberoDetalleModal.pago_info.monto) : Number(barberoDetalleModal.total_comision_barbero || 0),
+                        gananciaTienda: Number(barberoDetalleModal.total_ganancia_tienda || 0),
+                        metodoPago: barberoDetalleModal.pago_info ? barberoDetalleModal.pago_info.metodo_pago : 'Transferencia',
+                        numeroComprobante: barberoDetalleModal.pago_info?.numero_comprobante || '',
+                        notas: barberoDetalleModal.pago_info?.notas || '',
+                        detalleDias: barberoDetalleModal.detalle_dias || []
+                      });
+                    }}
+                    style={{ padding: '7px 14px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+                    title="Imprimir comprobante y desglose térmico (POS-80)"
+                  >
+                    🖨️ Imprimir Liquidación
+                  </button>
+
                   {barberoDetalleModal.pago_info ? (
                     <button 
                       type="button"
@@ -7893,23 +8078,85 @@ export default function AdminDashboard({ session, logout }) {
 
                 {/* Botones de Acción */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
-                  <button 
-                    type="submit" 
-                    className="btn-primary" 
-                    disabled={guardandoPago}
-                    style={{ 
-                      padding: '13px', 
-                      fontWeight: 'bold', 
-                      fontSize: '0.95rem',
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      justifyContent: 'center', 
-                      gap: '8px',
-                      opacity: guardandoPago ? 0.7 : 1,
-                      cursor: guardandoPago ? 'not-allowed' : 'pointer'
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    <button 
+                      type="button" 
+                      className="btn-primary" 
+                      disabled={guardandoPago}
+                      onClick={(e) => handleGuardarPago(e, true)}
+                      style={{ 
+                        padding: '12px', 
+                        fontWeight: 'bold', 
+                        fontSize: '0.9rem',
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center', 
+                        gap: '6px',
+                        opacity: guardandoPago ? 0.7 : 1,
+                        cursor: guardandoPago ? 'not-allowed' : 'pointer'
+                      }}
+                      title="Registrar pago en el sistema e imprimir voucher en la máquina térmica"
+                    >
+                      {guardandoPago ? '⏳ Guardando...' : '🖨️ Pagar e Imprimir'}
+                    </button>
+
+                    <button 
+                      type="submit" 
+                      className="btn-outline-gold" 
+                      disabled={guardandoPago}
+                      style={{ 
+                        padding: '12px', 
+                        fontWeight: 'bold', 
+                        fontSize: '0.9rem',
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center', 
+                        gap: '6px',
+                        opacity: guardandoPago ? 0.7 : 1,
+                        cursor: guardandoPago ? 'not-allowed' : 'pointer'
+                      }}
+                      title="Registrar pago en el sistema sin imprimir ticket"
+                    >
+                      {guardandoPago ? '⏳ Guardando...' : (pagoModalData.es_edicion ? '💾 Solo Guardar' : '💰 Solo Registrar')}
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      printLiquidacionTicket({
+                        barberoNombre: pagoModalData.barbero_nombre,
+                        periodoInicio: pagoModalData.periodo_inicio,
+                        periodoFin: pagoModalData.periodo_fin,
+                        fechaPago: pagoModalData.fecha_pago,
+                        totalCortes: pagoModalData.total_cortes,
+                        diasTrabajados: pagoModalData.dias_trabajados,
+                        totalBruto: pagoModalData.total_bruto,
+                        comisionMonto: pagoModalData.monto,
+                        gananciaTienda: pagoModalData.total_ganancia_tienda,
+                        metodoPago: pagoModalData.metodo_pago,
+                        numeroComprobante: pagoModalData.numero_comprobante,
+                        notas: pagoModalData.notas,
+                        detalleDias: pagoModalData.detalle_dias
+                      });
                     }}
+                    style={{
+                      padding: '10px',
+                      background: 'rgba(212, 175, 55, 0.12)',
+                      border: '1px dashed var(--gold-jewel)',
+                      color: 'var(--gold-jewel)',
+                      borderRadius: '8px',
+                      fontWeight: 'bold',
+                      fontSize: '0.85rem',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px'
+                    }}
+                    title="Imprimir o probar vista del comprobante térmico POS-80"
                   >
-                    {guardandoPago ? '⏳ Procesando Pago...' : (pagoModalData.es_edicion ? '💾 Guardar Cambios de Pago' : '💰 Confirmar y Registrar Pago')}
+                    🖨️ Imprimir / Probar Comprobante Térmico (POS-80)
                   </button>
 
                   <div style={{ display: 'flex', gap: '10px' }}>
@@ -8034,13 +8281,37 @@ export default function AdminDashboard({ session, logout }) {
                         <td style={tableCellStyle}>{p.numero_comprobante || '-'}</td>
                         <td style={{ ...tableCellStyle, color: '#aaa', fontStyle: 'italic' }}>{p.notas || '-'}</td>
                         <td style={{ ...tableCellStyle, textAlign: 'center' }}>
-                          <button 
-                            onClick={() => handleEliminarPago(p.id)}
-                            style={{ background: 'transparent', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '4px', padding: '3px 8px', fontSize: '0.72rem', cursor: 'pointer' }}
-                            title="Eliminar este registro de pago"
-                          >
-                            🗑️ Anular
-                          </button>
+                          <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                            <button 
+                              type="button"
+                              onClick={() => {
+                                printLiquidacionTicket({
+                                  barberoNombre: p.barbero_nombre || 'Barbero',
+                                  periodoInicio: p.periodo_cubierto ? (p.periodo_cubierto.split(' al ')[0] || p.periodo_inicio || '') : (p.periodo_inicio || ''),
+                                  periodoFin: p.periodo_cubierto ? (p.periodo_cubierto.split(' al ')[1] || p.periodo_fin || '') : (p.periodo_fin || ''),
+                                  fechaPago: p.fecha_pago,
+                                  totalCortes: p.total_cortes || 0,
+                                  diasTrabajados: p.dias_trabajados || 0,
+                                  totalBruto: Number(p.total_bruto || 0),
+                                  comisionMonto: Number(p.monto || 0),
+                                  metodoPago: p.metodo_pago || 'Transferencia',
+                                  numeroComprobante: p.numero_comprobante || '',
+                                  notas: p.notas || ''
+                                });
+                              }}
+                              style={{ background: 'rgba(212, 175, 55, 0.15)', border: '1px solid var(--gold-jewel)', color: 'var(--gold-jewel)', borderRadius: '4px', padding: '3px 8px', fontSize: '0.72rem', cursor: 'pointer', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+                              title="Reimprimir comprobante térmico de este pago"
+                            >
+                              🖨️ Imprimir
+                            </button>
+                            <button 
+                              onClick={() => handleEliminarPago(p.id)}
+                              style={{ background: 'transparent', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '4px', padding: '3px 8px', fontSize: '0.72rem', cursor: 'pointer' }}
+                              title="Eliminar este registro de pago"
+                            >
+                              🗑️ Anular
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}

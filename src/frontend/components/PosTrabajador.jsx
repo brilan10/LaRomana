@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { API_URL } from '../App';
-import { printThermalTicket } from '../utils/printTicket';
+import { printThermalTicket, printLiquidacionTicket } from '../utils/printTicket';
 import { formatRut } from '../utils/rut';
 
 export default function PosTrabajador({ session }) {
@@ -516,9 +516,34 @@ export default function PosTrabajador({ session }) {
                     <div style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '4px' }}>
                       <strong>Período:</strong> {p.periodo_inicio} al {p.periodo_fin}
                     </div>
-                    <div style={{ fontSize: '0.8rem', color: '#aaa', display: 'flex', gap: '15px' }}>
-                      <span><strong>Método:</strong> {p.metodo_pago}</span>
-                      {p.numero_comprobante && <span><strong>N° Operación:</strong> {p.numero_comprobante}</span>}
+                    <div style={{ fontSize: '0.8rem', color: '#aaa', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', flexWrap: 'wrap', gap: '8px' }}>
+                      <div style={{ display: 'flex', gap: '15px' }}>
+                        <span><strong>Método:</strong> {p.metodo_pago}</span>
+                        {p.numero_comprobante && <span><strong>N° Operación:</strong> {p.numero_comprobante}</span>}
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-outline-gold"
+                        onClick={() => {
+                          printLiquidacionTicket({
+                            barberoNombre: session?.usuario?.nombre || 'Barbero',
+                            periodoInicio: p.periodo_inicio || '',
+                            periodoFin: p.periodo_fin || '',
+                            fechaPago: p.fecha_pago,
+                            totalCortes: p.total_cortes || 0,
+                            diasTrabajados: p.dias_trabajados || 0,
+                            totalBruto: Number(p.total_bruto || 0),
+                            comisionMonto: Number(p.monto || 0),
+                            metodoPago: p.metodo_pago || 'Transferencia',
+                            numeroComprobante: p.numero_comprobante || '',
+                            notas: p.notas || ''
+                          });
+                        }}
+                        style={{ padding: '3px 8px', fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+                        title="Imprimir comprobante térmico de este pago"
+                      >
+                        🖨️ Imprimir Voucher
+                      </button>
                     </div>
                     {p.notas && (
                       <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '6px', fontStyle: 'italic' }}>

@@ -235,3 +235,173 @@ export const printThermalTicket = ({
     }
   }, 350);
 };
+
+export const printLiquidacionTicket = ({
+  barberoNombre = 'Barbero',
+  periodoInicio = '',
+  periodoFin = '',
+  fechaPago = new Date().toISOString().split('T')[0],
+  totalCortes = 0,
+  diasTrabajados = 0,
+  totalBruto = 0,
+  comisionMonto = 0,
+  gananciaTienda = 0,
+  metodoPago = 'Transferencia',
+  numeroComprobante = '',
+  notas = '',
+  detalleDias = []
+}) => {
+  const ticketHtml = `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Comprobante Pago - ${barberoNombre}</title>
+  <style>
+    @page { size: 80mm auto; margin: 0; }
+    * {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+      -webkit-font-smoothing: antialiased;
+      color: #000000 !important;
+    }
+    html, body {
+      width: 72mm;
+      max-width: 72mm;
+      margin: 0 auto;
+      padding: 2mm 1mm 10mm 1mm;
+      font-family: 'Consolas', 'Courier New', Monaco, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.35;
+      color: #000000;
+      background: #ffffff;
+    }
+    .text-center { text-align: center; }
+    .text-right { text-align: right; }
+    .bold { font-weight: 900; }
+    .title { font-size: 15px; font-weight: 900; margin: 2px 0; }
+    .subtitle { font-size: 11px; font-weight: 700; margin-bottom: 2px; }
+    .divider { border-top: 1.5px dashed #000000; margin: 6px 0; }
+    .double-divider { border-top: 2.5px solid #000000; margin: 7px 0; }
+    .row { display: flex; justify-content: space-between; margin-bottom: 3px; }
+    .total-box {
+      font-size: 14px;
+      font-weight: 900;
+      padding: 6px 0;
+      margin: 6px 0;
+      border-top: 2px solid #000000;
+      border-bottom: 2px solid #000000;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; margin: 5px 0; }
+    th { border-bottom: 1.5px solid #000; padding: 3px 0; text-align: left; font-weight: 900; }
+    td { padding: 3px 0; font-weight: 700; }
+    .sign-box { margin-top: 25px; display: flex; flex-direction: column; gap: 20px; font-size: 10.5px; }
+    .sign-line { border-top: 1px solid #000; margin-top: 25px; padding-top: 3px; text-align: center; font-weight: 800; }
+  </style>
+</head>
+<body>
+  <div class="text-center">
+    <div class="title">💈 LA ROMANA BARBER SHOP 💈</div>
+    <div class="subtitle">COMPROBANTE DE PAGO Y LIQUIDACIÓN</div>
+    <div class="subtitle">Copiapó, Chile</div>
+  </div>
+
+  <div class="double-divider"></div>
+
+  <div class="row"><span class="bold">BARBERO:</span><span class="bold">${barberoNombre}</span></div>
+  <div class="row"><span>PERÍODO:</span><span class="bold">${periodoInicio} al ${periodoFin}</span></div>
+  <div class="row"><span>FECHA DE PAGO:</span><span>${fechaPago}</span></div>
+  <div class="row"><span>MÉTODO DE PAGO:</span><span class="bold">${metodoPago}</span></div>
+  ${numeroComprobante ? `<div class="row"><span>N° COMPROBANTE:</span><span>${numeroComprobante}</span></div>` : ''}
+
+  <div class="divider"></div>
+
+  <div class="row"><span>DÍAS TRABAJADOS:</span><span>${diasTrabajados || (detalleDias && detalleDias.length) || 0}</span></div>
+  <div class="row"><span>TOTAL CORTES:</span><span>${totalCortes} citas</span></div>
+  <div class="row"><span>TOTAL FACTURADO BRUTO:</span><span>$${Number(totalBruto || 0).toLocaleString('es-CL')}</span></div>
+  ${gananciaTienda ? `<div class="row"><span>MARGEN LOCAL:</span><span>$${Number(gananciaTienda || 0).toLocaleString('es-CL')}</span></div>` : ''}
+
+  <div class="total-box row">
+    <span>COMISIÓN PAGADA:</span>
+    <span>$${Number(comisionMonto || 0).toLocaleString('es-CL')}</span>
+  </div>
+
+  ${detalleDias && detalleDias.length > 0 ? `
+    <div class="divider"></div>
+    <div class="bold" style="font-size: 11px; margin-bottom: 3px;">DESGLOSE POR DÍA:</div>
+    <table>
+      <thead>
+        <tr>
+          <th>FECHA</th>
+          <th style="text-align:center;">CORTES</th>
+          <th style="text-align:right;">BRUTO</th>
+          <th style="text-align:right;">COMISIÓN</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${detalleDias.map(d => `
+          <tr>
+            <td>${d.fecha ? d.fecha.substring(5) : '-'}</td>
+            <td style="text-align:center;">${d.cortes || d.cortes_dia || 0}</td>
+            <td style="text-align:right;">$${Number(d.total_bruto_dia || d.bruto || 0).toLocaleString('es-CL')}</td>
+            <td style="text-align:right; font-weight:bold;">$${Number(d.comision_barbero_dia || d.comision_barbero || 0).toLocaleString('es-CL')}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  ` : ''}
+
+  ${notas ? `
+    <div class="divider"></div>
+    <div style="font-size: 10px;"><strong>OBSERVACIONES:</strong> ${notas}</div>
+  ` : ''}
+
+  <div class="sign-box">
+    <div>
+      <div class="sign-line">Firma Administrador</div>
+    </div>
+    <div>
+      <div class="sign-line">Firma / Conforme: ${barberoNombre}</div>
+    </div>
+  </div>
+
+  <div class="double-divider"></div>
+  <div class="text-center" style="font-size: 9.5px; color: #555;">
+    Comprobante Interno de Liquidación - La Romana Barber Shop
+  </div>
+</body>
+</html>
+  `;
+
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = 'none';
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow.document;
+  doc.open();
+  doc.write(ticketHtml);
+  doc.close();
+
+  iframe.contentWindow.focus();
+  setTimeout(() => {
+    try {
+      iframe.contentWindow.print();
+    } catch (e) {
+      console.error("Error al imprimir comprobante de pago:", e);
+    } finally {
+      setTimeout(() => {
+        if (document.body.contains(iframe)) {
+          document.body.removeChild(iframe);
+        }
+      }, 2000);
+    }
+  }, 350);
+};
