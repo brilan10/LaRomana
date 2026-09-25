@@ -64,7 +64,7 @@ const ProductoCard = ({ p, agregarAlCarrito, onVerDetalle, onVerImagenGrande }) 
   return (
     <div 
       className="card" 
-      onClick={() => onVerDetalle && onVerDetalle(p)}
+      onClick={handleImageClick}
       style={{ 
         textAlign: 'center', 
         display: 'flex', 
@@ -1410,24 +1410,44 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
                 </div>
               )}
 
-              {/* Botón rápido de añadir al carrito o cerrar */}
-              {imagenEnGrande.producto && imagenEnGrande.producto.stock > 0 && (
-                <button
-                  className="btn-primary"
-                  onClick={handleQuickAdd}
-                  style={{
-                    padding: '8px 20px',
-                    fontSize: '0.9rem',
-                    borderRadius: '25px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    boxShadow: '0 4px 15px rgba(39, 174, 96, 0.4)'
-                  }}
-                >
-                  🛒 {agregadoFeedback ? '✅ ¡Añadido al Carrito!' : 'Añadir al Carrito'}
-                </button>
-              )}
+              {/* Botón rápido de añadir al carrito o ver más detalles */}
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
+                {imagenEnGrande.producto && imagenEnGrande.producto.stock > 0 && (
+                  <button
+                    className="btn-primary"
+                    onClick={handleQuickAdd}
+                    style={{
+                      padding: '8px 20px',
+                      fontSize: '0.9rem',
+                      borderRadius: '25px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      boxShadow: '0 4px 15px rgba(39, 174, 96, 0.4)'
+                    }}
+                  >
+                    🛒 {agregadoFeedback ? '✅ ¡Añadido al Carrito!' : 'Añadir al Carrito'}
+                  </button>
+                )}
+                {imagenEnGrande.producto && (
+                  <button
+                    className="btn-outline-gold"
+                    onClick={() => {
+                      const prod = imagenEnGrande.producto;
+                      setImagenEnGrande(null);
+                      abrirDetalleProducto(prod);
+                    }}
+                    style={{
+                      padding: '8px 16px',
+                      fontSize: '0.85rem',
+                      borderRadius: '25px',
+                      background: 'rgba(0,0,0,0.6)'
+                    }}
+                  >
+                    📋 Ver detalles
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         );
