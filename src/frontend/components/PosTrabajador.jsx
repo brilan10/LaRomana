@@ -8,15 +8,33 @@ export default function PosTrabajador({ session }) {
   const [isPaid, setIsPaid] = useState(false);
   const [ultimoCobroInfo, setUltimoCobroInfo] = useState(null);
   const [agendados, setAgendados] = useState([]);
+
+  // Helpers de fechas dinámicas (Punto 4: Agenda para hoy, mañana, pasado mañana)
+  const getOffsetDate = (offsetDays) => {
+    const d = new Date();
+    d.setDate(d.getDate() + offsetDays);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
+  const hoyISO = getOffsetDate(0);
+  const mananaISO = getOffsetDate(1);
+  const pasadoMananaISO = getOffsetDate(2);
+
+  const [fechaAgenda, setFechaAgenda] = useState(hoyISO);
   
   // States for Express Booking
   const [showExpress, setShowExpress] = useState(false);
-  const [expressData, setExpressData] = useState({ nombre: '', rut: '', hora: '14:00' });
+  const [expressData, setExpressData] = useState({ 
+    nombre: '', 
+    rut: '', 
+    hora: '14:00',
+    fecha: hoyISO
+  });
   const [expressSugerencias, setExpressSugerencias] = useState([]);
   const [expressClienteEncontrado, setExpressClienteEncontrado] = useState(null);
 
-  // States for Payment
-  const [descuento, setDescuento] = useState(0);
+  // States for Payment (Punto 5: Reemplazar Descuento por Otro Valor)
+  const [otroValor, setOtroValor] = useState('');
   const [metodoPago, setMetodoPago] = useState('Efectivo');
   const [aromaVIP, setAromaVIP] = useState('');
 
@@ -39,23 +57,30 @@ export default function PosTrabajador({ session }) {
     }
   };
 
-  const fetchAgenda = () => {
+  const fetchAgenda = (fechaTarget) => {
     if (session?.usuario?.id) {
-      fetch(`${API_URL}/api.php?action=get_citas_trabajador&trabajador_id=${session.usuario.id}`)
+      const f = fechaTarget || fechaAgenda;
+      fetch(`${API_URL}/api.php?action=get_citas_trabajador&trabajador_id=${session.usuario.id}&fecha=${f}`)
         .then(r => r.json())
         .then(data => {
-          if (!data.error) setAgendados(data);
+          if (!data.error) setAgendados(Array.isArray(data) ? data : []);
         })
         .catch(e => console.error("Error fetching citas:", e));
     }
   };
 
-  useEffect(() => {
-    fetchAgenda();
+  const cambiarFechaAgenda = (nuevaFecha) => {
+    setFechaAgenda(nuevaFecha);
+    setExpressData(prev => ({ ...prev, fecha: nuevaFecha }));
+    fetchAgenda(nuevaFecha);
+  };
 
-    const intervalId = setInterval(fetchAgenda, 10000);
-    const onFocus = () => fetchAgenda();
-    const onVisibility = () => { if (!document.hidden) fetchAgenda(); };
+  useEffect(() => {
+    fetchAgenda(fechaAgenda);
+
+    const intervalId = setInterval(() => fetchAgenda(fechaAgenda), 10000);
+    const onFocus = () => fetchAgenda(fechaAgenda);
+    const onVisibility = () => { if (!document.hidden) fetchAgenda(fechaAgenda); };
 
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibility);
@@ -65,7 +90,7 @@ export default function PosTrabajador({ session }) {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [session]);
+  }, [session, fechaAgenda]);
 
   const handleCambiarClave = async () => {
     const newPass = prompt("Ingresa tu nueva contraseña secreta:");
@@ -123,9 +148,11 @@ export default function PosTrabajador({ session }) {
     }
   };
 
+  // PUNTO 4: Barbero agenda citas express para cualquier día (hoy, mañana, pasado mañana)
   const handleAgendarExpress = async (e) => {
     e.preventDefault();
     try {
+      const fechaParaAgendar = expressData.fecha || fechaAgenda || hoyISO;
       const res = await fetch(`${API_URL}/api.php?action=agendar_cita`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -133,42 +160,46 @@ export default function PosTrabajador({ session }) {
           rut: expressData.rut,
           nombre: expressData.nombre,
           trabajador_id: session.usuario.id,
-          fecha: new Date().toISOString().split('T')[0],
+          fecha: fechaParaAgendar,
           hora: expressData.hora,
-          servicios: [1] // dummy default service ID for express
+          es_staff: true,
+          servicios: [1]
         })
       });
       const data = await res.json();
       if (data.status === 'success') {
-        alert("Cita agendada con éxito");
+        alert(`¡Cita agendada con éxito para el día ${fechaParaAgendar}!`);
         setShowExpress(false);
-        setExpressData({ nombre: '', rut: '', hora: '14:00' });
+        setExpressData({ nombre: '', rut: '', hora: '14:00', fecha: fechaAgenda });
         setExpressSugerencias([]);
         setExpressClienteEncontrado(null);
-        fetchAgenda();
+        fetchAgenda(fechaAgenda);
       } else {
         alert(data.error || "Error al agendar");
       }
     } catch (error) {
       console.error(error);
-      alert("Error de red");
+      alert("Error de red al agendar.");
     }
   };
 
   const checkVip = () => {
     const isVip = Number(selectedClient.cortes || 0) >= 4 || Number(selectedClient.cortes_acumulados || 0) >= 3;
     if (isVip && !aromaVIP) {
-      // Si no seleccionó aroma, asignar uno por defecto para no bloquear el cobro
       setAromaVIP('Decant Creed Aventus 10ml');
     }
     return true;
   };
 
+  // PUNTO 5: Cobro con "Otro Valor" en vez de Descuento
   const handleCobrarAqui = async () => {
     if (!checkVip()) return;
-    const subVal = Number(selectedClient.precio || selectedClient.monto || 14000);
-    const descVal = Number(descuento) || 0;
-    const totVal = Math.max(0, subVal - descVal);
+    const basePrice = Number(selectedClient.precio || selectedClient.monto || 14000);
+    // Si especificó "Otro Valor", se cobra ese valor exacto; si no, el valor base del servicio
+    const totVal = (otroValor !== '' && !isNaN(Number(otroValor)) && Number(otroValor) >= 0) 
+      ? Number(otroValor) 
+      : basePrice;
+    const subVal = totVal;
     const aromaFinal = aromaVIP || ((Number(selectedClient.cortes || 0) >= 4 || Number(selectedClient.cortes_acumulados || 0) >= 3) ? 'Decant Creed Aventus 10ml' : null);
 
     const ticketItems = [
@@ -199,7 +230,7 @@ export default function PosTrabajador({ session }) {
       barbero: session?.usuario?.nombre || 'Barbero Staff',
       items: ticketItems,
       subtotal: subVal,
-      descuento: descVal,
+      descuento: 0,
       total: totVal,
       metodoPago: metodoPago,
       estado: 'PAGADO',
@@ -212,7 +243,9 @@ export default function PosTrabajador({ session }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           cita_id: selectedClient.id,
-          descuento: descuento,
+          subtotal: totVal,
+          monto: totVal,
+          descuento: 0,
           metodo_pago: metodoPago,
           aroma_decant: aromaFinal,
           decant_entregado: aromaFinal
@@ -249,7 +282,8 @@ export default function PosTrabajador({ session }) {
         alert("Cliente derivado a caja. El administrador finalizará el pago.");
         setSelectedClient(null);
         setAromaVIP('');
-        fetchAgenda();
+        setOtroValor('');
+        fetchAgenda(fechaAgenda);
       }
     } catch (error) {
       console.error(error);
@@ -284,8 +318,9 @@ export default function PosTrabajador({ session }) {
                   setIsPaid(false);
                   setSelectedClient(null);
                   setAromaVIP('');
+                  setOtroValor('');
                   setUltimoCobroInfo(null);
-                  fetchAgenda();
+                  fetchAgenda(fechaAgenda);
                 }}
               >
                 Volver a la Agenda
@@ -297,9 +332,14 @@ export default function PosTrabajador({ session }) {
     }
 
     const isVip = Number(selectedClient.cortes || 0) >= 4 || Number(selectedClient.cortes_acumulados || 0) >= 3;
+    const basePrice = Number(selectedClient.precio || selectedClient.monto || 14000);
+    const valorCalculado = (otroValor !== '' && !isNaN(Number(otroValor)) && Number(otroValor) >= 0) 
+      ? Number(otroValor) 
+      : basePrice;
+
     return (
       <div style={{ padding: '20px 0' }}>
-        <button onClick={() => setSelectedClient(null)} className="btn-img-action" style={{ width: '120px', marginBottom: '15px' }}>
+        <button onClick={() => { setSelectedClient(null); setOtroValor(''); }} className="btn-img-action" style={{ width: '120px', marginBottom: '15px' }}>
           <img src="/botones/boton_volver.png" alt="Volver a Agenda" style={{ height: '36px', objectFit: 'contain' }} />
         </button>
 
@@ -342,32 +382,51 @@ export default function PosTrabajador({ session }) {
           )}
 
           <div style={{ marginBottom: '20px' }}>
-            <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)' }}>Servicios Realizados (Toggle)</label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)' }}>Servicios Realizados</label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {['Corte de pelo degradado ($14.000)', 'Corte clásico ($12.000)', 'Corte de Barba ($8.000)', 'Corte y barba ($20.000)'].map(servicio => (
-                <label key={servicio} style={{ display: 'flex', alignItems: 'center', gap: '20px', background: 'var(--bg-charcoal)', padding: '15px', borderRadius: '12px', cursor: 'pointer', border: '2px solid rgba(255,255,255,0.05)', transition: 'background 0.2s' }}>
-                  <input type="checkbox" style={{ width: '25px', height: '25px', accentColor: 'var(--green-emerald-light)', cursor: 'pointer' }} />
-                  <span style={{ fontSize: '1.1rem', fontWeight: '500' }}>{servicio}</span>
-                </label>
+                <div key={servicio} style={{ display: 'flex', alignItems: 'center', gap: '15px', background: 'var(--bg-charcoal)', padding: '12px 16px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <span style={{ fontSize: '1rem', color: '#fff' }}>✂️ {servicio}</span>
+                </div>
               ))}
             </div>
           </div>
           
-          <div style={{ padding: '15px', background: 'rgba(0,0,0,0.2)', borderRadius: '10px', marginBottom: '20px' }}>
-             <h4 style={{ color: 'var(--gold-jewel)', marginTop: 0 }}>Opciones de Pago</h4>
-             <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
-                <div style={{ flex: 1 }}>
-                   <label style={{ fontSize: '0.8rem', color: '#ccc' }}>Descuento Manual ($)</label>
-                   <input type="number" className="input-field" value={descuento} onChange={e => setDescuento(e.target.value)} placeholder="Ej: 2000" />
+          {/* PUNTO 5: REEMPLAZAR BOTÓN DESCUENTO POR OTRO VALOR EN EL PERFIL DEL BARBERO */}
+          <div style={{ padding: '16px', background: 'rgba(0,0,0,0.3)', borderRadius: '12px', border: '1px solid rgba(212,175,55,0.25)', marginBottom: '20px' }}>
+             <h4 style={{ color: 'var(--gold-jewel)', marginTop: 0, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+               <span>💵</span> Opciones de Cobro
+             </h4>
+             <div style={{ display: 'flex', gap: '12px', marginBottom: '14px', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: '150px' }}>
+                   <label style={{ fontSize: '0.8rem', color: '#ccc', display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                     <strong>Otro Valor ($):</strong>
+                     <span style={{ color: 'var(--gold-jewel)', fontSize: '0.72rem' }}>Modificar precio</span>
+                   </label>
+                   <input 
+                     type="number" 
+                     className="input-field" 
+                     value={otroValor} 
+                     onChange={e => setOtroValor(e.target.value)} 
+                     placeholder={`Normal: $${basePrice.toLocaleString('es-CL')}`} 
+                     style={{ margin: 0, fontWeight: 'bold' }}
+                   />
                 </div>
-                <div style={{ flex: 1 }}>
-                   <label style={{ fontSize: '0.8rem', color: '#ccc' }}>Método de Pago</label>
-                   <select className="input-field" value={metodoPago} onChange={e => setMetodoPago(e.target.value)}>
+                <div style={{ flex: 1, minWidth: '150px' }}>
+                   <label style={{ fontSize: '0.8rem', color: '#ccc', display: 'block', marginBottom: '4px' }}>Método de Pago</label>
+                   <select className="input-field" value={metodoPago} onChange={e => setMetodoPago(e.target.value)} style={{ margin: 0 }}>
                      <option value="Efectivo">Efectivo</option>
                      <option value="Transferencia">Transferencia</option>
                      <option value="Tarjeta">Tarjeta</option>
                    </select>
                 </div>
+             </div>
+
+             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(212,175,55,0.12)', padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--gold-jewel)' }}>
+               <span style={{ fontSize: '0.9rem', color: '#ccc' }}>Total a Cobrar:</span>
+               <strong style={{ fontSize: '1.25rem', color: 'var(--gold-jewel)' }}>
+                 ${valorCalculado.toLocaleString('es-CL')}
+               </strong>
              </div>
           </div>
 
@@ -386,9 +445,22 @@ export default function PosTrabajador({ session }) {
 
   return (
     <div style={{ padding: '20px 0' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '10px' }}>
-        <h2 style={{ color: 'var(--gold-jewel)', margin: 0 }}>Mi Agenda (Hoy)</h2>
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+      
+      {/* Barra de Título y Botones de Acción */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', flexWrap: 'wrap', gap: '10px' }}>
+        <div>
+          <h2 style={{ color: 'var(--gold-jewel)', margin: 0, fontSize: '1.4rem' }}>
+            Mi Agenda 
+            <span style={{ fontSize: '0.95rem', color: '#aaa', fontWeight: 'normal', marginLeft: '8px' }}>
+              ({fechaAgenda === hoyISO ? 'Hoy' : (fechaAgenda === mananaISO ? 'Mañana' : (fechaAgenda === pasadoMananaISO ? 'Pasado Mañana' : fechaAgenda))})
+            </span>
+          </h2>
+          <span style={{ fontSize: '0.78rem', color: '#888' }}>
+            Revisa o agenda horas para hoy o fechas futuras.
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
            <button className="btn-romana" style={{ fontSize: '0.8rem', padding: '6px 14px', backgroundColor: 'rgba(46, 204, 113, 0.15)', borderColor: '#2ecc71', color: '#2ecc71' }} onClick={() => { setShowMisPagos(true); fetchMisPagos(); }}>
              <span className="icon-separator" style={{ minHeight: '22px', fontSize: '1.1rem', paddingRight: '6px', marginRight: '6px' }}>💰</span> MIS PAGOS
            </button>
@@ -401,6 +473,82 @@ export default function PosTrabajador({ session }) {
         </div>
       </div>
 
+      {/* PUNTO 4: SELECTOR DE FECHAS DE LA AGENDA DEL BARBERO (HOY, MAÑANA, PASADO MAÑANA, ETC) */}
+      <div style={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        gap: '8px', 
+        background: 'rgba(255,255,255,0.03)', 
+        padding: '10px 14px', 
+        borderRadius: '10px', 
+        border: '1px solid rgba(255,255,255,0.08)',
+        marginBottom: '20px',
+        flexWrap: 'wrap'
+      }}>
+        <span style={{ fontSize: '0.82rem', color: 'var(--gold-jewel)', fontWeight: 'bold' }}>📅 Ver día:</span>
+        
+        <button 
+          type="button"
+          onClick={() => cambiarFechaAgenda(hoyISO)}
+          style={{
+            background: fechaAgenda === hoyISO ? 'var(--gold-jewel)' : 'rgba(0,0,0,0.4)',
+            color: fechaAgenda === hoyISO ? '#000' : '#fff',
+            border: fechaAgenda === hoyISO ? 'none' : '1px solid rgba(255,255,255,0.1)',
+            padding: '6px 12px',
+            borderRadius: '6px',
+            fontSize: '0.8rem',
+            fontWeight: fechaAgenda === hoyISO ? 'bold' : 'normal',
+            cursor: 'pointer'
+          }}
+        >
+          📌 Hoy
+        </button>
+
+        <button 
+          type="button"
+          onClick={() => cambiarFechaAgenda(mananaISO)}
+          style={{
+            background: fechaAgenda === mananaISO ? 'var(--gold-jewel)' : 'rgba(0,0,0,0.4)',
+            color: fechaAgenda === mananaISO ? '#000' : '#fff',
+            border: fechaAgenda === mananaISO ? 'none' : '1px solid rgba(255,255,255,0.1)',
+            padding: '6px 12px',
+            borderRadius: '6px',
+            fontSize: '0.8rem',
+            fontWeight: fechaAgenda === mananaISO ? 'bold' : 'normal',
+            cursor: 'pointer'
+          }}
+        >
+          ☀️ Mañana
+        </button>
+
+        <button 
+          type="button"
+          onClick={() => cambiarFechaAgenda(pasadoMananaISO)}
+          style={{
+            background: fechaAgenda === pasadoMananaISO ? 'var(--gold-jewel)' : 'rgba(0,0,0,0.4)',
+            color: fechaAgenda === pasadoMananaISO ? '#000' : '#fff',
+            border: fechaAgenda === pasadoMananaISO ? 'none' : '1px solid rgba(255,255,255,0.1)',
+            padding: '6px 12px',
+            borderRadius: '6px',
+            fontSize: '0.8rem',
+            fontWeight: fechaAgenda === pasadoMananaISO ? 'bold' : 'normal',
+            cursor: 'pointer'
+          }}
+        >
+          🗓️ Pasado Mañana
+        </button>
+
+        <input 
+          type="date" 
+          className="input-field" 
+          value={fechaAgenda} 
+          onChange={e => cambiarFechaAgenda(e.target.value)} 
+          style={{ margin: 0, padding: '4px 8px', fontSize: '0.82rem', width: 'auto', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--gold-jewel)' }}
+          title="Seleccionar otra fecha para ver tu agenda"
+        />
+      </div>
+
+      {/* PUNTO 4: FORMULARIO AGENDAR EXPRESS CON SELECTOR DE FECHA (HOY, MAÑANA, PASADO MAÑANA) */}
       {showExpress && (
          <div className="card" style={{ marginBottom: '20px', background: 'var(--bg-charcoal)', border: '1px solid var(--gold-jewel)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -411,8 +559,9 @@ export default function PosTrabajador({ session }) {
                 </span>
               )}
             </div>
+
             <form onSubmit={handleAgendarExpress} style={{ display: 'flex', gap: '10px', alignItems: 'end', flexWrap: 'wrap' }}>
-               <div style={{ flex: 1, minWidth: '150px' }}>
+               <div style={{ flex: 1, minWidth: '140px' }}>
                  <label style={{ fontSize: '0.8rem', color: '#aaa' }}>RUT del Cliente</label>
                  <input 
                    type="text" 
@@ -423,7 +572,8 @@ export default function PosTrabajador({ session }) {
                    placeholder="12345678-9" 
                  />
                </div>
-               <div style={{ flex: 1, minWidth: '150px' }}>
+
+               <div style={{ flex: 1, minWidth: '140px' }}>
                  <label style={{ fontSize: '0.8rem', color: '#aaa' }}>Nombre del Cliente</label>
                  <input 
                    type="text" 
@@ -434,17 +584,45 @@ export default function PosTrabajador({ session }) {
                    placeholder="Nombre del Cliente" 
                  />
                </div>
-               <div style={{ width: '120px' }}>
+
+               {/* Selector de Fecha para el Barbero */}
+               <div style={{ flex: 1, minWidth: '150px' }}>
+                 <label style={{ fontSize: '0.8rem', color: '#aaa', display: 'flex', justifyContent: 'space-between' }}>
+                   <span>Fecha</span>
+                   <span style={{ color: 'var(--gold-jewel)', cursor: 'pointer' }} onClick={() => setExpressData({...expressData, fecha: pasadoMananaISO})}>
+                     Pasado Mañana
+                   </span>
+                 </label>
+                 <input 
+                   type="date" 
+                   className="input-field" 
+                   required 
+                   value={expressData.fecha} 
+                   onChange={e => setExpressData({...expressData, fecha: e.target.value})} 
+                 />
+               </div>
+
+               <div style={{ width: '110px' }}>
                  <label style={{ fontSize: '0.8rem', color: '#aaa' }}>Hora</label>
                  <input type="time" className="input-field" required value={expressData.hora} onChange={e => setExpressData({...expressData, hora: e.target.value})} />
                </div>
-               <button type="submit" className="btn-romana" style={{ height: '42px', padding: '0 20px', borderRadius: '8px' }}>AGENDAR</button>
+
+               <button type="submit" className="btn-romana" style={{ height: '42px', padding: '0 20px', borderRadius: '8px' }}>
+                 AGENDAR
+               </button>
             </form>
          </div>
       )}
       
+      {/* Lista de citas agendadas para la fecha seleccionada */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-        {agendados.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>No hay citas agendadas para hoy.</p>}
+        {agendados.length === 0 && (
+          <div style={{ padding: '30px', textAlign: 'center', background: 'rgba(255,255,255,0.02)', borderRadius: '12px' }}>
+            <p style={{ color: 'var(--text-secondary)', margin: 0 }}>
+              No hay citas agendadas para el día <strong>{fechaAgenda}</strong>.
+            </p>
+          </div>
+        )}
         {agendados.map(cliente => (
           <div 
             key={cliente.id} 
@@ -462,6 +640,7 @@ export default function PosTrabajador({ session }) {
             </div>
             <div style={{ textAlign: 'right' }}>
               <div style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>{cliente.hora}</div>
+              <span style={{ fontSize: '0.75rem', color: '#888' }}>{cliente.fecha || fechaAgenda}</span>
             </div>
           </div>
         ))}

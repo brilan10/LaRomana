@@ -1,5 +1,25 @@
 <?php
 require 'db.php';
+
+// Verificación preventiva de base de datos (compatibilidad hosting y local)
+try {
+    $colCheck = $pdo->query("SHOW COLUMNS FROM trabajadores LIKE 'porcentaje_comision'")->fetch();
+    if (!$colCheck) {
+        $pdo->exec("ALTER TABLE trabajadores ADD COLUMN porcentaje_comision DECIMAL(5,2) DEFAULT 60.00");
+    }
+} catch (\Exception $eMigrate) {}
+
+try {
+    $catPerfumes = $pdo->query("SELECT id FROM categorias WHERE nombre = 'Perfumes y Decants'")->fetchColumn();
+    if ($catPerfumes) {
+        $pdo->prepare("UPDATE categorias SET nombre = 'Perfumes Hombre' WHERE id = ?")->execute([$catPerfumes]);
+    }
+    $catMujer = $pdo->query("SELECT id FROM categorias WHERE nombre = 'Perfumes Mujer'")->fetchColumn();
+    if (!$catMujer) {
+        $pdo->exec("INSERT INTO categorias (nombre) VALUES ('Perfumes Mujer')");
+    }
+} catch (\Exception $eCat) {}
+
 $action = $_GET['action'] ?? '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
@@ -437,6 +457,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 $stmt = $pdo->query("
                     SELECT t.id, t.nombre, t.email, t.foto_perfil, t.activo,
                     IFNULL(t.frecuencia_pago, 'quincenal') as frecuencia_pago,
+                    COALESCE(t.porcentaje_comision, 60.00) as porcentaje_comision,
                     (SELECT COUNT(*) FROM citas c WHERE c.trabajador_id = t.id AND c.fecha = CURDATE() AND c.estado = 'Completada') as cortes_hoy,
                     (SELECT COUNT(*) FROM citas c WHERE c.trabajador_id = t.id AND c.estado = 'Completada') as cortes_totales
                     FROM trabajadores t
@@ -447,6 +468,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 $stmt = $pdo->query("
                     SELECT t.id, t.nombre, t.email, t.foto_perfil, t.activo,
                     'quincenal' as frecuencia_pago,
+                    60.00 as porcentaje_comision,
                     (SELECT COUNT(*) FROM citas c WHERE c.trabajador_id = t.id AND c.fecha = CURDATE() AND c.estado = 'Completada') as cortes_hoy,
                     (SELECT COUNT(*) FROM citas c WHERE c.trabajador_id = t.id AND c.estado = 'Completada') as cortes_totales
                     FROM trabajadores t
@@ -516,7 +538,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 $sql = "
                     SELECT c.id, c.fecha, c.hora, c.descuento, c.total_pagado, c.metodo_pago, c.estado, c.trabajador_id,
                            cl.id as cliente_id, IFNULL(cl.nombre, 'Cliente General') as cliente_nombre, IFNULL(cl.rut, '-') as cliente_rut,
-                           t.id as barbero_id, IFNULL(t.nombre, 'Barbero') as barbero_nombre
+                           t.id as barbero_id, IFNULL(t.nombre, 'Barbero') as barbero_nombre,
+                           IFNULL(t.frecuencia_pago, 'quincenal') as barbero_frecuencia,
+                           COALESCE(t.porcentaje_comision, 60.00) as barbero_porcentaje
                     FROM citas c
                     LEFT JOIN clientes cl ON c.cliente_id = cl.id
                     LEFT JOIN trabajadores t ON c.trabajador_id = t.id
@@ -609,8 +633,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                         if ($subtotal <= 0) $subtotal = $totalReal;
                     }
 
-                    $pctB = isset($cierresMap[$fecha]) ? $cierresMap[$fecha]['pct_b'] : 60.0;
-                    $pctT = isset($cierresMap[$fecha]) ? $cierresMap[$fecha]['pct_t'] : 40.0;
+                    // PUNTO 6: Usar el porcentaje específico configurado para cada barbero
+                    $pctB = floatval($c['barbero_porcentaje'] ?? 60.0);
+                    if ($pctB <= 0) {
+                        $pctB = isset($cierresMap[$fecha]) ? $cierresMap[$fecha]['pct_b'] : 60.0;
+                    }
+                    $pctT = max(0, 100.0 - $pctB);
 
                     $comisionB = $totalReal * ($pctB / 100);
                     $comisionT = $totalReal * ($pctT / 100);
@@ -619,6 +647,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                         $barberosMap[$bId] = [
                             'barbero_id' => $bId,
                             'barbero_nombre' => $bNombre,
+                            'frecuencia_pago' => $c['barbero_frecuencia'] ?? 'quincenal',
+                            'porcentaje_barbero' => $pctB,
+                            'porcentaje_tienda' => $pctT,
                             'total_cortes' => 0,
                             'total_bruto' => 0,
                             'total_descuentos' => 0,
@@ -742,6 +773,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                     $barberosResumen[] = [
                         'barbero_id' => $b['barbero_id'],
                         'barbero_nombre' => $b['barbero_nombre'],
+                        'porcentaje_barbero' => $b['porcentaje_barbero'] ?? 60.0,
+                        'porcentaje_tienda' => $b['porcentaje_tienda'] ?? 40.0,
                         'dias_trabajados' => $diasTrabajados,
                         'total_cortes' => $totalCortes,
                         'total_bruto' => $totalBruto,
@@ -1293,6 +1326,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             echo json_encode(["status" => "success"]);
             break;
 
+        case 'update_porcentaje_barbero':
+            $barbero_id = intval($data['barbero_id'] ?? 0);
+            $pct = floatval($data['porcentaje_comision'] ?? 60.0);
+            if ($barbero_id <= 0 || $pct < 0 || $pct > 100) {
+                http_response_code(400);
+                echo json_encode(["status" => "error", "message" => "Datos de barbero o porcentaje inválidos."]);
+                break;
+            }
+            try {
+                $colCheck = $pdo->query("SHOW COLUMNS FROM trabajadores LIKE 'porcentaje_comision'")->fetch();
+                if (!$colCheck) {
+                    $pdo->exec("ALTER TABLE trabajadores ADD COLUMN porcentaje_comision DECIMAL(5,2) DEFAULT 60.00");
+                }
+            } catch (\Exception $eCol) {}
+            
+            $stmt = $pdo->prepare("UPDATE trabajadores SET porcentaje_comision = ? WHERE id = ?");
+            $stmt->execute([$pct, $barbero_id]);
+            echo json_encode(["status" => "success", "message" => "Porcentaje del barbero actualizado a " . $pct . "%"]);
+            break;
+
         // --- CAJA ---
         case 'abrir_caja':
             $fecha = $pdo->query("SELECT CURDATE()")->fetchColumn();
@@ -1325,7 +1378,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             break;
 
         case 'set_pago_config':
-            $freq = in_array($data['frecuencia_pago_barberos'] ?? '', ['semanal', 'quincenal', 'mensual']) ? $data['frecuencia_pago_barberos'] : 'quincenal';
+            $freq = in_array($data['frecuencia_pago_barberos'] ?? $data['frecuencia_pago'] ?? '', ['semanal', 'quincenal', 'mensual']) ? ($data['frecuencia_pago_barberos'] ?? $data['frecuencia_pago']) : 'quincenal';
+            $barbero_id = intval($data['barbero_id'] ?? 0);
+            
+            if ($barbero_id > 0) {
+                try {
+                    $stmtB = $pdo->prepare("UPDATE trabajadores SET frecuencia_pago = ? WHERE id = ?");
+                    $stmtB->execute([$freq, $barbero_id]);
+                    echo json_encode(["status" => "success", "frecuencia_pago_barberos" => $freq, "barbero_id" => $barbero_id]);
+                    break;
+                } catch (\Exception $eB) {}
+            }
+
             $stmt = $pdo->prepare("
                 INSERT INTO configuraciones (clave, valor, descripcion) 
                 VALUES ('frecuencia_pago_barberos', ?, 'Frecuencia de pago predeterminada para barberos')
@@ -1595,15 +1659,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $pass = !empty($data['password']) ? trim($data['password']) : '123456';
             $hash = password_hash($pass, PASSWORD_DEFAULT);
             $frecuencia = in_array($data['frecuencia_pago'] ?? '', ['semanal', 'quincenal', 'mensual']) ? $data['frecuencia_pago'] : 'quincenal';
+            $pct = isset($data['porcentaje_comision']) ? floatval($data['porcentaje_comision']) : 60.00;
             try {
-                $stmt = $pdo->prepare("INSERT INTO trabajadores (nombre, email, foto_perfil, password_hash, frecuencia_pago) VALUES (?,?,?,?,?)");
-                $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $hash, $frecuencia]);
+                $stmt = $pdo->prepare("INSERT INTO trabajadores (nombre, email, foto_perfil, password_hash, frecuencia_pago, porcentaje_comision) VALUES (?,?,?,?,?,?)");
+                $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $hash, $frecuencia, $pct]);
             } catch (\PDOException $e) {
                 try {
                     $pdo->exec("ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS frecuencia_pago VARCHAR(20) DEFAULT 'quincenal'");
                     $pdo->exec("ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255) NULL");
-                    $stmt = $pdo->prepare("INSERT INTO trabajadores (nombre, email, foto_perfil, password_hash, frecuencia_pago) VALUES (?,?,?,?,?)");
-                    $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $hash, $frecuencia]);
+                    $pdo->exec("ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS porcentaje_comision DECIMAL(5,2) DEFAULT 60.00");
+                    $stmt = $pdo->prepare("INSERT INTO trabajadores (nombre, email, foto_perfil, password_hash, frecuencia_pago, porcentaje_comision) VALUES (?,?,?,?,?,?)");
+                    $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $hash, $frecuencia, $pct]);
                 } catch (\Exception $ex) {
                     $stmt = $pdo->prepare("INSERT INTO trabajadores (nombre, email, foto_perfil) VALUES (?,?,?)");
                     $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'']);
@@ -1613,19 +1679,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             break;
         case 'update_trabajador':
             $frecuencia = in_array($data['frecuencia_pago'] ?? '', ['semanal', 'quincenal', 'mensual']) ? $data['frecuencia_pago'] : 'quincenal';
+            $pctVal = isset($data['porcentaje_comision']) ? floatval($data['porcentaje_comision']) : null;
             if (!empty($data['password'])) {
                 $hash = password_hash(trim($data['password']), PASSWORD_DEFAULT);
                 try {
-                    $stmt = $pdo->prepare("UPDATE trabajadores SET nombre=?, email=?, foto_perfil=?, password_hash=?, frecuencia_pago=? WHERE id=?");
-                    $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $hash, $frecuencia, $data['id']]);
+                    if ($pctVal !== null) {
+                        $stmt = $pdo->prepare("UPDATE trabajadores SET nombre=?, email=?, foto_perfil=?, password_hash=?, frecuencia_pago=?, porcentaje_comision=? WHERE id=?");
+                        $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $hash, $frecuencia, $pctVal, $data['id']]);
+                    } else {
+                        $stmt = $pdo->prepare("UPDATE trabajadores SET nombre=?, email=?, foto_perfil=?, password_hash=?, frecuencia_pago=? WHERE id=?");
+                        $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $hash, $frecuencia, $data['id']]);
+                    }
                 } catch (\Exception $ex) {
                     $stmt = $pdo->prepare("UPDATE trabajadores SET nombre=?, email=?, foto_perfil=? WHERE id=?");
                     $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $data['id']]);
                 }
             } else {
                 try {
-                    $stmt = $pdo->prepare("UPDATE trabajadores SET nombre=?, email=?, foto_perfil=?, frecuencia_pago=? WHERE id=?");
-                    $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $frecuencia, $data['id']]);
+                    if ($pctVal !== null) {
+                        $stmt = $pdo->prepare("UPDATE trabajadores SET nombre=?, email=?, foto_perfil=?, frecuencia_pago=?, porcentaje_comision=? WHERE id=?");
+                        $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $frecuencia, $pctVal, $data['id']]);
+                    } else {
+                        $stmt = $pdo->prepare("UPDATE trabajadores SET nombre=?, email=?, foto_perfil=?, frecuencia_pago=? WHERE id=?");
+                        $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $frecuencia, $data['id']]);
+                    }
                 } catch (\Exception $ex) {
                     $stmt = $pdo->prepare("UPDATE trabajadores SET nombre=?, email=?, foto_perfil=? WHERE id=?");
                     $stmt->execute([$data['nombre'], $data['email'], $data['foto_perfil']??'', $data['id']]);

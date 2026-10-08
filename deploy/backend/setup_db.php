@@ -111,6 +111,14 @@ try {
         } catch (Exception $ex) {}
     }
 
+    try {
+        $pdo->exec("ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS porcentaje_comision DECIMAL(5,2) DEFAULT 60.00");
+    } catch (Exception $e) {
+        try {
+            $pdo->exec("ALTER TABLE trabajadores ADD COLUMN porcentaje_comision DECIMAL(5,2) DEFAULT 60.00");
+        } catch (Exception $ex) {}
+    }
+
     // Asegurar columnas requeridas en clientes
     try {
         $pdo->exec("ALTER TABLE clientes ADD COLUMN IF NOT EXISTS cortes_acumulados INT DEFAULT 0");

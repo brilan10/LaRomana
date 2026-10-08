@@ -67,6 +67,10 @@ Set-Content -Path "$DeployDir\.htaccess" -Value $htaccessContent -Encoding UTF8
 if (Test-Path "database_full.sql") {
     Copy-Item -Path "database_full.sql" -Destination "$DeployDir\database_la_romana.sql" -Force
 }
+if (Test-Path "ACTUALIZACION_BD.sql") {
+    Copy-Item -Path "ACTUALIZACION_BD.sql" -Destination "$DeployDir\ACTUALIZACION_BD.sql" -Force
+    Copy-Item -Path "ACTUALIZACION_BD.sql" -Destination "$DeployDir\backend\ACTUALIZACION_BD.sql" -Force
+}
 if (Test-Path "IMPORTAR_EXCEL_DAVID_Y_SANTIAGO_HOSTING.sql") {
     Copy-Item -Path "IMPORTAR_EXCEL_DAVID_Y_SANTIAGO_HOSTING.sql" -Destination "$DeployDir\IMPORTAR_EXCEL_DAVID_Y_SANTIAGO_HOSTING.sql" -Force
     Copy-Item -Path "IMPORTAR_EXCEL_DAVID_Y_SANTIAGO_HOSTING.sql" -Destination "$DeployDir\backend\IMPORTAR_EXCEL_DAVID_Y_SANTIAGO_HOSTING.sql" -Force

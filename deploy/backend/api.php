@@ -20,7 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         case 'get_horarios_ocupados':
             $trabajador_id = $_GET['trabajador_id'] ?? 0;
             $fecha = $_GET['fecha'] ?? '';
-            $stmt = $pdo->prepare("SELECT hora FROM citas WHERE trabajador_id = ? AND fecha = ?");
+            $stmt = $pdo->prepare("SELECT hora FROM citas WHERE trabajador_id = ? AND fecha = ? AND estado NOT IN ('Cancelada')");
             $stmt->execute([$trabajador_id, $fecha]);
             echo json_encode($stmt->fetchAll(PDO::FETCH_COLUMN));
             break;
@@ -34,10 +34,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             break;
         case 'get_citas_trabajador':
             $trabajador_id = $_GET['trabajador_id'] ?? 0;
-            $fecha = date('Y-m-d'); // Hoy
-            // Traer citas del trabajador de hoy, con nombre del cliente y foto, y calcular cortes del cliente (COUNT en BD).
+            $fecha = !empty($_GET['fecha']) ? trim($_GET['fecha']) : date('Y-m-d');
+            // Traer citas del trabajador para la fecha consultada, con nombre del cliente y foto, y calcular cortes del cliente.
             $stmt = $pdo->prepare("
-                SELECT c.id, c.hora, c.estado, cl.nombre, cl.foto_perfil as foto, cl.id as cliente_id,
+                SELECT c.id, c.hora, c.fecha, c.estado, cl.nombre, cl.foto_perfil as foto, cl.id as cliente_id,
                 COALESCE(cl.cortes_acumulados, 0) + 1 as cortes, cl.cortes_acumulados
                 FROM citas c
                 JOIN clientes cl ON c.cliente_id = cl.id
@@ -46,6 +46,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             ");
             $stmt->execute([$trabajador_id, $fecha]);
             echo json_encode($stmt->fetchAll());
+            break;
+        case 'get_citas_cliente':
+            $rutRaw = $_GET['rut'] ?? '';
+            $cliente_id = intval($_GET['cliente_id'] ?? 0);
+            if (!$cliente_id && !empty($rutRaw)) {
+                $rutClean = strtoupper(preg_replace('/[^0-9K]/i', '', $rutRaw));
+                $stmtCli = $pdo->prepare("SELECT id FROM clientes WHERE REPLACE(REPLACE(UPPER(rut), '.', ''), '-', '') = ? OR UPPER(rut) = ? LIMIT 1");
+                $stmtCli->execute([$rutClean, strtoupper(trim($rutRaw))]);
+                $cliente_id = $stmtCli->fetchColumn();
+            }
+            if (!$cliente_id) {
+                echo json_encode([]);
+                break;
+            }
+            $stmt = $pdo->prepare("
+                SELECT c.id, c.fecha, c.hora, c.estado, c.total_pagado,
+                       t.nombre as barbero_nombre, t.foto_perfil as barbero_foto,
+                       IFNULL((SELECT GROUP_CONCAT(s.nombre SEPARATOR ' + ') FROM cita_detalle cd JOIN servicios s ON cd.servicio_id = s.id WHERE cd.cita_id = c.id), 'Servicio de Barbería') as servicios_nombres,
+                       IFNULL((SELECT SUM(cd.precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id), 14000) as total_estimado
+                FROM citas c
+                JOIN trabajadores t ON c.trabajador_id = t.id
+                WHERE c.cliente_id = ? AND c.estado IN ('Pendiente', 'Terminado_Esperando_Pago') AND c.fecha >= CURDATE()
+                ORDER BY c.fecha ASC, c.hora ASC
+            ");
+            $stmt->execute([$cliente_id]);
+            echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
             break;
         case 'get_mis_pagos_trabajador':
             $trabajador_id = $_GET['trabajador_id'] ?? 0;
@@ -165,6 +191,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $fechaCita = !empty($data['fecha']) ? trim($data['fecha']) : date('Y-m-d');
             $hoyActual = date('Y-m-d');
             $esPasado = ($fechaCita < $hoyActual);
+            $esStaff = !empty($data['es_staff']) || !empty($data['marcar_pagada']);
+
+            // PUNTO 2: Bloquear agendas del mismo día para clientes online
+            if (!$esStaff && $fechaCita <= $hoyActual) {
+                echo json_encode(["status" => "error", "error" => "No se puede agendar para el mismo día. Por favor selecciona a partir de mañana o acércate a la barbería para atención presencial."]);
+                break;
+            }
+
             $marcarPagada = !empty($data['marcar_pagada']) || !empty($data['ya_pagada']) || (($data['estado'] ?? '') === 'Completada') || $esPasado;
             $metodoPago = !empty($data['metodo_pago']) ? trim($data['metodo_pago']) : 'Efectivo';
             $descuento = isset($data['descuento']) ? (float)$data['descuento'] : 0;
@@ -187,6 +221,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             if (!$cliente_id) {
                 echo json_encode(["error" => "Cliente no especificado (RUT requerido)"]);
                 break;
+            }
+
+            // Validar que el cliente no tenga ya una cita activa ese mismo día con cualquier barbero
+            if (!$esStaff && $cliente_id) {
+                $stmtCitaDuplicada = $pdo->prepare("SELECT id FROM citas WHERE cliente_id = ? AND fecha = ? AND estado NOT IN ('Cancelada') LIMIT 1");
+                $stmtCitaDuplicada->execute([$cliente_id, $fechaCita]);
+                if ($stmtCitaDuplicada->fetchColumn()) {
+                    echo json_encode(["status" => "error", "error" => "Ya tienes una cita agendada para el día " . $fechaCita . ". Para modificarla o reagendar, cancela tu cita anterior en Mis Citas."]);
+                    break;
+                }
             }
 
             // Si el cliente ya existe y nos envía teléfono nuevo o faltante, lo actualizamos
@@ -566,6 +610,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $stmt = $pdo->prepare("UPDATE trabajadores SET password_hash = ? WHERE id = ?");
             $stmt->execute([$hash, $data['trabajador_id']]);
             echo json_encode(["status" => "success"]);
+            break;
+        case 'cancelar_cita_cliente':
+            $cita_id = intval($data['cita_id'] ?? 0);
+            $rut = trim($data['rut'] ?? '');
+            $cliente_id = intval($data['cliente_id'] ?? 0);
+
+            if ($cita_id <= 0) {
+                echo json_encode(["status" => "error", "error" => "ID de cita inválido."]);
+                break;
+            }
+
+            if (!$cliente_id && !empty($rut)) {
+                $rutClean = strtoupper(preg_replace('/[^0-9K]/i', '', $rut));
+                $stmtC = $pdo->prepare("SELECT id FROM clientes WHERE REPLACE(REPLACE(UPPER(rut), '.', ''), '-', '') = ? OR UPPER(rut) = ? LIMIT 1");
+                $stmtC->execute([$rutClean, strtoupper($rut)]);
+                $cliente_id = $stmtC->fetchColumn();
+            }
+
+            if ($cliente_id > 0) {
+                $stmt = $pdo->prepare("UPDATE citas SET estado = 'Cancelada' WHERE id = ? AND cliente_id = ? AND estado IN ('Pendiente', 'Terminado_Esperando_Pago')");
+                $stmt->execute([$cita_id, $cliente_id]);
+            } else {
+                $stmt = $pdo->prepare("UPDATE citas SET estado = 'Cancelada' WHERE id = ? AND estado IN ('Pendiente', 'Terminado_Esperando_Pago')");
+                $stmt->execute([$cita_id]);
+            }
+
+            if ($stmt->rowCount() > 0) {
+                echo json_encode(["status" => "success", "message" => "Cita cancelada exitosamente."]);
+            } else {
+                echo json_encode(["status" => "error", "error" => "No se pudo cancelar la cita (quizás ya fue atendida o ya estaba cancelada)."]);
+            }
             break;
         default:
             echo json_encode(["error" => "Invalid action"]);

@@ -68,6 +68,8 @@ export default function AdminDashboard({ session, logout }) {
   // Caja y CRM extra
   const [citasCaja, setCitasCaja] = useState([]);
   const [comisionesConfig, setComisionesConfig] = useState({ porcentaje_barbero: 60, porcentaje_tienda: 40 });
+  const [porcentajesBarberosEdit, setPorcentajesBarberosEdit] = useState({});
+  const [guardandoPorcentajeId, setGuardandoPorcentajeId] = useState(null);
 
   // Datos Pedidos / Tickets (Tienda y Salón)
   const [pedidosAdmin, setPedidosAdmin] = useState([]);
@@ -383,12 +385,12 @@ export default function AdminDashboard({ session, logout }) {
     };
   }, [tab, fechaCalendario, vistaCalendario]);
 
-  const aplicarPeriodoLiquidacion = (tipo) => {
+  const aplicarPeriodoLiquidacion = (tipo, barberoParam) => {
     setLiqPeriodo(tipo);
     const hoy = new Date();
     let inicio = '';
     let fin = formatDateYMD(hoy);
-    const barberoActual = liqBarberoId || liqFiltrosRef.current?.barbero || 'todos';
+    const barberoActual = barberoParam !== undefined ? barberoParam : (liqBarberoId || liqFiltrosRef.current?.barbero || 'todos');
 
     if (tipo === 'custom') {
       cargarLiquidaciones(liqFechaInicio, liqFechaFin, barberoActual);
@@ -465,24 +467,85 @@ export default function AdminDashboard({ session, logout }) {
     }
   };
 
-  const guardarFrecuenciaPago = async (nuevaFreq) => {
+  const handleCambioBarberoLiquidacion = (barberoIdSeleccionado) => {
+    const bId = barberoIdSeleccionado;
+    setLiqBarberoId(bId);
+    if (bId !== 'todos') {
+      const bObj = (trabajadores || []).find(t => String(t.id) === String(bId));
+      if (bObj && bObj.frecuencia_pago) {
+        const freqBarbero = bObj.frecuencia_pago;
+        setFrecuenciaPagoConfig(freqBarbero);
+        if (freqBarbero === 'quincenal') {
+          aplicarPeriodoLiquidacion('esta_quincena', bId);
+          return;
+        } else if (freqBarbero === 'mensual') {
+          aplicarPeriodoLiquidacion('este_mes', bId);
+          return;
+        } else if (freqBarbero === 'semanal') {
+          aplicarPeriodoLiquidacion('esta_semana', bId);
+          return;
+        }
+      }
+    }
+    cargarLiquidaciones(liqFechaInicio, liqFechaFin, bId);
+  };
+
+  const guardarFrecuenciaPago = async (nuevaFreq, barberoIdParam) => {
     const freq = nuevaFreq || frecuenciaPagoConfig;
+    const targetId = barberoIdParam !== undefined ? barberoIdParam : (liqBarberoId !== 'todos' ? liqBarberoId : null);
     setGuardandoFrecuenciaPago(true);
     try {
+      const payload = { frecuencia_pago_barberos: freq };
+      if (targetId) {
+        payload.barbero_id = targetId;
+      }
       const res = await fetch(`${API_URL}/admin_api.php?action=set_pago_config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ frecuencia_pago_barberos: freq })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (data.status === 'success') {
-        setFrecuenciaPagoConfig(data.frecuencia_pago_barberos || freq);
-        showToast(`Frecuencia de pago establecida a: ${freq.toUpperCase()}`, 'success');
+        setFrecuenciaPagoConfig(freq);
+        if (targetId) {
+          setTrabajadores(prev => prev.map(t => String(t.id) === String(targetId) ? { ...t, frecuencia_pago: freq } : t));
+          const targetObj = (trabajadores || []).find(t => String(t.id) === String(targetId));
+          const bNom = targetObj ? targetObj.nombre : 'Barbero';
+          showToast(`Frecuencia de ${bNom} actualizada a: ${freq.toUpperCase()}`, 'success');
+          if (freq === 'quincenal') aplicarPeriodoLiquidacion('esta_quincena', targetId);
+          else if (freq === 'mensual') aplicarPeriodoLiquidacion('este_mes', targetId);
+          else if (freq === 'semanal') aplicarPeriodoLiquidacion('esta_semana', targetId);
+        } else {
+          showToast(`Frecuencia predeterminada establecida a: ${freq.toUpperCase()}`, 'success');
+        }
       }
     } catch (err) {
       showToast('Error al guardar frecuencia de pago', 'error');
     } finally {
       setGuardandoFrecuenciaPago(false);
+    }
+  };
+
+  const guardarPorcentajeBarbero = async (barberoId, porcentaje) => {
+    setGuardandoPorcentajeId(barberoId);
+    try {
+      const resp = await fetch(`${API_URL}/admin_api.php?action=update_porcentaje_barbero`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ barbero_id: barberoId, porcentaje_comision: Number(porcentaje) })
+      });
+      const data = await resp.json();
+      if (data.status === 'success') {
+        await cargarEquipo();
+        await cargarLiquidaciones(liqFechaInicio, liqFechaFin, liqBarberoId);
+        showToast(`¡Porcentaje de barbero guardado en ${porcentaje}%! Liquidaciones recalculadas.`, 'success');
+      } else {
+        showToast(data.message || 'Error guardando porcentaje.', 'error');
+      }
+    } catch (e) {
+      showToast('Error de conexión al guardar porcentaje.', 'error');
+    } finally {
+      setGuardandoPorcentajeId(null);
     }
   };
 
@@ -4934,7 +4997,230 @@ export default function AdminDashboard({ session, logout }) {
           </div>
         </div>
 
-        {/* Configuración de Frecuencia de Pago Predeterminada a Barberos */}
+        {/* Configuración de Frecuencia de Pago (Individual por Barbero) */}
+        {(() => {
+          const barberoSeleccionadoObj = (trabajadores || []).find(t => String(t.id) === String(liqBarberoId));
+          const freqActiva = barberoSeleccionadoObj ? (barberoSeleccionadoObj.frecuencia_pago || 'quincenal') : null;
+
+          return (
+            <div style={{ 
+              background: 'rgba(26, 26, 26, 0.7)', 
+              backdropFilter: 'blur(10px)', 
+              padding: '16px 20px', 
+              borderRadius: '12px', 
+              border: '1px solid rgba(212, 175, 55, 0.4)', 
+              display: 'flex', 
+              flexDirection: 'column', 
+              gap: '12px' 
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '1.2rem' }}>⚙️</span>
+                    <strong style={{ color: 'var(--gold-jewel)', fontSize: '1rem' }}>
+                      {barberoSeleccionadoObj 
+                        ? `Modalidad de Pago: ${barberoSeleccionadoObj.nombre}` 
+                        : 'Modalidades de Pago por Barbero'}
+                    </strong>
+                    <span style={{ 
+                      background: barberoSeleccionadoObj 
+                        ? (freqActiva === 'mensual' ? 'rgba(155, 89, 182, 0.2)' : 'rgba(212, 175, 55, 0.2)') 
+                        : 'rgba(212, 175, 55, 0.15)', 
+                      color: barberoSeleccionadoObj 
+                        ? (freqActiva === 'mensual' ? '#bb86fc' : 'var(--gold-jewel)') 
+                        : 'var(--gold-jewel)', 
+                      border: '1px solid currentColor',
+                      padding: '2px 8px', 
+                      borderRadius: '6px', 
+                      fontSize: '0.75rem', 
+                      fontWeight: 'bold' 
+                    }}>
+                      {barberoSeleccionadoObj 
+                        ? (freqActiva === 'mensual' ? '🗓️ Cobra Mensual' : (freqActiva === 'semanal' ? '📅 Cobra Semanal' : '🌓 Cobra Quincenal')) 
+                        : 'Cada barbero cobra distinto'}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '0.82rem', color: '#aaa', display: 'block', marginTop: '3px' }}>
+                    {barberoSeleccionadoObj 
+                      ? `Estás viendo las liquidaciones de ${barberoSeleccionadoObj.nombre}. El período se sincroniza automáticamente con su ciclo.`
+                      : 'En la barbería cada profesional tiene su modalidad (ej. Carlos y Pedro cobran quincenal, Luis mensual). Selecciona a un barbero para liquidarlo según su ciclo:'}
+                  </span>
+                </div>
+
+                {/* Botones de selección de barbero arriba */}
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    onClick={() => handleCambioBarberoLiquidacion('todos')}
+                    style={{
+                      background: liqBarberoId === 'todos' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.06)',
+                      color: liqBarberoId === 'todos' ? '#000' : '#ccc',
+                      border: '1px solid ' + (liqBarberoId === 'todos' ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.1)'),
+                      padding: '6px 12px',
+                      borderRadius: '8px',
+                      fontSize: '0.78rem',
+                      fontWeight: 'bold',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    👥 Todo el Equipo
+                  </button>
+                  {(trabajadores || []).filter(t => t.activo).map(t => {
+                    const isSel = String(liqBarberoId) === String(t.id);
+                    const tag = t.frecuencia_pago === 'mensual' ? '🗓️ Mensual' : '🌓 Quincenal';
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => handleCambioBarberoLiquidacion(t.id)}
+                        style={{
+                          background: isSel ? 'linear-gradient(135deg, #d4af37 0%, #aa820a 100%)' : 'rgba(255,255,255,0.06)',
+                          color: isSel ? '#000' : '#ccc',
+                          border: isSel ? '1px solid var(--gold-jewel)' : '1px solid rgba(255,255,255,0.1)',
+                          padding: '6px 12px',
+                          borderRadius: '8px',
+                          fontSize: '0.78rem',
+                          fontWeight: 'bold',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px'
+                        }}
+                      >
+                        <span>{t.nombre}</span>
+                        <span style={{ 
+                          fontSize: '0.72rem', 
+                          background: t.frecuencia_pago === 'mensual' ? 'rgba(155, 89, 182, 0.35)' : 'rgba(0,0,0,0.3)', 
+                          color: t.frecuencia_pago === 'mensual' ? '#e0bbff' : '#fff',
+                          padding: '1px 5px', 
+                          borderRadius: '4px' 
+                        }}>
+                          {tag}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Contenido condicional: Si está seleccionado un barbero, mostramos sus botones para cambiar su frecuencia. Si está "Todo el equipo", mostramos el resumen individual */}
+              {barberoSeleccionadoObj ? (
+                <div style={{ 
+                  background: 'rgba(0,0,0,0.35)', 
+                  padding: '12px 16px', 
+                  borderRadius: '8px', 
+                  border: '1px solid rgba(212, 175, 55, 0.3)',
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'center', 
+                  flexWrap: 'wrap', 
+                  gap: '12px' 
+                }}>
+                  <div>
+                    <span style={{ color: '#fff', fontSize: '0.88rem', fontWeight: 'bold' }}>
+                      Cambiar modalidad asignada a <span style={{ color: 'var(--gold-jewel)' }}>{barberoSeleccionadoObj.nombre}</span>:
+                    </span>
+                    <span style={{ 
+                      color: freqActiva === 'mensual' ? '#bb86fc' : 'var(--gold-jewel)', 
+                      fontSize: '0.84rem', 
+                      marginLeft: '8px', 
+                      fontWeight: 'bold' 
+                    }}>
+                      {freqActiva === 'mensual' ? '🗓️ Mensual (1 al fin de mes)' : (freqActiva === 'semanal' ? '📅 Semanal (L-D)' : '🌓 Quincenal (1-15 / 16-Fin)')}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    {[
+                      { id: 'quincenal', label: '🌓 Quincenal (1-15 / 16-Fin)' },
+                      { id: 'semanal', label: '📅 Semanal (L-D)' },
+                      { id: 'mensual', label: '🗓️ Mensual (1-Fin)' }
+                    ].map(f => {
+                      const isSelected = freqActiva === f.id;
+                      return (
+                        <button
+                          key={f.id}
+                          type="button"
+                          disabled={guardandoFrecuenciaPago}
+                          onClick={() => guardarFrecuenciaPago(f.id, barberoSeleccionadoObj.id)}
+                          style={{
+                            background: isSelected ? 'linear-gradient(135deg, #d4af37 0%, #aa820a 100%)' : 'rgba(0,0,0,0.5)',
+                            color: isSelected ? '#000' : '#ccc',
+                            border: isSelected ? '1px solid var(--gold-jewel)' : '1px solid #444',
+                            padding: '8px 16px',
+                            borderRadius: '8px',
+                            fontWeight: 'bold',
+                            fontSize: '0.82rem',
+                            cursor: 'pointer',
+                            boxShadow: isSelected ? '0 2px 10px rgba(212, 175, 55, 0.3)' : 'none',
+                            transition: 'all 0.2s ease'
+                          }}
+                          title={`Guardar modalidad ${f.label} para ${barberoSeleccionadoObj.nombre}`}
+                        >
+                          {isSelected ? '✓ ' : ''}{f.label}
+                        </button>
+                      );
+                    })}
+                    {guardandoFrecuenciaPago && <span style={{ color: 'var(--gold-jewel)', fontSize: '0.8rem' }}>Guardando...</span>}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ 
+                  background: 'rgba(0,0,0,0.25)', 
+                  padding: '12px 16px', 
+                  borderRadius: '8px', 
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'center', 
+                  flexWrap: 'wrap', 
+                  gap: '12px' 
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '1.1rem' }}>💡</span>
+                    <span style={{ color: '#bbb', fontSize: '0.84rem' }}>
+                      <strong>Resumen de modalidades activas:</strong> Haz clic en un barbero para enfocar sus cortes y su ciclo exacto.
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    {(trabajadores || []).filter(t => t.activo).map(t => {
+                      const esMensual = t.frecuencia_pago === 'mensual';
+                      return (
+                        <div 
+                          key={t.id}
+                          onClick={() => handleCambioBarberoLiquidacion(t.id)}
+                          style={{
+                            background: esMensual ? 'rgba(155, 89, 182, 0.15)' : 'rgba(212, 175, 55, 0.12)',
+                            border: esMensual ? '1px solid rgba(155, 89, 182, 0.4)' : '1px solid rgba(212, 175, 55, 0.3)',
+                            padding: '4px 10px',
+                            borderRadius: '6px',
+                            fontSize: '0.78rem',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px'
+                          }}
+                          title={`Ver liquidación de ${t.nombre} (${esMensual ? 'Mensual' : 'Quincenal'})`}
+                        >
+                          <strong style={{ color: '#fff' }}>{t.nombre}:</strong>
+                          <span style={{ 
+                            color: esMensual ? '#bb86fc' : 'var(--gold-jewel)', 
+                            fontWeight: 'bold' 
+                          }}>
+                            {esMensual ? '🗓️ Mensual' : '🌓 Quincenal'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Configuración de Porcentaje de Ganancias y Modalidad por Barbero (PUNTO 6) */}
         <div style={{ 
           background: 'rgba(26, 26, 26, 0.7)', 
           backdropFilter: 'blur(10px)', 
@@ -4942,49 +5228,158 @@ export default function AdminDashboard({ session, logout }) {
           borderRadius: '12px', 
           border: '1px solid rgba(212, 175, 55, 0.4)', 
           display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center', 
-          flexWrap: 'wrap', 
-          gap: '15px' 
+          flexDirection: 'column', 
+          gap: '14px' 
         }}>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '1.2rem' }}>⚙️</span>
-              <strong style={{ color: 'var(--gold-jewel)', fontSize: '0.98rem' }}>Frecuencia de Pago a Barberos</strong>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+              <span style={{ fontSize: '1.25rem' }}>💈</span>
+              <strong style={{ color: 'var(--gold-jewel)', fontSize: '1rem' }}>Porcentajes y Modalidades por Barbero</strong>
             </div>
             <span style={{ fontSize: '0.82rem', color: '#aaa' }}>
-              Configura cómo liquidas habitualmente a los barberos: Quincenal (1-15 y 16-Fin), Semanal (L-D) o Mensual (1-Fin).
+              Cada barbero cobra con su propio porcentaje de comisión y su propia frecuencia de pago (Quincenal o Mensual). Puedes modificar ambos valores directamente aquí:
             </span>
           </div>
 
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-            {[
-              { id: 'quincenal', label: '🌓 Quincenal (1-15 / 16-Fin)' },
-              { id: 'semanal', label: '📅 Semanal (L-D)' },
-              { id: 'mensual', label: '🗓️ Mensual (1-Fin)' }
-            ].map(f => (
-              <button
-                key={f.id}
-                type="button"
-                disabled={guardandoFrecuenciaPago}
-                onClick={() => guardarFrecuenciaPago(f.id)}
-                style={{
-                  background: frecuenciaPagoConfig === f.id ? 'linear-gradient(135deg, #d4af37 0%, #aa820a 100%)' : 'rgba(0,0,0,0.5)',
-                  color: frecuenciaPagoConfig === f.id ? '#000' : '#ccc',
-                  border: frecuenciaPagoConfig === f.id ? '1px solid var(--gold-jewel)' : '1px solid #444',
-                  padding: '8px 16px',
-                  borderRadius: '8px',
-                  fontWeight: 'bold',
-                  fontSize: '0.82rem',
-                  cursor: 'pointer',
-                  boxShadow: frecuenciaPagoConfig === f.id ? '0 2px 10px rgba(212, 175, 55, 0.3)' : 'none',
-                  transition: 'all 0.2s ease'
-                }}
-              >
-                {frecuenciaPagoConfig === f.id ? '✓ ' : ''}{f.label}
-              </button>
-            ))}
-            {guardandoFrecuenciaPago && <span style={{ color: 'var(--gold-jewel)', fontSize: '0.8rem' }}>Guardando...</span>}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '12px' }}>
+            {(trabajadores || []).filter(t => t.activo).map(t => {
+              const currentVal = porcentajesBarberosEdit[t.id] !== undefined ? porcentajesBarberosEdit[t.id] : (t.porcentaje_comision || 60);
+              const isSaving = guardandoPorcentajeId === t.id;
+              const isFocused = String(liqBarberoId) === String(t.id);
+              const esMensual = t.frecuencia_pago === 'mensual';
+
+              return (
+                <div 
+                  key={t.id} 
+                  style={{ 
+                    background: isFocused ? 'rgba(212, 175, 55, 0.08)' : 'rgba(0,0,0,0.4)', 
+                    border: isFocused ? '1px solid var(--gold-jewel)' : '1px solid rgba(255,255,255,0.08)', 
+                    borderRadius: '10px', 
+                    padding: '12px', 
+                    display: 'flex', 
+                    flexDirection: 'column',
+                    gap: '10px',
+                    boxShadow: isFocused ? '0 0 10px rgba(212, 175, 55, 0.2)' : 'none',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                    <div 
+                      onClick={() => handleCambioBarberoLiquidacion(t.id)} 
+                      style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}
+                      title={`Ver liquidaciones de ${t.nombre} y cargar su frecuencia`}
+                    >
+                      <img 
+                        src={resolveImageUrl(t.foto_perfil, `https://i.pravatar.cc/100?u=${t.id}`)} 
+                        alt={t.nombre} 
+                        style={{ width: '42px', height: '42px', borderRadius: '50%', objectFit: 'cover', border: isFocused ? '2px solid var(--gold-jewel)' : '1px solid #666' }} 
+                      />
+                      <div>
+                        <strong style={{ display: 'block', fontSize: '0.9rem', color: isFocused ? 'var(--gold-jewel)' : '#fff' }}>
+                          {t.nombre}
+                        </strong>
+                        <span style={{ fontSize: '0.74rem', color: esMensual ? '#bb86fc' : 'var(--gold-jewel)', fontWeight: 'bold' }}>
+                          {esMensual ? '🗓️ Cobro Mensual' : '🌓 Cobro Quincenal'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Porcentaje de Comisión */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255,255,255,0.06)', borderRadius: '6px', padding: '0 6px', border: '1px solid #444' }}>
+                        <input 
+                          type="number" 
+                          min="0" 
+                          max="100" 
+                          value={currentVal} 
+                          onChange={e => setPorcentajesBarberosEdit({ ...porcentajesBarberosEdit, [t.id]: e.target.value })}
+                          style={{ width: '44px', background: 'transparent', border: 'none', color: '#fff', fontSize: '0.9rem', fontWeight: 'bold', textAlign: 'center', padding: '4px 0', outline: 'none' }} 
+                        />
+                        <span style={{ fontSize: '0.8rem', color: '#aaa' }}>%</span>
+                      </div>
+                      <button 
+                        type="button" 
+                        className="btn-primary" 
+                        disabled={isSaving}
+                        onClick={() => guardarPorcentajeBarbero(t.id, currentVal)}
+                        style={{ padding: '6px 10px', fontSize: '0.75rem', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '4px' }}
+                        title="Guardar porcentaje individual para este barbero"
+                      >
+                        {isSaving ? '⏳' : '💾 Guardar'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Fila inferior: Botones de modalidad Quincenal / Mensual directos por barbero */}
+                  <div style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'space-between', 
+                    paddingTop: '8px', 
+                    borderTop: '1px solid rgba(255,255,255,0.06)',
+                    fontSize: '0.78rem' 
+                  }}>
+                    <span style={{ color: '#888', fontSize: '0.75rem' }}>Modalidad de pago:</span>
+                    <div style={{ display: 'flex', gap: '5px' }}>
+                      <button
+                        type="button"
+                        disabled={guardandoFrecuenciaPago}
+                        onClick={() => guardarFrecuenciaPago('quincenal', t.id)}
+                        style={{
+                          background: t.frecuencia_pago === 'quincenal' ? 'linear-gradient(135deg, #d4af37 0%, #aa820a 100%)' : 'rgba(255,255,255,0.06)',
+                          color: t.frecuencia_pago === 'quincenal' ? '#000' : '#aaa',
+                          border: t.frecuencia_pago === 'quincenal' ? '1px solid var(--gold-jewel)' : '1px solid #444',
+                          padding: '3px 8px',
+                          borderRadius: '6px',
+                          fontSize: '0.74rem',
+                          fontWeight: 'bold',
+                          cursor: 'pointer'
+                        }}
+                        title={`Asignar Quincenal a ${t.nombre}`}
+                      >
+                        {t.frecuencia_pago === 'quincenal' ? '✓ ' : ''}🌓 Quincenal
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={guardandoFrecuenciaPago}
+                        onClick={() => guardarFrecuenciaPago('mensual', t.id)}
+                        style={{
+                          background: t.frecuencia_pago === 'mensual' ? '#9b59b6' : 'rgba(255,255,255,0.06)',
+                          color: t.frecuencia_pago === 'mensual' ? '#fff' : '#aaa',
+                          border: t.frecuencia_pago === 'mensual' ? '1px solid #9b59b6' : '1px solid #444',
+                          padding: '3px 8px',
+                          borderRadius: '6px',
+                          fontSize: '0.74rem',
+                          fontWeight: 'bold',
+                          cursor: 'pointer'
+                        }}
+                        title={`Asignar Mensual a ${t.nombre}`}
+                      >
+                        {t.frecuencia_pago === 'mensual' ? '✓ ' : ''}🗓️ Mensual
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleCambioBarberoLiquidacion(t.id)}
+                        style={{
+                          background: 'rgba(255,255,255,0.05)',
+                          color: 'var(--gold-jewel)',
+                          border: '1px solid rgba(212, 175, 55, 0.3)',
+                          padding: '3px 8px',
+                          borderRadius: '6px',
+                          fontSize: '0.74rem',
+                          cursor: 'pointer'
+                        }}
+                        title={`Ver liquidación de ${t.nombre}`}
+                      >
+                        🔍 Ver
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -5066,16 +5461,14 @@ export default function AdminDashboard({ session, logout }) {
               <select 
                 className="input-field" 
                 value={liqBarberoId} 
-                onChange={e => {
-                  const val = e.target.value;
-                  setLiqBarberoId(val);
-                  cargarLiquidaciones(liqFechaInicio, liqFechaFin, val);
-                }} 
+                onChange={e => handleCambioBarberoLiquidacion(e.target.value)} 
                 style={{ margin: 0 }}
               >
                 <option value="todos">👥 Todos los Barberos</option>
                 {(trabajadores || []).map(b => (
-                  <option key={b.id} value={b.id}>{b.nombre}</option>
+                  <option key={b.id} value={b.id}>
+                    {b.nombre} ({b.frecuencia_pago === 'mensual' ? 'Mensual' : (b.frecuencia_pago === 'semanal' ? 'Semanal' : 'Quincenal')})
+                  </option>
                 ))}
               </select>
             </div>
@@ -5231,12 +5624,84 @@ export default function AdminDashboard({ session, logout }) {
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <span style={{ fontSize: '1.2rem' }}>💈</span>
                             <div>
-                              <div>{b.barbero_nombre}</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span>{b.barbero_nombre}</span>
+                                <span style={{
+                                  fontSize: '0.7rem',
+                                  background: (b.frecuencia_pago === 'mensual' || (trabajadores.find(t=>String(t.id)===String(b.barbero_id))?.frecuencia_pago === 'mensual')) ? 'rgba(155, 89, 182, 0.2)' : 'rgba(212, 175, 55, 0.2)',
+                                  color: (b.frecuencia_pago === 'mensual' || (trabajadores.find(t=>String(t.id)===String(b.barbero_id))?.frecuencia_pago === 'mensual')) ? '#bb86fc' : 'var(--gold-jewel)',
+                                  border: '1px solid currentColor',
+                                  borderRadius: '4px',
+                                  padding: '1px 5px',
+                                  fontWeight: 'bold'
+                                }}>
+                                  {(b.frecuencia_pago === 'mensual' || (trabajadores.find(t=>String(t.id)===String(b.barbero_id))?.frecuencia_pago === 'mensual')) ? '🗓️ Mensual' : '🌓 Quincenal'}
+                                </span>
+                              </div>
                               {estaPagado && b.pago_info?.numero_comprobante && (
                                 <div style={{ fontSize: '0.72rem', color: '#aaa', fontWeight: 'normal' }}>
                                   Comprobante: {b.pago_info.numero_comprobante}
                                 </div>
                               )}
+                              {/* Aviso inteligente de ciclo si difiere del período visualizado */}
+                              {(() => {
+                                const freqB = b.frecuencia_pago || (trabajadores.find(t=>String(t.id)===String(b.barbero_id))?.frecuencia_pago) || 'quincenal';
+                                if (freqB === 'mensual' && (liqPeriodo === 'esta_quincena' || liqPeriodo === 'quincena_anterior')) {
+                                  return (
+                                    <div style={{ marginTop: '3px' }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleCambioBarberoLiquidacion(b.barbero_id)}
+                                        style={{
+                                          background: 'rgba(155, 89, 182, 0.2)',
+                                          border: '1px solid #9b59b6',
+                                          color: '#bb86fc',
+                                          padding: '2px 7px',
+                                          borderRadius: '4px',
+                                          fontSize: '0.68rem',
+                                          fontWeight: 'bold',
+                                          cursor: 'pointer',
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '4px'
+                                        }}
+                                        title={`Cobra Mensual. Ver mes completo de ${b.barbero_nombre}`}
+                                      >
+                                        <span>🗓️ Cobra Mensual:</span>
+                                        <span style={{ textDecoration: 'underline' }}>Ver Mes</span>
+                                      </button>
+                                    </div>
+                                  );
+                                }
+                                if (freqB === 'quincenal' && (liqPeriodo === 'este_mes' || liqPeriodo === 'mes_anterior')) {
+                                  return (
+                                    <div style={{ marginTop: '3px' }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleCambioBarberoLiquidacion(b.barbero_id)}
+                                        style={{
+                                          background: 'rgba(212, 175, 55, 0.15)',
+                                          border: '1px solid rgba(212, 175, 55, 0.5)',
+                                          color: 'var(--gold-jewel)',
+                                          padding: '2px 7px',
+                                          borderRadius: '4px',
+                                          fontSize: '0.68rem',
+                                          fontWeight: 'bold',
+                                          cursor: 'pointer',
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '4px'
+                                        }}
+                                        title={`Cobra Quincenal. Ver quincena de ${b.barbero_nombre}`}
+                                      >
+                                        <span>🌓 Cobra Quincenal:</span>
+                                        <span style={{ textDecoration: 'underline' }}>Ver Quincena</span>
+                                      </button>
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              })()}
                             </div>
                           </div>
                         </td>
@@ -5252,7 +5717,10 @@ export default function AdminDashboard({ session, logout }) {
 
                         {/* Comisión Barbero */}
                         <td style={{ ...tableCellStyle, textAlign: 'right', color: '#3498db', fontWeight: 'bold', fontSize: '0.95rem' }}>
-                          ${Number(b.total_comision_barbero || 0).toLocaleString('es-CL')}
+                          <div>${Number(b.total_comision_barbero || 0).toLocaleString('es-CL')}</div>
+                          <span style={{ fontSize: '0.72rem', color: '#3498db', fontWeight: 'bold', background: 'rgba(52, 152, 219, 0.12)', padding: '1px 5px', borderRadius: '4px' }}>
+                            {b.porcentaje_barbero || 60}% barbero
+                          </span>
                         </td>
 
                         {/* Estado de Pago Badge */}
@@ -5297,7 +5765,10 @@ export default function AdminDashboard({ session, logout }) {
 
                         {/* Ganancia Tienda */}
                         <td style={{ ...tableCellStyle, textAlign: 'right', color: 'var(--gold-jewel)', fontWeight: 'bold' }}>
-                          ${Number(b.total_ganancia_tienda || 0).toLocaleString('es-CL')}
+                          <div>${Number(b.total_ganancia_tienda || 0).toLocaleString('es-CL')}</div>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--gold-jewel)', fontWeight: 'bold', background: 'rgba(212, 175, 55, 0.12)', padding: '1px 5px', borderRadius: '4px' }}>
+                            {b.porcentaje_tienda || 40}% local
+                          </span>
                         </td>
 
                         {/* Promedio Diario */}

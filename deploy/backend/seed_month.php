@@ -27,25 +27,35 @@ try {
     $stmtAdmin = $pdo->prepare("INSERT INTO administradores (nombre, email, password_hash) VALUES (?, ?, ?)");
     $stmtAdmin->execute(['Dueño Administrador', 'admin@laromana.cl', $hashAdmin]);
 
+    // Asegurar columna porcentaje_comision en trabajadores
+    try {
+        $colCheck = $pdo->query("SHOW COLUMNS FROM trabajadores LIKE 'porcentaje_comision'")->fetch();
+        if (!$colCheck) {
+            $pdo->exec("ALTER TABLE trabajadores ADD COLUMN porcentaje_comision DECIMAL(5,2) DEFAULT 60.00");
+        }
+    } catch (\Exception $eCol) {}
+
     // 2. Barberos / Trabajadores (Password: 123456)
+    // Cada barbero configurado con un porcentaje distinto
     $hashStaff = password_hash('123456', PASSWORD_DEFAULT);
     $barberos = [
-        ['Carlos (Master)', 'carlos@laromana.cl', '/assets/fotos/Peersonal/Peluquero 1.jpg'],
-        ['Luis (Senior)', 'luis@laromana.cl', '/assets/fotos/Peersonal/Peelukero2.jpg'],
-        ['Pedro (Junior)', 'pedro@laromana.cl', '/assets/fotos/Peersonal/Peluukero3.jpg']
+        ['Carlos (Master)', 'carlos@laromana.cl', '/assets/fotos/Peersonal/Peluquero 1.jpg', 60.00],
+        ['Luis (Senior)', 'luis@laromana.cl', '/assets/fotos/Peersonal/Peelukero2.jpg', 55.00],
+        ['Pedro (Junior)', 'pedro@laromana.cl', '/assets/fotos/Peersonal/Peluukero3.jpg', 50.00]
     ];
     $trabajadores_ids = [];
     foreach ($barberos as $b) {
-        $stmt = $pdo->prepare("INSERT INTO trabajadores (nombre, email, foto_perfil, password_hash, activo) VALUES (?, ?, ?, ?, 1)");
-        $stmt->execute([$b[0], $b[1], $b[2], $hashStaff]);
+        $stmt = $pdo->prepare("INSERT INTO trabajadores (nombre, email, foto_perfil, password_hash, porcentaje_comision, activo) VALUES (?, ?, ?, ?, ?, 1)");
+        $stmt->execute([$b[0], $b[1], $b[2], $hashStaff, $b[3]]);
         $trabajadores_ids[] = $pdo->lastInsertId();
     }
 
-    // 3. Categorías de Tienda
+    // 3. Categorías de Tienda (Perfumes Hombre y Perfumes Mujer separados)
     $pdo->exec("INSERT INTO categorias (id, nombre) VALUES 
         (1, 'Capilares'),
-        (2, 'Perfumes y Decants'),
-        (3, 'Gorras y Accesorios')");
+        (2, 'Perfumes Hombre'),
+        (3, 'Gorras y Accesorios'),
+        (4, 'Perfumes Mujer')");
 
     // 4. Productos de Tienda
     $productos = [
@@ -58,7 +68,10 @@ try {
         [2, 'Perfume Bleu de Chanel (100ml)', 'Sofisticación masculina amaderada aromática', 110000.00, 6, '/assets/fotos/perfume/Perfume1.webp', 9],
         [3, 'Gorra Azul La Romana', 'Gorra urbana azul con logo bordado dorado', 25000.00, 24, '/assets/fotos/gorras/Gorra azul.jpg', 22],
         [3, 'Gorra Roja Premium', 'Gorra snapback roja con detalles negros', 25000.00, 18, '/assets/fotos/gorras/Gorra roja.webp', 15],
-        [3, 'Gorra Trucker Black Edition', 'Malla trasera transpirable edición especial', 18000.00, 30, '/assets/fotos/gorras/gorra_trucker.png', 31]
+        [3, 'Gorra Trucker Black Edition', 'Malla trasera transpirable edición especial', 18000.00, 30, '/assets/fotos/gorras/gorra_trucker.png', 31],
+        [4, 'Perfume Carolina Herrera Good Girl (80ml)', 'Fragancia icónica femenina con notas de jazmín y haba tonka', 115000.00, 12, '/assets/fotos/perfume/perfume2.jpg', 18],
+        [4, 'Decant Lancôme La Vie Est Belle (10ml)', 'Decant exclusivo para dama con notas de iris y vainilla', 18000.00, 25, '/assets/fotos/perfume/decant.png', 32],
+        [4, 'Perfume Chanel Coco Mademoiselle (100ml)', 'Elegancia oriental femenina con acordes de naranja y rosa', 125000.00, 8, '/assets/fotos/perfume/Perfume1.webp', 14]
     ];
     $stmtProd = $pdo->prepare("INSERT INTO productos (categoria_id, nombre, descripcion, precio, stock, imagen_url, ventas) VALUES (?, ?, ?, ?, ?, ?, ?)");
     foreach ($productos as $p) {

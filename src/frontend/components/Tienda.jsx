@@ -235,7 +235,7 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
   const [pedidoConfirmado, setPedidoConfirmado] = useState(null);
 
   const [productos, setProductos] = useState([]);
-  const [categorias, setCategorias] = useState(['Gorras y Accesorios', 'Perfumes y Decants', 'Capilares', 'Más Vendidos']);
+  const [categorias, setCategorias] = useState(['Gorras y Accesorios', 'Perfumes Hombre', 'Perfumes Mujer', 'Capilares', 'Más Vendidos']);
   const [catSeleccionada, setCatSeleccionada] = useState('Gorras y Accesorios');
 
   // Datos para compra / ticket
@@ -328,16 +328,23 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
         setProductos(prods);
         const rawCats = [...new Set(prods.map(p => p.categoria).filter(Boolean))];
 
+        // Asegurar que siempre se muestren Perfumes Hombre y Perfumes Mujer (Punto 7)
+        let processedCats = rawCats.filter(c => c !== 'Perfumes y Decants');
+        if (!processedCats.includes('Perfumes Hombre')) processedCats.push('Perfumes Hombre');
+        if (!processedCats.includes('Perfumes Mujer')) processedCats.push('Perfumes Mujer');
+
         const getPriority = (name) => {
           const lower = name.toLowerCase();
           if (lower.includes('gorra') || lower.includes('accesorio')) return 1;
-          if (lower.includes('perfume') || lower.includes('decant')) return 2;
-          if (lower.includes('capilar')) return 3;
+          if (lower.includes('hombre')) return 2;
+          if (lower.includes('mujer')) return 3;
+          if (lower.includes('perfume') || lower.includes('decant')) return 4;
+          if (lower.includes('capilar')) return 5;
           return 10;
         };
 
-        const sortedCats = rawCats.sort((a, b) => getPriority(a) - getPriority(b));
-        const finalCats = sortedCats.length > 0 ? [...sortedCats, 'Más Vendidos'] : ['Gorras y Accesorios', 'Perfumes y Decants', 'Capilares', 'Más Vendidos'];
+        const sortedCats = processedCats.sort((a, b) => getPriority(a) - getPriority(b));
+        const finalCats = [...sortedCats, 'Más Vendidos'];
         setCategorias(finalCats);
 
         setCatSeleccionada(prev => {
@@ -444,9 +451,34 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
     }
   };
 
-  const productosMostrar = catSeleccionada === 'Más Vendidos' 
-    ? [...productos].sort((a,b) => (b.ventas || 0) - (a.ventas || 0)).slice(0, 12)
-    : productos.filter(p => p.categoria === catSeleccionada);
+  const productosMostrar = (() => {
+    if (catSeleccionada === 'Más Vendidos') {
+      return [...productos].sort((a,b) => (b.ventas || 0) - (a.ventas || 0)).slice(0, 12);
+    }
+    if (catSeleccionada === 'Perfumes Hombre') {
+      return productos.filter(p => {
+        if (p.categoria === 'Perfumes Hombre') return true;
+        // Compatibilidad previa con 'Perfumes y Decants'
+        if (p.categoria === 'Perfumes y Decants') {
+          const lower = (p.nombre + ' ' + (p.descripcion || '')).toLowerCase();
+          return !lower.includes('mujer') && !lower.includes('dama') && !lower.includes('femenin');
+        }
+        return false;
+      });
+    }
+    if (catSeleccionada === 'Perfumes Mujer') {
+      return productos.filter(p => {
+        if (p.categoria === 'Perfumes Mujer') return true;
+        // Compatibilidad previa con 'Perfumes y Decants'
+        if (p.categoria === 'Perfumes y Decants') {
+          const lower = (p.nombre + ' ' + (p.descripcion || '')).toLowerCase();
+          return lower.includes('mujer') || lower.includes('dama') || lower.includes('femenin') || lower.includes('good girl') || lower.includes('mademoiselle') || lower.includes('la vie est belle') || lower.includes('libre');
+        }
+        return false;
+      });
+    }
+    return productos.filter(p => p.categoria === catSeleccionada);
+  })();
 
   const abrirDetalleProducto = (p) => {
     setProductoDetalle(p);
