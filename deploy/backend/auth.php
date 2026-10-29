@@ -147,9 +147,9 @@ if ($admin) {
     exit();
 }
 
-// 2. Verificar si es Trabajador (Barbero) (busca por email)
-$stmt = $pdo->prepare("SELECT id, nombre, email, foto_perfil, password_hash FROM trabajadores WHERE email = ? AND activo = 1");
-$stmt->execute([$identificador]);
+// 2. Verificar si es Trabajador (Barbero) (busca por email, usuario o nombre)
+$stmt = $pdo->prepare("SELECT id, nombre, email, foto_perfil, password_hash FROM trabajadores WHERE (email = ? OR email = CONCAT(?, '@laromana.cl') OR nombre = ? OR nombre LIKE CONCAT('%', ?, '%')) AND activo = 1 LIMIT 1");
+$stmt->execute([$identificador, $identificador, $identificador, $identificador]);
 $trabajador = $stmt->fetch();
 
 if ($trabajador) {

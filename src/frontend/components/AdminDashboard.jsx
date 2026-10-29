@@ -16,9 +16,9 @@ const formatDateYMD = (d = new Date()) => {
 };
 
 const HORAS_CALENDARIO = [];
-for (let h = 10; h <= 20; h++) {
+for (let h = 10; h <= 19; h++) {
   HORAS_CALENDARIO.push(`${String(h).padStart(2, '0')}:00`);
-  if (h < 20) HORAS_CALENDARIO.push(`${String(h).padStart(2, '0')}:30`);
+  if (h < 19) HORAS_CALENDARIO.push(`${String(h).padStart(2, '0')}:30`);
 }
 
 export default function AdminDashboard({ session, logout }) {

@@ -22,12 +22,16 @@ export default function PosTrabajador({ session }) {
 
   const [fechaAgenda, setFechaAgenda] = useState(hoyISO);
   
+  // Resumen de citas para próximos días y citas generales
+  const [resumenAgenda, setResumenAgenda] = useState({});
+  const [proximasCitas, setProximasCitas] = useState([]);
+
   // States for Express Booking
   const [showExpress, setShowExpress] = useState(false);
   const [expressData, setExpressData] = useState({ 
     nombre: '', 
     rut: '', 
-    hora: '14:00',
+    hora: '10:00',
     fecha: hoyISO
   });
   const [expressSugerencias, setExpressSugerencias] = useState([]);
@@ -66,6 +70,22 @@ export default function PosTrabajador({ session }) {
           if (!data.error) setAgendados(Array.isArray(data) ? data : []);
         })
         .catch(e => console.error("Error fetching citas:", e));
+
+      // Cargar conteo de citas para hoy, mañana, pasado mañana
+      fetch(`${API_URL}/api.php?action=get_resumen_agenda_trabajador&trabajador_id=${session.usuario.id}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data && typeof data === 'object') setResumenAgenda(data);
+        })
+        .catch(() => {});
+
+      // Cargar próximas citas del barbero
+      fetch(`${API_URL}/api.php?action=get_proximas_citas_trabajador&trabajador_id=${session.usuario.id}`)
+        .then(r => r.json())
+        .then(data => {
+          if (Array.isArray(data)) setProximasCitas(data);
+        })
+        .catch(() => {});
     }
   };
 
@@ -154,6 +174,15 @@ export default function PosTrabajador({ session }) {
     try {
       const fechaParaAgendar = expressData.fecha || fechaAgenda || hoyISO;
       const nombreFinal = expressData.nombre?.trim() || `Cliente ${expressData.rut?.replace(/[^0-9kK]/g,'')?.substring(0,8) || 'Express'}`;
+      
+      // Validar limitación de horario (10:00 a 19:00 hrs)
+      const horaSel = expressData.hora || '';
+      const [h, m] = horaSel.split(':').map(Number);
+      if (isNaN(h) || h < 10 || h > 19 || (h === 19 && m > 0)) {
+        alert('⚠️ El horario de atención es exclusivamente de 10:00 a 19:00 hrs. Selecciona una hora dentro de este rango.');
+        return;
+      }
+
       const res = await fetch(`${API_URL}/api.php?action=agendar_cita`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -169,12 +198,13 @@ export default function PosTrabajador({ session }) {
       });
       const data = await res.json();
       if (data.status === 'success') {
-        alert(`¡Cita agendada con éxito para el día ${fechaParaAgendar} a las ${expressData.hora}!`);
+        alert(`¡Cita agendada con éxito para el día ${fechaParaAgendar} a las ${expressData.hora} hrs!`);
         setShowExpress(false);
-        setExpressData({ nombre: '', rut: '', hora: '14:00', fecha: fechaAgenda });
+        setExpressData({ nombre: '', rut: '', hora: '10:00', fecha: fechaParaAgendar });
         setExpressSugerencias([]);
         setExpressClienteEncontrado(null);
-        fetchAgenda(fechaAgenda);
+        // Cambiar inmediatamente la vista al día de la cita para que se visualice
+        cambiarFechaAgenda(fechaParaAgendar);
       } else {
         alert('⚠️ ' + (data.error || data.message || "Error al agendar"));
       }
@@ -499,10 +529,18 @@ export default function PosTrabajador({ session }) {
             borderRadius: '6px',
             fontSize: '0.8rem',
             fontWeight: fechaAgenda === hoyISO ? 'bold' : 'normal',
-            cursor: 'pointer'
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '5px'
           }}
         >
           📌 Hoy
+          {resumenAgenda[hoyISO] ? (
+            <span style={{ background: fechaAgenda === hoyISO ? '#000' : 'var(--gold-jewel)', color: fechaAgenda === hoyISO ? '#fff' : '#000', borderRadius: '10px', padding: '1px 6px', fontSize: '0.7rem', fontWeight: 'bold' }}>
+              {resumenAgenda[hoyISO]}
+            </span>
+          ) : null}
         </button>
 
         <button 
@@ -516,10 +554,18 @@ export default function PosTrabajador({ session }) {
             borderRadius: '6px',
             fontSize: '0.8rem',
             fontWeight: fechaAgenda === mananaISO ? 'bold' : 'normal',
-            cursor: 'pointer'
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '5px'
           }}
         >
           ☀️ Mañana
+          {resumenAgenda[mananaISO] ? (
+            <span style={{ background: fechaAgenda === mananaISO ? '#000' : 'var(--gold-jewel)', color: fechaAgenda === mananaISO ? '#fff' : '#000', borderRadius: '10px', padding: '1px 6px', fontSize: '0.7rem', fontWeight: 'bold' }}>
+              {resumenAgenda[mananaISO]}
+            </span>
+          ) : null}
         </button>
 
         <button 
@@ -533,10 +579,18 @@ export default function PosTrabajador({ session }) {
             borderRadius: '6px',
             fontSize: '0.8rem',
             fontWeight: fechaAgenda === pasadoMananaISO ? 'bold' : 'normal',
-            cursor: 'pointer'
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '5px'
           }}
         >
           🗓️ Pasado Mañana
+          {resumenAgenda[pasadoMananaISO] ? (
+            <span style={{ background: fechaAgenda === pasadoMananaISO ? '#000' : 'var(--gold-jewel)', color: fechaAgenda === pasadoMananaISO ? '#fff' : '#000', borderRadius: '10px', padding: '1px 6px', fontSize: '0.7rem', fontWeight: 'bold' }}>
+              {resumenAgenda[pasadoMananaISO]}
+            </span>
+          ) : null}
         </button>
 
         <input 
@@ -602,17 +656,30 @@ export default function PosTrabajador({ session }) {
                  />
                </div>
 
-               <div style={{ width: '110px' }}>
-                 <label style={{ fontSize: '0.8rem', color: '#aaa', display: 'block', marginBottom: '2px' }}>Hora</label>
-                 <input type="time" className="input-field" required value={expressData.hora} onChange={e => setExpressData({...expressData, hora: e.target.value})} />
-                 <div style={{ display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap' }}>
-                   {['10:00','11:00','12:00','14:00','15:00','16:00','17:00','18:00'].map(h => (
+               <div style={{ width: '130px' }}>
+                 <label style={{ fontSize: '0.8rem', color: '#aaa', display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+                   <span>Hora</span>
+                   <span style={{ color: 'var(--gold-jewel)', fontSize: '0.68rem' }}>10 a 19 hrs</span>
+                 </label>
+                 <select 
+                   className="input-field" 
+                   required 
+                   value={expressData.hora} 
+                   onChange={e => setExpressData({...expressData, hora: e.target.value})}
+                   style={{ margin: 0, padding: '7px 8px', fontSize: '0.85rem' }}
+                 >
+                   {['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'].map(h => (
+                     <option key={h} value={h}>{h} hrs</option>
+                   ))}
+                 </select>
+                 <div style={{ display: 'flex', gap: '3px', marginTop: '4px', flexWrap: 'wrap' }}>
+                   {['10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00','18:00','19:00'].map(h => (
                      <span 
                        key={h} 
                        onClick={() => setExpressData({...expressData, hora: h})}
                        style={{ 
-                         fontSize: '0.65rem', cursor: 'pointer', padding: '1px 5px', borderRadius: '4px',
-                         background: expressData.hora === h ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.1)',
+                         fontSize: '0.62rem', cursor: 'pointer', padding: '1px 4px', borderRadius: '3px',
+                         background: expressData.hora === h ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.08)',
                          color: expressData.hora === h ? '#000' : '#ccc',
                          fontWeight: expressData.hora === h ? 'bold' : 'normal'
                        }}
@@ -631,29 +698,81 @@ export default function PosTrabajador({ session }) {
       {/* Lista de citas agendadas para la fecha seleccionada */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
         {agendados.length === 0 && (
-          <div style={{ padding: '30px', textAlign: 'center', background: 'rgba(255,255,255,0.02)', borderRadius: '12px' }}>
-            <p style={{ color: 'var(--text-secondary)', margin: 0 }}>
+          <div style={{ padding: '25px', textAlign: 'center', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <p style={{ color: 'var(--text-secondary)', margin: 0, fontSize: '0.95rem' }}>
               No hay citas agendadas para el día <strong>{fechaAgenda}</strong>.
             </p>
+            {proximasCitas.length > 0 && (
+              <div style={{ marginTop: '20px', textAlign: 'left' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '6px' }}>
+                  <span style={{ color: 'var(--gold-jewel)', fontSize: '0.85rem', fontWeight: 'bold' }}>
+                    📅 Citas agendadas encontradas en otros días ({proximasCitas.length}):
+                  </span>
+                  <span style={{ fontSize: '0.72rem', color: '#888' }}>Toca una cita para ver ese día</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {proximasCitas.map(pc => (
+                    <div 
+                      key={pc.id}
+                      onClick={() => cambiarFechaAgenda(pc.fecha)}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        padding: '10px 14px',
+                        background: 'rgba(212, 175, 55, 0.08)',
+                        border: '1px solid rgba(212, 175, 55, 0.25)',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        transition: 'transform 0.15s ease'
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+                      onMouseLeave={e => e.currentTarget.style.transform = 'none'}
+                    >
+                      <div>
+                        <strong style={{ color: '#fff', fontSize: '0.9rem' }}>{pc.nombre}</strong>
+                        <div style={{ color: 'var(--gold-jewel)', fontSize: '0.78rem' }}>{pc.servicio_nombre || 'Barbería'}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontWeight: 'bold', color: 'var(--green-emerald-light)', fontSize: '0.85rem' }}>{pc.fecha}</div>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--gold-jewel)' }}>{pc.hora} hrs 🔍 Ir al día</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
         {agendados.map(cliente => (
           <div 
             key={cliente.id} 
             className="card" 
-            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', transition: 'transform 0.2s', borderLeft: cliente.estado === 'Terminado_Esperando_Pago' ? '4px solid var(--gold-jewel)' : 'none' }}
-            onClick={() => cliente.estado === 'Pendiente' ? setSelectedClient(cliente) : alert('Esta cita ya fue derivada a caja.')}
+            style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center', 
+              cursor: 'pointer', 
+              transition: 'transform 0.2s', 
+              borderLeft: cliente.estado === 'Terminado_Esperando_Pago' ? '4px solid var(--gold-jewel)' : 
+                          cliente.estado === 'Completada' ? '4px solid var(--green-emerald-light)' : 'none' 
+            }}
+            onClick={() => cliente.estado === 'Pendiente' ? setSelectedClient(cliente) : (cliente.estado === 'Completada' ? alert('Esta cita ya fue atendida y cobrada.') : alert('Esta cita ya fue derivada a caja.'))}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
               <img src={cliente.foto || 'https://via.placeholder.com/60'} alt={cliente.nombre} style={{ width: '60px', height: '60px', borderRadius: '50%', objectFit: 'cover' }} />
               <div>
-                <h3 style={{ margin: 0 }}>{cliente.nombre}</h3>
-                <span style={{ color: 'var(--gold-jewel)', fontSize: '0.9rem' }}>Cortes: {cliente.cortes}/4</span>
-                {cliente.estado === 'Terminado_Esperando_Pago' && <div style={{ fontSize: '0.8rem', color: '#ffb74d', marginTop: '4px' }}>Esperando Pago en Caja</div>}
+                <h3 style={{ margin: 0, fontSize: '1.05rem' }}>{cliente.nombre}</h3>
+                <div style={{ color: 'var(--gold-jewel)', fontSize: '0.82rem', marginTop: '2px' }}>
+                  {cliente.servicio_nombre || 'Corte Clásico'}
+                </div>
+                <span style={{ color: '#aaa', fontSize: '0.78rem' }}>Cortes: {cliente.cortes}/4</span>
+                {cliente.estado === 'Terminado_Esperando_Pago' && <div style={{ fontSize: '0.8rem', color: '#ffb74d', marginTop: '4px' }}>⏳ Esperando Pago en Caja</div>}
+                {cliente.estado === 'Completada' && <div style={{ fontSize: '0.8rem', color: 'var(--green-emerald-light)', marginTop: '4px' }}>✅ Pagada y Atendida</div>}
               </div>
             </div>
             <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>{cliente.hora}</div>
+              <div style={{ fontSize: '1.3rem', fontWeight: 'bold', color: 'var(--gold-jewel)' }}>{(cliente.hora || '').slice(0, 5)}</div>
               <span style={{ fontSize: '0.75rem', color: '#888' }}>{cliente.fecha || fechaAgenda}</span>
             </div>
           </div>

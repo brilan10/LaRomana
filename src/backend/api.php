@@ -18,9 +18,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             echo json_encode($stmt->fetchAll());
             break;
         case 'get_horarios_ocupados':
-            $trabajador_id = $_GET['trabajador_id'] ?? 0;
-            $fecha = $_GET['fecha'] ?? '';
-            $stmt = $pdo->prepare("SELECT hora FROM citas WHERE trabajador_id = ? AND fecha = ? AND estado NOT IN ('Cancelada')");
+            $trabajador_id = intval($_GET['trabajador_id'] ?? 0);
+            $fecha = !empty($_GET['fecha']) ? trim($_GET['fecha']) : '';
+            $stmt = $pdo->prepare("SELECT SUBSTRING(hora, 1, 5) FROM citas WHERE trabajador_id = ? AND fecha = ? AND estado NOT IN ('Cancelada')");
             $stmt->execute([$trabajador_id, $fecha]);
             echo json_encode($stmt->fetchAll(PDO::FETCH_COLUMN));
             break;
@@ -33,19 +33,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             ]);
             break;
         case 'get_citas_trabajador':
-            $trabajador_id = $_GET['trabajador_id'] ?? 0;
+            $trabajador_id = intval($_GET['trabajador_id'] ?? 0);
             $fecha = !empty($_GET['fecha']) ? trim($_GET['fecha']) : date('Y-m-d');
-            // Traer citas del trabajador para la fecha consultada, con nombre del cliente y foto, y calcular cortes del cliente.
+            // Traer citas del trabajador para la fecha consultada, usando LEFT JOIN para que citas con clientes nuevos nunca se oculten
             $stmt = $pdo->prepare("
-                SELECT c.id, c.hora, c.fecha, c.estado, cl.nombre, cl.foto_perfil as foto, cl.id as cliente_id,
-                COALESCE(cl.cortes_acumulados, 0) + 1 as cortes, cl.cortes_acumulados
+                SELECT c.id, 
+                       SUBSTRING(c.hora, 1, 5) as hora, 
+                       c.fecha, 
+                       c.estado, 
+                       COALESCE(cl.nombre, 'Cliente') as nombre, 
+                       cl.foto_perfil as foto, 
+                       c.cliente_id,
+                       COALESCE(cl.cortes_acumulados, 0) + 1 as cortes, 
+                       COALESCE(cl.cortes_acumulados, 0) as cortes_acumulados,
+                       IFNULL((SELECT GROUP_CONCAT(s.nombre SEPARATOR ' + ') FROM cita_detalle cd JOIN servicios s ON cd.servicio_id = s.id WHERE cd.cita_id = c.id), 'Corte / Barbería') as servicio_nombre
                 FROM citas c
-                JOIN clientes cl ON c.cliente_id = cl.id
-                WHERE c.trabajador_id = ? AND c.fecha = ? AND c.estado IN ('Pendiente', 'Terminado_Esperando_Pago')
+                LEFT JOIN clientes cl ON c.cliente_id = cl.id
+                WHERE c.trabajador_id = ? AND c.fecha = ? AND c.estado NOT IN ('Cancelada')
                 ORDER BY c.hora ASC
             ");
             $stmt->execute([$trabajador_id, $fecha]);
-            echo json_encode($stmt->fetchAll());
+            echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+            break;
+        case 'get_resumen_agenda_trabajador':
+            $trabajador_id = intval($_GET['trabajador_id'] ?? 0);
+            $hoy = date('Y-m-d');
+            $limite = date('Y-m-d', strtotime('+14 days'));
+            $stmt = $pdo->prepare("
+                SELECT fecha, COUNT(*) as total
+                FROM citas
+                WHERE trabajador_id = ? AND fecha BETWEEN ? AND ? AND estado NOT IN ('Cancelada')
+                GROUP BY fecha
+            ");
+            $stmt->execute([$trabajador_id, $hoy, $limite]);
+            $resumen = [];
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                $resumen[$row['fecha']] = intval($row['total']);
+            }
+            echo json_encode($resumen);
+            break;
+        case 'get_proximas_citas_trabajador':
+            $trabajador_id = intval($_GET['trabajador_id'] ?? 0);
+            $hoy = date('Y-m-d');
+            $stmt = $pdo->prepare("
+                SELECT c.id, 
+                       SUBSTRING(c.hora, 1, 5) as hora, 
+                       c.fecha, 
+                       c.estado, 
+                       COALESCE(cl.nombre, 'Cliente') as nombre, 
+                       cl.foto_perfil as foto, 
+                       c.cliente_id,
+                       IFNULL((SELECT GROUP_CONCAT(s.nombre SEPARATOR ' + ') FROM cita_detalle cd JOIN servicios s ON cd.servicio_id = s.id WHERE cd.cita_id = c.id), 'Corte / Barbería') as servicio_nombre
+                FROM citas c
+                LEFT JOIN clientes cl ON c.cliente_id = cl.id
+                WHERE c.trabajador_id = ? AND c.fecha >= ? AND c.estado NOT IN ('Cancelada')
+                ORDER BY c.fecha ASC, c.hora ASC
+                LIMIT 15
+            ");
+            $stmt->execute([$trabajador_id, $hoy]);
+            echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
             break;
         case 'get_citas_cliente':
             $rutRaw = $_GET['rut'] ?? '';
@@ -199,6 +245,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 break;
             }
 
+            // LIMITACIÓN DE HORARIO ESTRICTO: 10:00 AM a 19:00 HRS
+            $horaRaw = trim($data['hora'] ?? '');
+            if (empty($horaRaw)) {
+                echo json_encode(["status" => "error", "error" => "Debes seleccionar una hora para la cita."]);
+                break;
+            }
+            $horaParts = explode(':', $horaRaw);
+            $h = intval($horaParts[0] ?? 0);
+            $m = intval($horaParts[1] ?? 0);
+            if ($h < 10 || $h > 19 || ($h === 19 && $m > 0)) {
+                echo json_encode(["status" => "error", "error" => "El horario de atención es exclusivamente de 10:00 a 19:00 hrs. No se pueden agendar horas fuera de este horario."]);
+                break;
+            }
+            $horaCita = sprintf('%02d:%02d:00', $h, $m);
+
             $marcarPagada = !empty($data['marcar_pagada']) || !empty($data['ya_pagada']) || (($data['estado'] ?? '') === 'Completada') || $esPasado;
             $metodoPago = !empty($data['metodo_pago']) ? trim($data['metodo_pago']) : 'Efectivo';
             $descuento = isset($data['descuento']) ? (float)$data['descuento'] : 0;
@@ -270,8 +331,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $totalPagado = $marcarPagada ? max(0, $subtotalCalc - $descuento) : null;
             $metodoPagoFinal = $marcarPagada ? $metodoPago : null;
 
+            // Validar que el barbero no tenga ya una cita ocupada a esa misma fecha y hora
+            if (!empty($data['trabajador_id'])) {
+                $stmtHorarioOcupado = $pdo->prepare("SELECT id FROM citas WHERE trabajador_id = ? AND fecha = ? AND SUBSTRING(hora, 1, 5) = ? AND estado NOT IN ('Cancelada') LIMIT 1");
+                $stmtHorarioOcupado->execute([$data['trabajador_id'], $fechaCita, sprintf('%02d:%02d', $h, $m)]);
+                if ($stmtHorarioOcupado->fetchColumn()) {
+                    echo json_encode(["status" => "error", "error" => "El horario de las " . sprintf('%02d:%02d', $h, $m) . " hrs ya está reservado con este barbero. Por favor elige otro horario disponible."]);
+                    break;
+                }
+            }
+
             $stmt = $pdo->prepare("INSERT INTO citas (cliente_id, trabajador_id, fecha, hora, estado, metodo_pago, descuento, total_pagado) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([$cliente_id, $data['trabajador_id'], $fechaCita, $data['hora'], $estadoCita, $metodoPagoFinal, $descuento, $totalPagado]);
+            $stmt->execute([$cliente_id, $data['trabajador_id'], $fechaCita, $horaCita, $estadoCita, $metodoPagoFinal, $descuento, $totalPagado]);
             $citaId = $pdo->lastInsertId();
             
             // Insertar detalles garantizados

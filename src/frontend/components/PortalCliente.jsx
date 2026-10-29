@@ -208,6 +208,17 @@ export default function PortalCliente({ session, onBackToHome, onGoToTienda }) {
       return;
     }
 
+    if (!selectedHora) {
+      alert('Por favor, selecciona una hora para tu cita.');
+      return;
+    }
+
+    const [horaH, horaM] = (selectedHora || '').split(':').map(Number);
+    if (isNaN(horaH) || horaH < 10 || horaH > 19 || (horaH === 19 && horaM > 0)) {
+      alert('El horario de atención es exclusivamente de 10:00 a 19:00 hrs. Por favor selecciona una hora válida.');
+      return;
+    }
+
     // PUNTO 2: Doble chequeo en frontend para evitar reservas del mismo día
     const hoyStr = new Date().toISOString().split('T')[0];
     if (selectedFecha <= hoyStr) {
@@ -673,10 +684,13 @@ export default function PortalCliente({ session, onBackToHome, onGoToTienda }) {
                 })}
               </div>
 
-              <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>Elige la hora:</label>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0 }}>Elige la hora:</label>
+                <span style={{ fontSize: '0.72rem', color: 'var(--gold-jewel)', fontWeight: 'bold' }}>⏰ Horario: 10:00 a 19:00 hrs</span>
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(70px, 1fr))', gap: '6px', marginBottom: '10px' }}>
-                {['10:00', '11:00', '12:00', '13:00', '15:00', '16:00', '17:00', '18:00', '19:00'].map(time => {
-                  const isOccupied = horariosOcupados.includes(time + ':00') || horariosOcupados.includes(time);
+                {['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'].map(time => {
+                  const isOccupied = horariosOcupados.includes(time + ':00') || horariosOcupados.includes(time) || horariosOcupados.some(h => String(h).startsWith(time));
                   const isSelected = selectedHora === time;
                   return (
                     <button
