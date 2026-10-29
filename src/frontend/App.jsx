@@ -4,6 +4,7 @@ import PosTrabajador from './components/PosTrabajador';
 import AdminDashboard from './components/AdminDashboard';
 import Tienda from './components/Tienda';
 import ErrorBoundary from './components/ErrorBoundary';
+import BotonActualizarApp from './components/BotonActualizarApp';
 
 export const API_URL = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://127.0.0.1:8000' : '/backend');
 
@@ -165,6 +166,7 @@ function App() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <BotonActualizarApp estilo="header" texto="Actualizar" />
             {session && (
               <div style={{ background: 'rgba(0,0,0,0.5)', padding: '5px 12px', borderRadius: '50px', display: 'flex', alignItems: 'center', gap: '10px', border: '1px solid rgba(255,255,255,0.1)' }}>
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
@@ -254,6 +256,19 @@ function App() {
                   </span>
                 </div>
               </button>
+
+              {/* Botón para Actualizar App y Limpiar Caché en Móvil */}
+              <div style={{ display: 'flex', justifyContent: 'center', marginTop: '6px' }}>
+                <BotonActualizarApp 
+                  texto="Actualizar App (Borrar Caché)" 
+                  style={{ 
+                    padding: '8px 18px', 
+                    fontSize: '0.82rem',
+                    background: 'rgba(0,0,0,0.4)',
+                    borderColor: 'rgba(212,175,55,0.4)'
+                  }} 
+                />
+              </div>
             </div>
           </div>
         )}

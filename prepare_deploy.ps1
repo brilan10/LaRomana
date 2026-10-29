@@ -53,11 +53,18 @@ $htaccessContent = @"
   RewriteRule ^ index.html [L]
 </IfModule>
 
-# Seguridad y tipos MIME
+# Seguridad, tipos MIME y control de cache para actualizaciones inmediatas (Shift+F5 / Movil)
 AddDefaultCharset UTF-8
 <IfModule mod_headers.c>
   Header set X-Content-Type-Options "nosniff"
   Header set X-Frame-Options "SAMEORIGIN"
+
+  # NUNCA cachear index.html, service-worker.js ni manifest.json para que los celulares siempre carguen la ultima version
+  <FilesMatch "(index\.html|service-worker\.js|manifest\.json)$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate, max-age=0"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+  </FilesMatch>
 </IfModule>
 "@
 

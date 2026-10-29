@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { API_URL } from '../App';
 import { printThermalTicket, printLiquidacionTicket } from '../utils/printTicket';
 import { formatRut } from '../utils/rut';
+import BotonActualizarApp from './BotonActualizarApp';
 
 export default function PosTrabajador({ session }) {
   const [selectedClient, setSelectedClient] = useState(null);
@@ -552,6 +553,7 @@ export default function PosTrabajador({ session }) {
         </div>
 
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+           <BotonActualizarApp estilo="barbero" texto="ACTUALIZAR" />
            <button className="btn-romana" style={{ fontSize: '0.8rem', padding: '6px 14px', backgroundColor: 'rgba(46, 204, 113, 0.15)', borderColor: '#2ecc71', color: '#2ecc71' }} onClick={() => { setShowMisPagos(true); fetchMisPagos(); }}>
              <span className="icon-separator" style={{ minHeight: '22px', fontSize: '1.1rem', paddingRight: '6px', marginRight: '6px' }}>💰</span> MIS PAGOS
            </button>

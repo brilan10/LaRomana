@@ -7,6 +7,7 @@ import ErrorBoundary from './ErrorBoundary';
 import { resolveImageUrl } from '../utils/imageHelper';
 import { printThermalTicket, printLiquidacionTicket } from '../utils/printTicket';
 import { formatRut } from '../utils/rut';
+import BotonActualizarApp from './BotonActualizarApp';
 
 const formatDateYMD = (d = new Date()) => {
   const year = d.getFullYear();
@@ -6704,6 +6705,7 @@ export default function AdminDashboard({ session, logout }) {
                        <div style={{ fontSize: '0.7rem', color: '#888', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden' }}>{session?.usuario?.email}</div>
                      </div>
                  </div>
+                 <BotonActualizarApp estilo="header" texto="Actualizar App" style={{ width: '100%', marginBottom: '8px', justifyContent: 'center' }} />
                  <button onClick={logout} style={{ width: '100%', padding: '8px 12px', background: 'transparent', border: '1px solid #e74c3c', color: '#e74c3c', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s', fontWeight: 'bold', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} onMouseEnter={e => {e.currentTarget.style.background = '#e74c3c'; e.currentTarget.style.color = '#fff'}} onMouseLeave={e => {e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#e74c3c'}}>
                    <span>🚪</span> Cerrar Sesión
                  </button>
