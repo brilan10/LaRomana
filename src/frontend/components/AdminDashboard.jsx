@@ -2325,6 +2325,14 @@ export default function AdminDashboard({ session, logout }) {
                     const pNum = parseFloat(String(prod.precio).replace(/[^0-9.-]+/g, '')) || 0;
                     const enCarrito = carritoVenta.find(it => it.id === prod.id);
 
+                    const prodImages = prod.imagen_url ? prod.imagen_url.split(',').map(s => s.trim()).filter(Boolean) : [];
+                    const mainImage = prodImages.length > 0 ? resolveImageUrl(prodImages[0]) : '';
+                    const isGorra = (prod.nombre || '').toLowerCase().includes('gorra') || (prod.categoria_nombre || '').toLowerCase().includes('gorra');
+                    const isPerfume = (prod.nombre || '').toLowerCase().includes('perfume') || (prod.categoria_nombre || '').toLowerCase().includes('perfume');
+                    const isDecant = (prod.nombre || '').toLowerCase().includes('decant');
+                    const isAromat = (prod.nombre || '').toLowerCase().includes('aromat') || (prod.categoria_nombre || '').toLowerCase().includes('aromat');
+                    const emojiDefault = isGorra ? '🧢' : (isDecant ? '🧪' : (isAromat ? '🌿' : (isPerfume ? '✨' : '🛍️')));
+
                     return (
                       <div 
                         key={prod.id}
@@ -2344,18 +2352,31 @@ export default function AdminDashboard({ session, logout }) {
                         }}
                       >
                         {enCarrito && (
-                          <div style={{ position: 'absolute', top: '6px', right: '6px', background: 'var(--gold-jewel)', color: '#000', fontWeight: 'bold', fontSize: '0.72rem', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <div style={{ position: 'absolute', top: '6px', right: '6px', background: 'var(--gold-jewel)', color: '#000', fontWeight: 'bold', fontSize: '0.72rem', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3 }}>
                             {enCarrito.cantidad}
                           </div>
                         )}
 
-                        <div style={{ width: '100%', height: '90px', borderRadius: '6px', overflow: 'hidden', background: '#222', marginBottom: '8px' }}>
-                          <img 
-                            src={resolveImageUrl(prod.imagen_url, 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=200')} 
-                            alt={prod.nombre} 
-                            style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
-                            onError={e => { e.target.src = 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=200'; }}
-                          />
+                        <div style={{ width: '100%', height: '95px', borderRadius: '6px', overflow: 'hidden', background: '#1c1c1c', marginBottom: '8px', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {mainImage ? (
+                            <img 
+                              src={mainImage} 
+                              alt={prod.nombre} 
+                              style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                              onError={e => { 
+                                e.currentTarget.style.display = 'none'; 
+                                if (e.currentTarget.nextSibling) e.currentTarget.nextSibling.style.display = 'flex';
+                              }}
+                            />
+                          ) : null}
+                          <div style={{ display: mainImage ? 'none' : 'flex', width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)', fontSize: '2.5rem' }}>
+                            {emojiDefault}
+                          </div>
+                          {prodImages.length > 1 && (
+                            <div style={{ position: 'absolute', bottom: '4px', right: '4px', background: 'rgba(0,0,0,0.85)', color: 'var(--gold-jewel)', border: '1px solid rgba(212,175,55,0.4)', borderRadius: '4px', padding: '1px 5px', fontSize: '0.65rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '2px', zIndex: 2 }}>
+                              📷 {prodImages.length}
+                            </div>
+                          )}
                         </div>
 
                         <div>
@@ -9487,19 +9508,36 @@ export default function AdminDashboard({ session, logout }) {
 
                             <div>
                               {/* Imagen o Ícono */}
-                              <div style={{ width: '100%', height: '80px', borderRadius: '6px', background: 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', marginBottom: '8px' }}>
-                                {prod.imagen_url ? (
-                                  <img 
-                                    src={resolveImageUrl(prod.imagen_url)} 
-                                    alt={prod.nombre} 
-                                    style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
-                                    onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement.innerHTML = '🧴'; }}
-                                  />
-                                ) : (
-                                  <span style={{ fontSize: '2rem' }}>
-                                    {(prod.nombre || '').toLowerCase().includes('gorra') ? '🧢' : (prod.nombre || '').toLowerCase().includes('decant') ? '💎' : '🧴'}
-                                  </span>
-                                )}
+                              <div style={{ width: '100%', height: '80px', borderRadius: '6px', background: 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', marginBottom: '8px', position: 'relative' }}>
+                                {(() => {
+                                  const pImgs = prod.imagen_url ? prod.imagen_url.split(',').map(s => s.trim()).filter(Boolean) : [];
+                                  const firstImg = pImgs.length > 0 ? resolveImageUrl(pImgs[0]) : '';
+                                  const isGorra = (prod.nombre || '').toLowerCase().includes('gorra') || (prod.categoria_nombre || '').toLowerCase().includes('gorra');
+                                  const isDecant = (prod.nombre || '').toLowerCase().includes('decant');
+                                  const isPerfume = (prod.nombre || '').toLowerCase().includes('perfume') || (prod.categoria_nombre || '').toLowerCase().includes('perfume');
+                                  const isAromat = (prod.nombre || '').toLowerCase().includes('aromat') || (prod.categoria_nombre || '').toLowerCase().includes('aromat');
+                                  const defEmoji = isGorra ? '🧢' : (isDecant ? '🧪' : (isAromat ? '🌿' : (isPerfume ? '✨' : '🛍️')));
+                                  return (
+                                    <>
+                                      {firstImg ? (
+                                        <img 
+                                          src={firstImg} 
+                                          alt={prod.nombre} 
+                                          style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                                          onError={(e) => { e.currentTarget.style.display = 'none'; if (e.currentTarget.nextSibling) e.currentTarget.nextSibling.style.display = 'flex'; }}
+                                        />
+                                      ) : null}
+                                      <div style={{ display: firstImg ? 'none' : 'flex', width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center', fontSize: '2rem' }}>
+                                        {defEmoji}
+                                      </div>
+                                      {pImgs.length > 1 && (
+                                        <div style={{ position: 'absolute', bottom: '3px', right: '3px', background: 'rgba(0,0,0,0.85)', color: 'var(--gold-jewel)', border: '1px solid rgba(212,175,55,0.4)', borderRadius: '3px', padding: '0 4px', fontSize: '0.62rem', fontWeight: 'bold' }}>
+                                          📷 {pImgs.length}
+                                        </div>
+                                      )}
+                                    </>
+                                  );
+                                })()}
                               </div>
 
                               <div style={{ fontSize: '0.7rem', color: '#888', textTransform: 'uppercase' }}>
