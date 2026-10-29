@@ -149,14 +149,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $end_date = $_GET['end_date'] ?? $start_date;
             
             $stmt = $pdo->prepare("
-                SELECT c.id, c.fecha, c.hora, c.estado, cl.id as cliente_id, cl.nombre as cliente, cl.rut as cliente_rut, cl.telefono as cliente_telefono,
-                t.id as trabajador_id, t.nombre as trabajador,
+                SELECT c.id, c.fecha, c.hora, c.estado, cl.id as cliente_id, 
+                COALESCE(cl.nombre, 'Cliente Sin Nombre') as cliente, 
+                cl.rut as cliente_rut, cl.telefono as cliente_telefono,
+                t.id as trabajador_id, COALESCE(t.nombre, 'Barbero Staff') as trabajador,
                 COALESCE((SELECT SUM(precio_cobrado) FROM cita_detalle cd WHERE cd.cita_id = c.id), c.total_pagado, 0) as subtotal,
                 (SELECT GROUP_CONCAT(s.nombre SEPARATOR ', ') FROM cita_detalle cd JOIN servicios s ON cd.servicio_id = s.id WHERE cd.cita_id = c.id) as servicios_nombres,
                 cl.cortes_acumulados, c.descuento, c.total_pagado, c.metodo_pago, c.decant_entregado
                 FROM citas c
-                JOIN clientes cl ON c.cliente_id = cl.id
-                JOIN trabajadores t ON c.trabajador_id = t.id
+                LEFT JOIN clientes cl ON c.cliente_id = cl.id
+                LEFT JOIN trabajadores t ON c.trabajador_id = t.id
                 WHERE c.fecha >= ? AND c.fecha <= ?
                 ORDER BY c.fecha ASC, c.hora ASC
             ");
@@ -1956,6 +1958,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $pdo->prepare("DELETE FROM cita_detalle WHERE cita_id = ?")->execute([$cita_id]);
             $pdo->prepare("DELETE FROM citas WHERE id = ?")->execute([$cita_id]);
             echo json_encode(["status" => "success", "message" => "Cita eliminada correctamente."]);
+            break;
+
+        case 'actualizar_nombre_cliente':
+            $cliente_id = intval($data['cliente_id'] ?? 0);
+            $nuevo_nombre = trim($data['nombre'] ?? '');
+            $nuevo_rut = trim($data['rut'] ?? '');
+            if (!$cliente_id || empty($nuevo_nombre)) {
+                echo json_encode(["status" => "error", "message" => "ID de cliente y nombre son obligatorios."]);
+                break;
+            }
+            if (!empty($nuevo_rut)) {
+                $stmt = $pdo->prepare("UPDATE clientes SET nombre = ?, rut = ? WHERE id = ?");
+                $stmt->execute([$nuevo_nombre, $nuevo_rut, $cliente_id]);
+            } else {
+                $stmt = $pdo->prepare("UPDATE clientes SET nombre = ? WHERE id = ?");
+                $stmt->execute([$nuevo_nombre, $cliente_id]);
+            }
+            echo json_encode(["status" => "success", "message" => "Nombre del cliente actualizado con éxito en la cartera de clientes."]);
             break;
 
         default:

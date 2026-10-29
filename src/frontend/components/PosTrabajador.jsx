@@ -32,10 +32,18 @@ export default function PosTrabajador({ session }) {
     nombre: '', 
     rut: '', 
     hora: '10:00',
-    fecha: hoyISO
+    fecha: hoyISO,
+    cliente_id: null
   });
   const [expressSugerencias, setExpressSugerencias] = useState([]);
+  const [showDropdownExpress, setShowDropdownExpress] = useState(false);
+  const [buscandoClienteExpress, setBuscandoClienteExpress] = useState(false);
   const [expressClienteEncontrado, setExpressClienteEncontrado] = useState(null);
+
+  const HORAS_DISPONIBLES = [
+    '10:00', '11:00', '12:00', '13:00', '14:00', 
+    '15:00', '16:00', '17:00', '18:00', '19:00'
+  ];
 
   // States for Payment (Punto 5: Reemplazar Descuento por Otro Valor)
   const [otroValor, setOtroValor] = useState('');
@@ -133,50 +141,99 @@ export default function PosTrabajador({ session }) {
     }
   };
 
-  const handleRutChangeExpress = async (rawVal) => {
-    const formatted = formatRut(rawVal);
-    setExpressData(prev => ({ ...prev, rut: formatted }));
+  const buscarClientesExpress = async (query, sourceField) => {
+    const qTrim = (query || '').trim();
+    if (qTrim.length < 2) {
+      setExpressSugerencias([]);
+      setShowDropdownExpress(false);
+      return;
+    }
+    setBuscandoClienteExpress(true);
+    try {
+      const resp = await fetch(`${API_URL}/api.php?action=search_clientes&q=${encodeURIComponent(qTrim)}`);
+      const data = await resp.json();
+      if (Array.isArray(data) && data.length > 0) {
+        setExpressSugerencias(data);
+        setShowDropdownExpress(true);
 
-    const clean = rawVal.replace(/[^0-9kK]/g, '');
-    if (clean.length >= 2) {
-      try {
-        const resp = await fetch(`${API_URL}/api.php?action=search_clientes&q=${encodeURIComponent(clean)}`);
-        const data = await resp.json();
-        if (Array.isArray(data) && data.length > 0) {
-          setExpressSugerencias(data);
-          const exact = data.find(c => (c.rut || '').replace(/[^0-9kK]/gi, '').toUpperCase() === clean.toUpperCase());
+        // Si es búsqueda por RUT y coincide exactamente con un cliente registrado
+        if (sourceField === 'rut') {
+          const clean = qTrim.replace(/[^0-9kK]/g, '').toUpperCase();
+          const exact = data.find(c => (c.rut || '').replace(/[^0-9kK]/gi, '').toUpperCase() === clean);
           if (exact) {
             setExpressClienteEncontrado(exact);
             setExpressData(prev => ({
               ...prev,
-              rut: exact.rut || formatted,
-              nombre: exact.nombre || prev.nombre
+              rut: exact.rut || prev.rut,
+              nombre: exact.nombre && !exact.nombre.startsWith('Cliente ') ? exact.nombre : prev.nombre,
+              cliente_id: exact.id
             }));
-          } else {
-            setExpressClienteEncontrado(null);
           }
-        } else {
-          setExpressSugerencias([]);
-          setExpressClienteEncontrado(null);
         }
-      } catch (err) {
+        // Si es búsqueda por Nombre y coincide exactamente con un cliente registrado
+        if (sourceField === 'nombre') {
+          const exactName = data.find(c => (c.nombre || '').trim().toLowerCase() === qTrim.toLowerCase());
+          if (exactName) {
+            setExpressClienteEncontrado(exactName);
+            setExpressData(prev => ({
+              ...prev,
+              rut: exactName.rut || prev.rut,
+              nombre: exactName.nombre,
+              cliente_id: exactName.id
+            }));
+          }
+        }
+      } else {
         setExpressSugerencias([]);
+        setShowDropdownExpress(false);
+        setExpressClienteEncontrado(null);
       }
-    } else {
+    } catch (err) {
       setExpressSugerencias([]);
-      setExpressClienteEncontrado(null);
+      setShowDropdownExpress(false);
+    } finally {
+      setBuscandoClienteExpress(false);
     }
   };
 
-  // PUNTO 4: Barbero agenda citas express para cualquier día (hoy, mañana, pasado mañana)
+  const handleRutChangeExpress = (rawVal) => {
+    const formatted = formatRut(rawVal);
+    setExpressData(prev => ({ ...prev, rut: formatted }));
+    buscarClientesExpress(rawVal, 'rut');
+  };
+
+  const handleNombreChangeExpress = (rawVal) => {
+    setExpressData(prev => ({ ...prev, nombre: rawVal }));
+    buscarClientesExpress(rawVal, 'nombre');
+  };
+
+  const seleccionarSugerenciaExpress = (cli) => {
+    setExpressData(prev => ({
+      ...prev,
+      rut: cli.rut || prev.rut,
+      nombre: cli.nombre || prev.nombre,
+      cliente_id: cli.id
+    }));
+    setExpressClienteEncontrado(cli);
+    setExpressSugerencias([]);
+    setShowDropdownExpress(false);
+  };
+
+  // PUNTO 4: Barbero agenda citas express para cualquier día (hoy, mañana, pasado mañana) con autocompletado y cartera de clientes
   const handleAgendarExpress = async (e) => {
     e.preventDefault();
     try {
       const fechaParaAgendar = expressData.fecha || fechaAgenda || hoyISO;
-      const nombreFinal = expressData.nombre?.trim() || `Cliente ${expressData.rut?.replace(/[^0-9kK]/g,'')?.substring(0,8) || 'Express'}`;
+      const rutTrim = (expressData.rut || '').trim();
+      const nombreTrim = (expressData.nombre || '').trim();
+
+      if (!rutTrim && !nombreTrim) {
+        alert('⚠️ Por favor ingresa el RUT o el Nombre del cliente para agendar.');
+        return;
+      }
       
       // Validar limitación de horario (10:00 a 19:00 hrs)
-      const horaSel = expressData.hora || '';
+      const horaSel = expressData.hora || '10:00';
       const [h, m] = horaSel.split(':').map(Number);
       if (isNaN(h) || h < 10 || h > 19 || (h === 19 && m > 0)) {
         alert('⚠️ El horario de atención es exclusivamente de 10:00 a 19:00 hrs. Selecciona una hora dentro de este rango.');
@@ -187,21 +244,24 @@ export default function PosTrabajador({ session }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          rut: expressData.rut,
-          nombre: nombreFinal,
+          cliente_id: expressData.cliente_id || null,
+          rut: rutTrim || null,
+          nombre: nombreTrim || null,
           trabajador_id: session.usuario.id,
           fecha: fechaParaAgendar,
-          hora: expressData.hora,
+          hora: horaSel,
           es_staff: true,
           servicios: [1]
         })
       });
       const data = await res.json();
       if (data.status === 'success') {
-        alert(`¡Cita agendada con éxito para el día ${fechaParaAgendar} a las ${expressData.hora} hrs!`);
+        const clienteMsg = nombreTrim || rutTrim || 'Cliente';
+        alert(`¡Cita agendada con éxito para ${clienteMsg} el día ${fechaParaAgendar} a las ${horaSel} hrs!`);
         setShowExpress(false);
-        setExpressData({ nombre: '', rut: '', hora: '10:00', fecha: fechaParaAgendar });
+        setExpressData({ nombre: '', rut: '', hora: '10:00', fecha: fechaParaAgendar, cliente_id: null });
         setExpressSugerencias([]);
+        setShowDropdownExpress(false);
         setExpressClienteEncontrado(null);
         // Cambiar inmediatamente la vista al día de la cita para que se visualice
         cambiarFechaAgenda(fechaParaAgendar);
@@ -603,94 +663,314 @@ export default function PosTrabajador({ session }) {
         />
       </div>
 
-      {/* PUNTO 4: FORMULARIO AGENDAR EXPRESS CON SELECTOR DE FECHA (HOY, MAÑANA, PASADO MAÑANA) */}
+      {/* FORMULARIO AGENDAR EXPRESS CON AUTOCOMPLETADO Y SELECTOR DE HORAS DESTACADO */}
       {showExpress && (
-         <div className="card" style={{ marginBottom: '20px', background: 'var(--bg-charcoal)', border: '1px solid var(--gold-jewel)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-              <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.05rem' }}>⚡ Agendar Cita Express</h3>
-              {expressClienteEncontrado && (
-                <span style={{ fontSize: '0.8rem', color: '#2ecc71', fontWeight: 'bold' }}>
-                  ✅ Cliente Reconocido ({expressClienteEncontrado.cortes_acumulados || 0} cortes)
-                </span>
-              )}
+         <div className="card" style={{ marginBottom: '20px', background: 'var(--bg-charcoal)', border: '1px solid var(--gold-jewel)', padding: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '1.3rem' }}>⚡</span>
+                <h3 style={{ margin: 0, color: 'var(--gold-jewel)', fontSize: '1.15rem' }}>Agendar Cita Express</h3>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setShowExpress(false);
+                  setShowDropdownExpress(false);
+                }}
+                style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '1.4rem' }}
+              >
+                ×
+              </button>
             </div>
 
-            <form onSubmit={handleAgendarExpress} style={{ display: 'flex', gap: '10px', alignItems: 'end', flexWrap: 'wrap' }}>
-               <div style={{ flex: 1, minWidth: '140px' }}>
-                 <label style={{ fontSize: '0.8rem', color: '#aaa' }}>RUT del Cliente</label>
-                 <input 
-                   type="text" 
-                   className="input-field" 
-                   required 
-                   value={expressData.rut} 
-                   onChange={e => handleRutChangeExpress(e.target.value)} 
-                   placeholder="12345678-9" 
-                 />
+            <form onSubmit={handleAgendarExpress} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+               {/* Fila 1: RUT y Nombre con Búsqueda en Vivo */}
+               <div style={{ position: 'relative' }}>
+                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                   {/* Campo RUT */}
+                   <div style={{ flex: 1, minWidth: '180px' }}>
+                     <label style={{ fontSize: '0.82rem', color: expressClienteEncontrado ? '#2ecc71' : 'var(--gold-jewel)', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                       <span>🪪 RUT del Cliente:</span>
+                       {buscandoClienteExpress && <span style={{ color: '#aaa', fontSize: '0.72rem' }}>Buscando...</span>}
+                     </label>
+                     <input 
+                       type="text" 
+                       className="input-field" 
+                       value={expressData.rut} 
+                       onChange={e => handleRutChangeExpress(e.target.value)} 
+                       onFocus={() => expressSugerencias.length > 0 && setShowDropdownExpress(true)}
+                       placeholder="Ej: 12.345.678-9 (o busca aquí)" 
+                       style={{ 
+                         margin: 0, 
+                         borderColor: expressClienteEncontrado ? '#2ecc71' : (expressData.rut ? 'var(--gold-jewel)' : undefined),
+                         boxShadow: expressClienteEncontrado ? '0 0 10px rgba(46, 204, 113, 0.25)' : undefined
+                       }}
+                     />
+                   </div>
+
+                   {/* Campo Nombre */}
+                   <div style={{ flex: 1, minWidth: '180px' }}>
+                     <label style={{ fontSize: '0.82rem', color: expressClienteEncontrado ? '#2ecc71' : 'var(--gold-jewel)', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                       <span>👤 Nombre del Cliente:</span>
+                       <span style={{ fontSize: '0.72rem', color: '#888' }}>Poner RUT o Nombre</span>
+                     </label>
+                     <input 
+                       type="text" 
+                       className="input-field" 
+                       value={expressData.nombre} 
+                       onChange={e => handleNombreChangeExpress(e.target.value)} 
+                       onFocus={() => expressSugerencias.length > 0 && setShowDropdownExpress(true)}
+                       placeholder="Ej: Juan Pérez" 
+                       style={{ 
+                         margin: 0, 
+                         borderColor: expressClienteEncontrado ? '#2ecc71' : (expressData.nombre ? 'var(--gold-jewel)' : undefined),
+                         boxShadow: expressClienteEncontrado ? '0 0 10px rgba(46, 204, 113, 0.25)' : undefined
+                       }}
+                     />
+                   </div>
+                 </div>
+
+                 {/* Dropdown Flotante de Sugerencias de Clientes */}
+                 {showDropdownExpress && expressSugerencias.length > 0 && (
+                   <div style={{
+                     position: 'absolute',
+                     top: '100%',
+                     left: 0,
+                     right: 0,
+                     background: '#1a1a1a',
+                     border: '2px solid var(--gold-jewel)',
+                     borderRadius: '10px',
+                     maxHeight: '220px',
+                     overflowY: 'auto',
+                     zIndex: 100,
+                     boxShadow: '0 12px 35px rgba(0,0,0,0.95)',
+                     marginTop: '6px'
+                   }}>
+                     <div style={{ padding: '6px 12px', background: 'rgba(212,175,55,0.15)', borderBottom: '1px solid rgba(212,175,55,0.3)', fontSize: '0.75rem', color: 'var(--gold-jewel)', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                       <span>👇 Clientes encontrados en cartera ({expressSugerencias.length}):</span>
+                       <span style={{ cursor: 'pointer', fontSize: '1rem', color: '#aaa' }} onClick={() => setShowDropdownExpress(false)}>×</span>
+                     </div>
+                     {expressSugerencias.map((sug) => (
+                       <div
+                         key={sug.id}
+                         onClick={() => seleccionarSugerenciaExpress(sug)}
+                         style={{
+                           padding: '10px 14px',
+                           borderBottom: '1px solid rgba(255,255,255,0.06)',
+                           cursor: 'pointer',
+                           display: 'flex',
+                           justifyContent: 'space-between',
+                           alignItems: 'center',
+                           transition: 'background 0.15s ease'
+                         }}
+                         onMouseEnter={e => e.currentTarget.style.background = 'rgba(212,175,55,0.18)'}
+                         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                       >
+                         <div>
+                           <strong style={{ color: '#fff', fontSize: '0.92rem', display: 'block' }}>
+                             👤 {sug.nombre}
+                           </strong>
+                           <span style={{ fontSize: '0.76rem', color: 'var(--gold-jewel)' }}>
+                             🪪 {sug.rut} {sug.telefono ? `• 📞 ${sug.telefono}` : ''}
+                           </span>
+                         </div>
+                         <div style={{ textAlign: 'right' }}>
+                           <span style={{ 
+                             fontSize: '0.74rem', 
+                             background: 'rgba(46,204,113,0.18)', 
+                             color: '#2ecc71', 
+                             padding: '3px 9px', 
+                             borderRadius: '12px', 
+                             fontWeight: 'bold',
+                             border: '1px solid rgba(46,204,113,0.3)'
+                           }}>
+                             ✂️ {sug.cortes_acumulados || 0} cortes
+                           </span>
+                         </div>
+                       </div>
+                     ))}
+                   </div>
+                 )}
                </div>
 
-               <div style={{ flex: 1, minWidth: '140px' }}>
-                 <label style={{ fontSize: '0.8rem', color: '#aaa' }}>Nombre del Cliente</label>
-                 <input 
-                   type="text" 
-                   className="input-field" 
-                   value={expressData.nombre} 
-                   onChange={e => setExpressData({...expressData, nombre: e.target.value})} 
-                   placeholder="Nombre (opcional si RUT existe)" 
-                 />
-               </div>
-
-               {/* Selector de Fecha para el Barbero */}
-               <div style={{ flex: 1, minWidth: '150px' }}>
-                 <label style={{ fontSize: '0.8rem', color: '#aaa', display: 'flex', justifyContent: 'space-between' }}>
-                   <span>Fecha</span>
-                   <span style={{ color: 'var(--gold-jewel)', cursor: 'pointer' }} onClick={() => setExpressData({...expressData, fecha: pasadoMananaISO})}>
-                     Pasado Mañana
+               {/* Banner de Estado del Cliente: Reconocido vs Nuevo */}
+               {expressClienteEncontrado ? (
+                 <div style={{ 
+                   display: 'flex', 
+                   alignItems: 'center', 
+                   justifyContent: 'space-between', 
+                   gap: '8px', 
+                   background: 'rgba(46, 204, 113, 0.12)', 
+                   border: '1px solid #2ecc71', 
+                   borderRadius: '8px', 
+                   padding: '8px 12px', 
+                   color: '#2ecc71', 
+                   fontSize: '0.82rem' 
+                 }}>
+                   <span>
+                     ✅ <strong>Cliente Registrado:</strong> {expressClienteEncontrado.nombre} ({expressClienteEncontrado.cortes_acumulados || 0} cortes en historial)
                    </span>
-                 </label>
+                   <button 
+                     type="button" 
+                     onClick={() => {
+                       setExpressClienteEncontrado(null);
+                       setExpressData(prev => ({ ...prev, cliente_id: null }));
+                     }}
+                     style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '0.75rem', textDecoration: 'underline' }}
+                   >
+                     Limpiar selección
+                   </button>
+                 </div>
+               ) : (
+                 (expressData.rut || expressData.nombre) && (
+                   <div style={{ 
+                     display: 'flex', 
+                     alignItems: 'center', 
+                     gap: '8px', 
+                     background: 'rgba(52, 152, 219, 0.12)', 
+                     border: '1px solid #3498db', 
+                     borderRadius: '8px', 
+                     padding: '8px 12px', 
+                     color: '#3498db', 
+                     fontSize: '0.82rem' 
+                   }}>
+                     <span>➕</span>
+                     <span><strong>Cliente Nuevo:</strong> Se agregará automáticamente a la cartera de clientes de La Romana al confirmar la cita.</span>
+                   </div>
+                 )
+               )}
+
+               {/* Fila 2: Fecha de la Cita con Accesos Rápidos */}
+               <div style={{ background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                   <label style={{ fontSize: '0.82rem', color: '#ddd', fontWeight: 'bold' }}>
+                     📅 Fecha de la Cita:
+                   </label>
+                   <div style={{ display: 'flex', gap: '6px' }}>
+                     <button
+                       type="button"
+                       onClick={() => setExpressData(prev => ({ ...prev, fecha: hoyISO }))}
+                       style={{
+                         padding: '4px 8px',
+                         borderRadius: '4px',
+                         fontSize: '0.72rem',
+                         background: expressData.fecha === hoyISO ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.06)',
+                         color: expressData.fecha === hoyISO ? '#000' : '#ccc',
+                         fontWeight: expressData.fecha === hoyISO ? 'bold' : 'normal',
+                         border: 'none',
+                         cursor: 'pointer'
+                       }}
+                     >
+                       Hoy
+                     </button>
+                     <button
+                       type="button"
+                       onClick={() => setExpressData(prev => ({ ...prev, fecha: mananaISO }))}
+                       style={{
+                         padding: '4px 8px',
+                         borderRadius: '4px',
+                         fontSize: '0.72rem',
+                         background: expressData.fecha === mananaISO ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.06)',
+                         color: expressData.fecha === mananaISO ? '#000' : '#ccc',
+                         fontWeight: expressData.fecha === mananaISO ? 'bold' : 'normal',
+                         border: 'none',
+                         cursor: 'pointer'
+                       }}
+                     >
+                       Mañana
+                     </button>
+                     <button
+                       type="button"
+                       onClick={() => setExpressData(prev => ({ ...prev, fecha: pasadoMananaISO }))}
+                       style={{
+                         padding: '4px 8px',
+                         borderRadius: '4px',
+                         fontSize: '0.72rem',
+                         background: expressData.fecha === pasadoMananaISO ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.06)',
+                         color: expressData.fecha === pasadoMananaISO ? '#000' : '#ccc',
+                         fontWeight: expressData.fecha === pasadoMananaISO ? 'bold' : 'normal',
+                         border: 'none',
+                         cursor: 'pointer'
+                       }}
+                     >
+                       Pasado Mañana
+                     </button>
+                   </div>
+                 </div>
                  <input 
                    type="date" 
                    className="input-field" 
                    required 
                    value={expressData.fecha} 
-                   onChange={e => setExpressData({...expressData, fecha: e.target.value})} 
+                   onChange={e => setExpressData(prev => ({ ...prev, fecha: e.target.value }))} 
+                   style={{ margin: 0, padding: '8px 12px' }}
                  />
                </div>
 
-               <div style={{ width: '130px' }}>
-                 <label style={{ fontSize: '0.8rem', color: '#aaa', display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                   <span>Hora</span>
-                   <span style={{ color: 'var(--gold-jewel)', fontSize: '0.68rem' }}>10 a 19 hrs</span>
-                 </label>
-                 <select 
-                   className="input-field" 
-                   required 
-                   value={expressData.hora} 
-                   onChange={e => setExpressData({...expressData, hora: e.target.value})}
-                   style={{ margin: 0, padding: '7px 8px', fontSize: '0.85rem' }}
-                 >
-                   {['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'].map(h => (
-                     <option key={h} value={h}>{h} hrs</option>
-                   ))}
-                 </select>
-                 <div style={{ display: 'flex', gap: '3px', marginTop: '4px', flexWrap: 'wrap' }}>
-                   {['10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00','18:00','19:00'].map(h => (
-                     <span 
-                       key={h} 
-                       onClick={() => setExpressData({...expressData, hora: h})}
-                       style={{ 
-                         fontSize: '0.62rem', cursor: 'pointer', padding: '1px 4px', borderRadius: '3px',
-                         background: expressData.hora === h ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.08)',
-                         color: expressData.hora === h ? '#000' : '#ccc',
-                         fontWeight: expressData.hora === h ? 'bold' : 'normal'
-                       }}
-                     >{h}</span>
-                   ))}
+               {/* Fila 3: SELECTOR DE HORA DESTACADO (10:00 a 19:00 hrs con 13:00 y 19:00 claramente visibles) */}
+               <div style={{ background: 'rgba(212,175,55,0.05)', padding: '14px', borderRadius: '10px', border: '1px solid rgba(212,175,55,0.3)' }}>
+                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                   <label style={{ fontSize: '0.85rem', color: 'var(--gold-jewel)', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                     <span>🕒</span> Horario de Atención (10:00 a 19:00 hrs):
+                   </label>
+                   <span style={{ fontSize: '0.8rem', color: 'var(--gold-jewel)', background: 'rgba(0,0,0,0.5)', padding: '3px 10px', borderRadius: '6px', border: '1px solid var(--gold-jewel)', fontWeight: 'bold' }}>
+                     Hora elegida: {expressData.hora} hrs
+                   </span>
+                 </div>
+
+                 {/* Grilla 5x2 de botones de hora */}
+                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px' }}>
+                   {HORAS_DISPONIBLES.map(h => {
+                     const isSel = expressData.hora === h;
+                     const esDestacada = h === '13:00' || h === '19:00';
+                     return (
+                       <button
+                         key={h}
+                         type="button"
+                         onClick={() => setExpressData(prev => ({ ...prev, hora: h }))}
+                         style={{
+                           padding: '10px 4px',
+                           borderRadius: '8px',
+                           fontSize: '0.85rem',
+                           fontWeight: isSel ? 'bold' : '600',
+                           cursor: 'pointer',
+                           textAlign: 'center',
+                           transition: 'all 0.15s ease',
+                           background: isSel 
+                             ? 'var(--gold-jewel)' 
+                             : (esDestacada ? 'rgba(212, 175, 55, 0.14)' : 'rgba(255, 255, 255, 0.04)'),
+                           color: isSel ? '#000' : (esDestacada ? 'var(--gold-jewel)' : '#fff'),
+                           border: isSel 
+                             ? '2px solid #fff' 
+                             : (esDestacada ? '1px solid var(--gold-jewel)' : '1px solid rgba(255, 255, 255, 0.12)'),
+                           boxShadow: isSel ? '0 0 12px rgba(212,175,55,0.6)' : 'none'
+                         }}
+                       >
+                         {h} {esDestacada && '⭐'}
+                       </button>
+                     );
+                   })}
                  </div>
                </div>
 
-               <button type="submit" className="btn-romana" style={{ height: '42px', padding: '0 20px', borderRadius: '8px' }}>
-                 AGENDAR
-               </button>
+               {/* Botón de Confirmación */}
+               <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+                 <button 
+                   type="submit" 
+                   className="btn-romana" 
+                   style={{ flex: 2, height: '46px', fontSize: '0.95rem', fontWeight: 'bold', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                 >
+                   <span>⚡</span> CONFIRMAR Y AGENDAR CITA
+                 </button>
+                 <button 
+                   type="button" 
+                   onClick={() => setShowExpress(false)}
+                   className="btn-outline-gold" 
+                   style={{ flex: 1, height: '46px', fontSize: '0.88rem', borderRadius: '8px' }}
+                 >
+                   Cancelar
+                 </button>
+               </div>
             </form>
          </div>
       )}
@@ -762,8 +1042,13 @@ export default function PosTrabajador({ session }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
               <img src={cliente.foto || 'https://via.placeholder.com/60'} alt={cliente.nombre} style={{ width: '60px', height: '60px', borderRadius: '50%', objectFit: 'cover' }} />
               <div>
-                <h3 style={{ margin: 0, fontSize: '1.05rem' }}>{cliente.nombre}</h3>
-                <div style={{ color: 'var(--gold-jewel)', fontSize: '0.82rem', marginTop: '2px' }}>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', color: '#fff' }}>{cliente.nombre}</h3>
+                {cliente.rut && (
+                  <div style={{ color: 'var(--gold-jewel)', fontSize: '0.78rem', marginTop: '1px' }}>
+                    🪪 {cliente.rut}
+                  </div>
+                )}
+                <div style={{ color: '#bbb', fontSize: '0.82rem', marginTop: '2px' }}>
                   {cliente.servicio_nombre || 'Corte Clásico'}
                 </div>
                 <span style={{ color: '#aaa', fontSize: '0.78rem' }}>Cortes: {cliente.cortes}/4</span>

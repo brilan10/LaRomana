@@ -43,6 +43,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                        c.estado, 
                        COALESCE(cl.nombre, 'Cliente') as nombre, 
                        cl.foto_perfil as foto, 
+                       cl.rut as rut,
+                       cl.telefono as telefono,
                        c.cliente_id,
                        COALESCE(cl.cortes_acumulados, 0) + 1 as cortes, 
                        COALESCE(cl.cortes_acumulados, 0) as cortes_acumulados,
@@ -82,6 +84,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                        c.estado, 
                        COALESCE(cl.nombre, 'Cliente') as nombre, 
                        cl.foto_perfil as foto, 
+                       cl.rut as rut,
+                       cl.telefono as telefono,
                        c.cliente_id,
                        IFNULL((SELECT GROUP_CONCAT(s.nombre SEPARATOR ' + ') FROM cita_detalle cd JOIN servicios s ON cd.servicio_id = s.id WHERE cd.cita_id = c.id), 'Corte / Barbería') as servicio_nombre
                 FROM citas c
@@ -146,11 +150,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 WHERE (REPLACE(REPLACE(rut, '.', ''), '-', '') LIKE ? AND ? != '%%')
                    OR rut LIKE ? 
                    OR nombre LIKE ? 
-                ORDER BY nombre ASC 
-                LIMIT 8
+                ORDER BY 
+                   CASE 
+                     WHEN nombre LIKE ? THEN 1 
+                     WHEN rut LIKE ? THEN 2 
+                     ELSE 3 
+                   END, 
+                   nombre ASC 
+                LIMIT 10
             ");
-            $stmt->execute([$likeDigits, $likeDigits, $likeText, $likeText]);
-            echo json_encode($stmt->fetchAll());
+            $stmt->execute([$likeDigits, $likeDigits, $likeText, $likeText, $likeText, $likeText]);
+            echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
             break;
         case 'get_cliente_by_rut':
             $rutRaw = $_GET['rut'] ?? '';
@@ -265,22 +275,81 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $descuento = isset($data['descuento']) ? (float)$data['descuento'] : 0;
             $estadoCita = $marcarPagada ? 'Completada' : ($data['estado'] ?? 'Pendiente');
             
+            $nombreIngresado = !empty($data['nombre']) ? trim($data['nombre']) : '';
+
+            // Caso 1: Se pasó cliente_id explícito
+            if ($cliente_id) {
+                // Verificar si existe y actualizar nombre si en DB era genérico y nos mandaron uno real
+                $stmtCheckNom = $pdo->prepare("SELECT id, nombre, rut FROM clientes WHERE id = ?");
+                $stmtCheckNom->execute([$cliente_id]);
+                $cExistente = $stmtCheckNom->fetch(PDO::FETCH_ASSOC);
+                if ($cExistente) {
+                    $nomDb = trim($cExistente['nombre'] ?? '');
+                    if (!empty($nombreIngresado) && (empty($nomDb) || stripos($nomDb, 'Cliente ') === 0 || $nomDb === ($cExistente['rut'] ?? ''))) {
+                        $pdo->prepare("UPDATE clientes SET nombre = ? WHERE id = ?")->execute([$nombreIngresado, $cliente_id]);
+                    }
+                }
+            }
+
+            // Caso 2: No hay cliente_id pero tenemos RUT
             if (!$cliente_id && !empty($rut)) {
                 $rutClean = strtoupper(preg_replace('/[^0-9K]/i', '', $rut));
-                $stmtCli = $pdo->prepare("SELECT id FROM clientes WHERE REPLACE(REPLACE(UPPER(rut), '.', ''), '-', '') = ? OR UPPER(rut) = ? LIMIT 1");
+                $stmtCli = $pdo->prepare("SELECT id, nombre, rut FROM clientes WHERE REPLACE(REPLACE(UPPER(rut), '.', ''), '-', '') = ? OR UPPER(rut) = ? LIMIT 1");
                 $stmtCli->execute([$rutClean, strtoupper(trim($rut))]);
-                $cliente_id = $stmtCli->fetchColumn();
-                if (!$cliente_id) {
-                    $nombre = !empty($data['nombre']) ? trim($data['nombre']) : 'Cliente ' . substr($rut, 0, 8);
-                    $dummy_email = "express_" . preg_replace('/[^0-9kK]/', '', $rut) . "@laromana.cl";
-                    $stmtIns = $pdo->prepare("INSERT INTO clientes (rut, nombre, telefono, email) VALUES (?, ?, ?, ?)");
-                    $stmtIns->execute([$rut, $nombre, $telefono, $dummy_email]);
+                $cliEncontrado = $stmtCli->fetch(PDO::FETCH_ASSOC);
+                if ($cliEncontrado) {
+                    $cliente_id = $cliEncontrado['id'];
+                    $nomDb = trim($cliEncontrado['nombre'] ?? '');
+                    // Si el nombre en DB era genérico ("Cliente 20998995") y nos entregan un nombre real, actualizarlo en la cartera de clientes
+                    if (!empty($nombreIngresado) && (empty($nomDb) || stripos($nomDb, 'Cliente ') === 0 || $nomDb === ($cliEncontrado['rut'] ?? ''))) {
+                        $pdo->prepare("UPDATE clientes SET nombre = ? WHERE id = ?")->execute([$nombreIngresado, $cliente_id]);
+                    }
+                } else {
+                    // No encontrado por RUT: buscar si por coincidencia existe por nombre exacto
+                    if (!empty($nombreIngresado)) {
+                        $stmtCliNom = $pdo->prepare("SELECT id, rut FROM clientes WHERE LOWER(TRIM(nombre)) = LOWER(?) LIMIT 1");
+                        $stmtCliNom->execute([$nombreIngresado]);
+                        $cliPorNom = $stmtCliNom->fetch(PDO::FETCH_ASSOC);
+                        if ($cliPorNom) {
+                            $cliente_id = $cliPorNom['id'];
+                            if (empty($cliPorNom['rut']) || stripos($cliPorNom['rut'], 'EX-') === 0) {
+                                $pdo->prepare("UPDATE clientes SET rut = ? WHERE id = ?")->execute([$rut, $cliente_id]);
+                            }
+                        }
+                    }
+                    // Si sigue sin existir, crear nuevo cliente en cartera de clientes
+                    if (!$cliente_id) {
+                        $nombreFinalNuevo = !empty($nombreIngresado) ? $nombreIngresado : 'Cliente ' . substr($rutClean, 0, 8);
+                        $dummy_email = "cliente_" . preg_replace('/[^0-9kK]/', '', $rut) . "_" . rand(100, 999) . "@laromana.cl";
+                        $stmtIns = $pdo->prepare("INSERT INTO clientes (rut, nombre, telefono, email, cortes_acumulados) VALUES (?, ?, ?, ?, 0)");
+                        $stmtIns->execute([$rut, $nombreFinalNuevo, $telefono, $dummy_email]);
+                        $cliente_id = $pdo->lastInsertId();
+                    }
+                }
+            }
+
+            // Caso 3: No hay cliente_id y NO se envió RUT, pero SÍ se envió Nombre
+            if (!$cliente_id && empty($rut) && !empty($nombreIngresado)) {
+                $stmtCliNom = $pdo->prepare("SELECT id, rut FROM clientes WHERE LOWER(TRIM(nombre)) = LOWER(?) LIMIT 1");
+                $stmtCliNom->execute([$nombreIngresado]);
+                $cliPorNom = $stmtCliNom->fetch(PDO::FETCH_ASSOC);
+                if ($cliPorNom) {
+                    $cliente_id = $cliPorNom['id'];
+                    $rut = $cliPorNom['rut'];
+                } else {
+                    // Nuevo cliente registrado solo con nombre -> agregar a cartera de clientes
+                    $randDigits = rand(10000000, 99999999);
+                    $dummyRut = "EX-" . substr($randDigits, 0, 7) . "-K";
+                    $dummy_email = "express_" . $randDigits . "@laromana.cl";
+                    $stmtIns = $pdo->prepare("INSERT INTO clientes (rut, nombre, telefono, email, cortes_acumulados) VALUES (?, ?, ?, ?, 0)");
+                    $stmtIns->execute([$dummyRut, $nombreIngresado, $telefono, $dummy_email]);
                     $cliente_id = $pdo->lastInsertId();
+                    $rut = $dummyRut;
                 }
             }
 
             if (!$cliente_id) {
-                echo json_encode(["error" => "Cliente no especificado (RUT requerido)"]);
+                echo json_encode(["status" => "error", "error" => "Debes indicar el RUT o el Nombre del cliente para agendar."]);
                 break;
             }
 

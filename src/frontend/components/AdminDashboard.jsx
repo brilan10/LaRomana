@@ -148,6 +148,8 @@ export default function AdminDashboard({ session, logout }) {
   const [clienteCitaEncontrado, setClienteCitaEncontrado] = useState(null);
   const [filtroBarberoCal, setFiltroBarberoCal] = useState('');
   const [citaDetalleModal, setCitaDetalleModal] = useState(null);
+  const [editandoClienteModal, setEditandoClienteModal] = useState(false);
+  const [nuevoNombreClienteModal, setNuevoNombreClienteModal] = useState('');
   const [actualizandoCita, setActualizandoCita] = useState(false);
 
   // Modales Extra
@@ -1518,65 +1520,119 @@ export default function AdminDashboard({ session, logout }) {
     setShowModalCita(true);
   };
 
-  const handleRutChangeCita = async (rawVal) => {
-    const formatted = formatRut(rawVal);
-    setNuevaCitaForm(prev => ({ ...prev, rut: formatted }));
+  const buscarClientesCita = async (query, sourceField) => {
+    const qTrim = (query || '').trim();
+    if (qTrim.length < 2) {
+      setSugerenciasCitaRut([]);
+      setShowDropdownCitaRut(false);
+      return;
+    }
+    setBuscandoClienteCita(true);
+    try {
+      const resp = await fetch(`${API_URL}/api.php?action=search_clientes&q=${encodeURIComponent(qTrim)}`);
+      const data = await resp.json();
+      if (Array.isArray(data) && data.length > 0) {
+        setSugerenciasCitaRut(data);
+        setShowDropdownCitaRut(true);
 
-    const clean = rawVal.replace(/[^0-9kK]/g, '');
-    if (clean.length >= 2) {
-      setBuscandoClienteCita(true);
-      try {
-        const resp = await fetch(`${API_URL}/api.php?action=search_clientes&q=${encodeURIComponent(clean)}`);
-        const data = await resp.json();
-        if (Array.isArray(data) && data.length > 0) {
-          setSugerenciasCitaRut(data);
-          setShowDropdownCitaRut(true);
-          
-          // Buscar coincidencia exacta por RUT limpio
-          const exact = data.find(c => {
-            const cClean = (c.rut || '').replace(/[^0-9kK]/gi, '').toUpperCase();
-            return cClean === clean.toUpperCase();
-          });
-          
+        if (sourceField === 'rut') {
+          const clean = qTrim.replace(/[^0-9kK]/g, '').toUpperCase();
+          const exact = data.find(c => (c.rut || '').replace(/[^0-9kK]/gi, '').toUpperCase() === clean);
           if (exact) {
             setClienteCitaEncontrado(exact);
             setNuevaCitaForm(prev => ({
               ...prev,
-              rut: exact.rut || formatted,
-              nombre: exact.nombre || prev.nombre,
-              telefono: exact.telefono || prev.telefono || ''
+              rut: exact.rut || prev.rut,
+              nombre: exact.nombre && !exact.nombre.startsWith('Cliente ') ? exact.nombre : prev.nombre,
+              telefono: exact.telefono || prev.telefono || '',
+              cliente_id: exact.id
             }));
-          } else {
-            setClienteCitaEncontrado(null);
           }
-        } else {
-          setSugerenciasCitaRut([]);
-          setShowDropdownCitaRut(false);
-          setClienteCitaEncontrado(null);
         }
-      } catch (err) {
-        console.error("Error buscando cliente por RUT:", err);
+        if (sourceField === 'nombre') {
+          const exactName = data.find(c => (c.nombre || '').trim().toLowerCase() === qTrim.toLowerCase());
+          if (exactName) {
+            setClienteCitaEncontrado(exactName);
+            setNuevaCitaForm(prev => ({
+              ...prev,
+              rut: exactName.rut || prev.rut,
+              nombre: exactName.nombre,
+              telefono: exactName.telefono || prev.telefono || '',
+              cliente_id: exactName.id
+            }));
+          }
+        }
+      } else {
         setSugerenciasCitaRut([]);
-      } finally {
-        setBuscandoClienteCita(false);
+        setShowDropdownCitaRut(false);
+        setClienteCitaEncontrado(null);
       }
-    } else {
+    } catch (err) {
+      console.error("Error buscando cliente:", err);
       setSugerenciasCitaRut([]);
       setShowDropdownCitaRut(false);
-      setClienteCitaEncontrado(null);
+    } finally {
+      setBuscandoClienteCita(false);
     }
+  };
+
+  const handleRutChangeCita = (rawVal) => {
+    const formatted = formatRut(rawVal);
+    setNuevaCitaForm(prev => ({ ...prev, rut: formatted }));
+    buscarClientesCita(rawVal, 'rut');
+  };
+
+  const handleNombreChangeCita = (rawVal) => {
+    setNuevaCitaForm(prev => ({ ...prev, nombre: rawVal }));
+    buscarClientesCita(rawVal, 'nombre');
   };
 
   const seleccionarSugerenciaCita = (cli) => {
     setNuevaCitaForm(prev => ({
       ...prev,
-      rut: cli.rut,
-      nombre: cli.nombre,
-      telefono: cli.telefono || ''
+      rut: cli.rut || prev.rut,
+      nombre: cli.nombre || prev.nombre,
+      telefono: cli.telefono || prev.telefono || '',
+      cliente_id: cli.id
     }));
     setClienteCitaEncontrado(cli);
     setSugerenciasCitaRut([]);
     setShowDropdownCitaRut(false);
+  };
+
+  const handleGuardarNombreClienteModal = async () => {
+    if (!nuevoNombreClienteModal?.trim()) {
+      showToast("Ingresa un nombre válido.", "error");
+      return;
+    }
+    const nomTrim = nuevoNombreClienteModal.trim();
+    const clienteId = citaDetalleModal?.cliente_id;
+    if (!clienteId) {
+      showToast("No se encontró el ID del cliente.", "error");
+      return;
+    }
+    try {
+      const res = await fetch(`${API_URL}/admin_api.php?action=actualizar_nombre_cliente`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cliente_id: clienteId,
+          nombre: nomTrim
+        })
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        showToast("¡Nombre del cliente actualizado con éxito!", "success");
+        setCitaDetalleModal(prev => prev ? ({ ...prev, cliente: nomTrim }) : null);
+        setEditandoClienteModal(false);
+        setCitasCalendario(prev => prev.map(c => (c.id === citaDetalleModal?.id || c.cliente_id === clienteId) ? { ...c, cliente: nomTrim } : c));
+        cargarCitasCalendario();
+      } else {
+        showToast(data.message || "Error al actualizar nombre", "error");
+      }
+    } catch (e) {
+      showToast("Error de conexión al actualizar", "error");
+    }
   };
 
   const handleAgendarCita = async (e, abrirCobroInmediato = false) => {
@@ -6886,7 +6942,7 @@ export default function AdminDashboard({ session, logout }) {
                 </div>
 
                 {/* Nombre */}
-                <div>
+                <div style={{ position: 'relative' }}>
                   <label style={{ display: 'block', fontSize: '0.82rem', color: clienteCitaEncontrado ? '#2ecc71' : 'var(--gold-jewel)', marginBottom: '4px', fontWeight: 'bold' }}>
                     Nombre del Cliente *
                   </label>
@@ -6896,9 +6952,10 @@ export default function AdminDashboard({ session, logout }) {
                       margin: 0,
                       borderColor: clienteCitaEncontrado ? '#2ecc71' : undefined
                     }}
-                    placeholder="Ej: Carlos Pérez"
+                    placeholder="Ej: Carlos Pérez (o busca por nombre)"
                     value={nuevaCitaForm.nombre}
-                    onChange={e => setNuevaCitaForm({ ...nuevaCitaForm, nombre: e.target.value })}
+                    onChange={e => handleNombreChangeCita(e.target.value)}
+                    onFocus={() => sugerenciasCitaRut.length > 0 && setShowDropdownCitaRut(true)}
                     required
                   />
                 </div>
@@ -7118,10 +7175,76 @@ export default function AdminDashboard({ session, logout }) {
 
               {/* Cita Info Grid */}
               <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: '10px', padding: '14px', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.85rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ color: '#aaa' }}>Cliente:</span>
-                  <strong style={{ color: '#fff' }}>👤 {citaDetalleModal.cliente}</strong>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <strong style={{ color: '#fff' }}>👤 {citaDetalleModal.cliente}</strong>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const actual = citaDetalleModal.cliente?.startsWith('Cliente ') ? '' : citaDetalleModal.cliente;
+                        setNuevoNombreClienteModal(actual || '');
+                        setEditandoClienteModal(!editandoClienteModal);
+                      }}
+                      style={{
+                        background: 'rgba(212, 175, 55, 0.15)',
+                        border: '1px solid var(--gold-jewel)',
+                        color: 'var(--gold-jewel)',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '0.72rem',
+                        padding: '2px 6px',
+                        fontWeight: 'bold'
+                      }}
+                      title="Modificar nombre del cliente en cartera"
+                    >
+                      ✏️ Editar
+                    </button>
+                  </div>
                 </div>
+
+                {editandoClienteModal && (
+                  <div style={{ 
+                    background: 'rgba(0,0,0,0.5)', 
+                    border: '1px solid var(--gold-jewel)', 
+                    borderRadius: '8px', 
+                    padding: '8px 10px', 
+                    display: 'flex', 
+                    flexDirection: 'column', 
+                    gap: '6px' 
+                  }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--gold-jewel)', fontWeight: 'bold' }}>
+                      Modificar nombre en la cartera de clientes:
+                    </span>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <input
+                        type="text"
+                        className="input-field"
+                        value={nuevoNombreClienteModal}
+                        onChange={e => setNuevoNombreClienteModal(e.target.value)}
+                        placeholder="Nombre completo del cliente"
+                        style={{ margin: 0, padding: '5px 8px', fontSize: '0.82rem', flex: 1 }}
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        style={{ padding: '4px 12px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
+                        onClick={handleGuardarNombreClienteModal}
+                      >
+                        Guardar
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-outline-gold"
+                        style={{ padding: '4px 8px', fontSize: '0.78rem' }}
+                        onClick={() => setEditandoClienteModal(false)}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {citaDetalleModal.cliente_rut && (
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span style={{ color: '#aaa' }}>RUT:</span>
