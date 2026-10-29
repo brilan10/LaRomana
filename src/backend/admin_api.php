@@ -18,6 +18,10 @@ try {
     if (!$catMujer) {
         $pdo->exec("INSERT INTO categorias (nombre) VALUES ('Perfumes Mujer')");
     }
+    $catAromat = $pdo->query("SELECT id FROM categorias WHERE nombre = 'Aromatizantes'")->fetchColumn();
+    if (!$catAromat) {
+        $pdo->exec("INSERT INTO categorias (nombre) VALUES ('Aromatizantes')");
+    }
 } catch (\Exception $eCat) {}
 
 $action = $_GET['action'] ?? '';

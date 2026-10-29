@@ -235,7 +235,7 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
   const [pedidoConfirmado, setPedidoConfirmado] = useState(null);
 
   const [productos, setProductos] = useState([]);
-  const [categorias, setCategorias] = useState(['Gorras y Accesorios', 'Perfumes Hombre', 'Perfumes Mujer', 'Capilares', 'Más Vendidos']);
+  const [categorias, setCategorias] = useState(['Gorras y Accesorios', 'Perfumes Hombre', 'Perfumes Mujer', 'Capilares', 'Aromatizantes', 'Más Vendidos']);
   const [catSeleccionada, setCatSeleccionada] = useState('Gorras y Accesorios');
 
   // Datos para compra / ticket
@@ -332,6 +332,7 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
         let processedCats = rawCats.filter(c => c !== 'Perfumes y Decants');
         if (!processedCats.includes('Perfumes Hombre')) processedCats.push('Perfumes Hombre');
         if (!processedCats.includes('Perfumes Mujer')) processedCats.push('Perfumes Mujer');
+        if (!processedCats.includes('Aromatizantes')) processedCats.push('Aromatizantes');
 
         const getPriority = (name) => {
           const lower = name.toLowerCase();
@@ -339,6 +340,7 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
           if (lower.includes('hombre')) return 2;
           if (lower.includes('mujer')) return 3;
           if (lower.includes('perfume') || lower.includes('decant')) return 4;
+          if (lower.includes('aromat')) return 5;
           if (lower.includes('capilar')) return 5;
           return 10;
         };
@@ -476,6 +478,12 @@ export default function Tienda({ session, onNuevoPedido, onBackToHome, onGoToCit
         }
         return false;
       });
+    }
+    if (catSeleccionada === 'Aromatizantes') {
+      return productos.filter(p => 
+        p.categoria === 'Aromatizantes' ||
+        (p.nombre + ' ' + (p.descripcion || '')).toLowerCase().includes('aromat')
+      );
     }
     return productos.filter(p => p.categoria === catSeleccionada);
   })();

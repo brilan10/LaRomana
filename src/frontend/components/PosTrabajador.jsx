@@ -153,12 +153,13 @@ export default function PosTrabajador({ session }) {
     e.preventDefault();
     try {
       const fechaParaAgendar = expressData.fecha || fechaAgenda || hoyISO;
+      const nombreFinal = expressData.nombre?.trim() || `Cliente ${expressData.rut?.replace(/[^0-9kK]/g,'')?.substring(0,8) || 'Express'}`;
       const res = await fetch(`${API_URL}/api.php?action=agendar_cita`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           rut: expressData.rut,
-          nombre: expressData.nombre,
+          nombre: nombreFinal,
           trabajador_id: session.usuario.id,
           fecha: fechaParaAgendar,
           hora: expressData.hora,
@@ -168,18 +169,18 @@ export default function PosTrabajador({ session }) {
       });
       const data = await res.json();
       if (data.status === 'success') {
-        alert(`¡Cita agendada con éxito para el día ${fechaParaAgendar}!`);
+        alert(`¡Cita agendada con éxito para el día ${fechaParaAgendar} a las ${expressData.hora}!`);
         setShowExpress(false);
         setExpressData({ nombre: '', rut: '', hora: '14:00', fecha: fechaAgenda });
         setExpressSugerencias([]);
         setExpressClienteEncontrado(null);
         fetchAgenda(fechaAgenda);
       } else {
-        alert(data.error || "Error al agendar");
+        alert('⚠️ ' + (data.error || data.message || "Error al agendar"));
       }
     } catch (error) {
-      console.error(error);
-      alert("Error de red al agendar.");
+      console.error('Error agendando cita:', error);
+      alert("Error de red al agendar. Verifica tu conexión.");
     }
   };
 
@@ -578,10 +579,9 @@ export default function PosTrabajador({ session }) {
                  <input 
                    type="text" 
                    className="input-field" 
-                   required 
                    value={expressData.nombre} 
                    onChange={e => setExpressData({...expressData, nombre: e.target.value})} 
-                   placeholder="Nombre del Cliente" 
+                   placeholder="Nombre (opcional si RUT existe)" 
                  />
                </div>
 
@@ -603,8 +603,22 @@ export default function PosTrabajador({ session }) {
                </div>
 
                <div style={{ width: '110px' }}>
-                 <label style={{ fontSize: '0.8rem', color: '#aaa' }}>Hora</label>
+                 <label style={{ fontSize: '0.8rem', color: '#aaa', display: 'block', marginBottom: '2px' }}>Hora</label>
                  <input type="time" className="input-field" required value={expressData.hora} onChange={e => setExpressData({...expressData, hora: e.target.value})} />
+                 <div style={{ display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap' }}>
+                   {['10:00','11:00','12:00','14:00','15:00','16:00','17:00','18:00'].map(h => (
+                     <span 
+                       key={h} 
+                       onClick={() => setExpressData({...expressData, hora: h})}
+                       style={{ 
+                         fontSize: '0.65rem', cursor: 'pointer', padding: '1px 5px', borderRadius: '4px',
+                         background: expressData.hora === h ? 'var(--gold-jewel)' : 'rgba(255,255,255,0.1)',
+                         color: expressData.hora === h ? '#000' : '#ccc',
+                         fontWeight: expressData.hora === h ? 'bold' : 'normal'
+                       }}
+                     >{h}</span>
+                   ))}
+                 </div>
                </div>
 
                <button type="submit" className="btn-romana" style={{ height: '42px', padding: '0 20px', borderRadius: '8px' }}>
